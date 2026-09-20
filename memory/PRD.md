@@ -1557,3 +1557,189 @@ Simulei o erro EXATO do log (`InvalidRequestError("No such customer:
 `InvalidPaymentRequestError` com "No such customer" na mensagem,
 disparando corretamente a lógica de recriação. Backend compilado sem
 erro.
+
+## 🎉 MARCO: checkout de planos funcionando de ponta a ponta, confirmado
+
+Usuário testou o fluxo completo: Assinar Profissional → Payment Sheet
+nativo → cartão de teste 4242 → confirmação. Validado por DUAS fontes
+independentes:
+- App: card "Profissional" mostra "PLANO ATUAL", "Free" virou "Cancelar
+  assinatura e voltar ao Free" — a troca de plano persistiu de verdade.
+- Stripe Dashboard (sandbox): "Gross volume R$19.90" registrado, saldo
+  R$18.72 depois da taxa do Stripe — transação de teste processada com
+  sucesso, sem nenhum risco (modo sandbox confirmado pela faixa azul).
+
+Isso fecha a cadeia completa de correções desta sessão: login direto
+Google (sem Emergent) → MongoDB Atlas → Payment Sheet nativo → Stripe
+modo teste com chaves e Price IDs corretos → auto-recuperação de
+customer_id órfão. Todas as camadas do app validadas juntas, rodando de
+verdade num emulador Android.
+
+## Correção proativa: mesma auto-recuperação aplicada ao Connect
+
+Antes do usuário testar o Connect, apliquei preventivamente a mesma
+correção que resolveu o customer_id órfão dos planos — já era previsível
+que o `stripe_account_id` salvo (criado em modo LIVE) também não
+existiria no modo TESTE atual, causando o mesmo tipo de erro.
+
+### Corrigido
+- `stripe_gateway.py::create_onboarding_link`: agora traduz erros do
+  Stripe (não tinha nenhum tratamento antes).
+- `stripe_gateway.py::create_connect_account`: erros que não são "Connect
+  not enabled" agora também são traduzidos (antes subiam crus).
+- `server.py::connect_onboarding`: mesma lógica de auto-recuperação dos
+  planos — se a conta salva não existir mais na conta/modo atual, recria
+  e tenta de novo uma vez.
+
+### Generalização importante: "No such X" em vez de frase exata
+Não encontrei confirmação oficial do texto exato do Stripe pra "conta
+Connect não existe" (só tinha confirmado "No such customer" e "No such
+price" por teste real). Em vez de apostar numa terceira frase não
+confirmada, generalizei a checagem nos dois endpoints pra `"No such" in
+str(e)` — cobre os 3 casos confirmados (customer/price/account) e
+qualquer variação futura desse mesmo padrão consistente do Stripe, sem
+depender de eu adivinhar o texto exato de cada tipo de recurso.
+
+### Validação real
+Simulei os 3 cenários (`No such customer`, `No such account`, `No such
+price`) contra `_translate_stripe_error()` — os 3 disparam a detecção
+genérica corretamente. Backend reimportado com sucesso, rotas de Connect
+e planos confirmadas no schema.
+
+## Decisão: adiar migração pra Accounts v2 (Stripe) até sair de preview
+
+Investigado a fundo (não implementado): migrar `create_connect_account`
+pra Accounts v2 do Stripe. Achados que motivaram adiar:
+- v2 usa modelo de dados totalmente diferente (`configuration` com
+  personas merchant/customer/recipient), não é troca de nome de método.
+- O SDK Python (`stripe` package) NÃO tem suporte completo pra v2 ainda —
+  documentação oficial recomenda HTTP cru (`requests`/`httpx`) pra
+  algumas partes, já que nem tudo foi portado pro SDK.
+- É API em "preview" (exige `Stripe-Version` com selo de pré-lançamento)
+  — ainda está mudando, não é versão estável.
+- Boa notícia parcial: `AccountLink.create()` (onboarding) continua
+  funcionando sem mudança nenhuma com um account_id criado via v2 — só a
+  CRIAÇÃO da conta muda, não o onboarding em si.
+
+Decisão do usuário: manter v1 (ativando "Accounts v1 support" no
+Dashboard) até a v2 sair de preview e o SDK Python ganhar suporte
+completo. Nenhuma mudança de código feita nesta rodada — só decisão
+registrada pra não reabrir essa discussão sem necessidade.
+
+## Nova feature: agendamento via link público (base do fluxo WhatsApp) — backend completo
+
+Primeira etapa de uma feature maior: profissional compartilha um link
+(futuramente via WhatsApp, número único da plataforma) que o cliente
+abre numa página web (não no app) pra agendar sem precisar ter conta.
+Decisão de negócio importante confirmada por pesquisa: Pix não suporta
+captura manual no Stripe (confirmado na doc oficial: "Manual capture
+support: No") — é sempre instantâneo e irreversível. Por isso o fluxo Pix
+cobra o valor TOTAL do serviço de uma vez, sem a proteção de no-show que
+existe no fluxo de cartão (que continua intacto, sem mudança nenhuma).
+
+Decisão de arquitetura pro WhatsApp (pesquisada, não implementada ainda):
+número ÚNICO da plataforma, não um por profissional — confirmado por
+pesquisa de mercado que é o padrão de TODOS os concorrentes diretos
+(AgendZap, RobotiZap, Barbeiro.app) nesse segmento no Brasil, com custo
+fixo por faixa de equipe (~R$50-150/mês total) em vez de custo por
+profissional (~R$80-270/mês CADA, inviável em escala).
+
+### Backend implementado nesta rodada
+- `server.py`: novos modelos `AgendamentoPublicoCreate`,
+  `AgendamentoPublicoCartaoRequest`, `AgendamentoPublicoPixResponse`.
+- `_find_or_create_cliente_por_telefone()`: cliente sem conta no app,
+  identificado por telefone (não email/Google) — cria um usuário com
+  email sintético (`tel_<numero>@showup.cliente`), nunca usado pra login
+  de verdade (login continua só Google). Índice único esparso em
+  `telefone` (só usuários desse fluxo têm telefone) pra não duplicar
+  cliente que volta a agendar pelo mesmo número.
+- `_valida_servico_e_conflito()`: extraída do endpoint original de
+  agendamento pra ser reaproveitada pelos 2 fluxos públicos novos.
+- `POST /public/agendamentos/cartao`: mesmo hold de sempre, mas sem
+  sessão — cartão coletado via Stripe.js Elements na página web (ainda
+  não construída), `payment_method_id` já confirmado é passado direto.
+- `POST /public/agendamentos/pix`: cria o agendamento com
+  `hold_status="aguardando_pix"`, reservado por `PIX_RESERVA_MINUTOS=20`
+  minutos. Cobra o valor TOTAL (sem taxa de no-show separada — já pago).
+- `GET /public/agendamentos/{id}/status`: público, pra página web fazer
+  polling e saber quando o Pix confirmou (pagamento acontece no app do
+  banco do cliente, fora do nosso controle).
+- `stripe_gateway.py::create_pix_payment_intent`: PaymentIntent com
+  `payment_method_types=["pix"]`, sem capture_method manual (não
+  suportado), com o mesmo padrão de split via `transfer_data` que o
+  cartão já usa.
+- `webhooks.py::_handle_pix_succeeded`: novo handler pra
+  `payment_intent.succeeded` — só mexe em agendamentos ainda
+  `aguardando_pix` (idempotente contra webhook duplicado).
+- `server.py::_expirar_pix_pendentes`: novo job no scheduler (a cada 2
+  min, mais frequente que o de cartão) — libera o horário se o Pix não
+  for pago dentro da janela de reserva. Diferente do cartão, não precisa
+  desfazer hold nenhum no gateway (Pix nunca trava nada antes de pagar).
+
+### Validação real
+- Backend reimportado com sucesso, as 3 rotas públicas confirmadas no
+  schema OpenAPI.
+- Testei a validação de telefone isoladamente (Pydantic field_validator)
+  com 4 casos: 11 dígitos, formatado com parênteses/traço, 10 dígitos
+  (fixo), e um valor inválido — os 4 se comportaram como esperado.
+- Confirmei que `hold_status: str` no modelo de resposta `Agendamento`
+  aceita os 2 valores novos (`aguardando_pix`, `pago_integral`) sem
+  quebrar a serialização.
+
+### Falta (próximas etapas)
+1. A página web em si (formulário nome/telefone/pagamento, QR code do
+   Pix, campo de cartão via Stripe.js) — ainda não construída.
+2. Integração WhatsApp de verdade — depende do usuário escolher e
+   contratar um BSP (decisão externa, como Stripe/Google/MongoDB antes).
+
+## Página web de agendamento público publicada (Pix funcionando, cartão pendente)
+
+Publiquei `agendar.html` como artifact:
+https://claude.ai/artifact/WXwzJb6DdsYxamvaepH1gA
+
+### Descoberta técnica importante durante a construção
+Stripe.js (necessário pro fluxo de cartão via navegador) só pode ser
+carregado de `js.stripe.com` — domínio que NÃO está na lista de origens
+permitidas pra páginas publicadas aqui (só cdnjs/jsdelivr/tailwind/
+jquery). Isso bloqueia cartão nessa página POR ENQUANTO.
+
+Resolvido pro Pix contornando essa limitação por completo: em vez de usar
+Stripe.js no navegador, o BACKEND confirma o PaymentIntent imediatamente
+(`confirm=True, payment_method_data={"type": "pix"}`), e o código Pix
+"copia e cola" (`next_action.pix_display_qr_code.data`) vem pronto na
+própria resposta da nossa API — o QR code é renderizado 100% no
+navegador usando `qrcodejs` (biblioteca pequena, hospedada no cdnjs, já
+permitido), sem precisar de nenhum SDK do Stripe no cliente.
+
+### Design
+Reaproveitei a paleta real da marca (verde-floresta + creme do
+monograma), não uma paleta nova — Fraunces (serifada) pro nome do
+profissional/valores, Inter pro resto. Fluxo em 4 etapas numeradas de
+verdade (serviço → horário → dados → pagamento), resumo sempre visível
+antes de pagar.
+
+### ⚠️ Duas coisas que o usuário PRECISA fazer antes de testar de verdade
+1. Trocar a constante `BACKEND_URL` no topo do `<script>` pela URL
+   PÚBLICA real do backend — `localhost`/`10.0.2.2` só funcionam dentro
+   da própria máquina/emulador do usuário, uma página publicada aberta
+   por QUALQUER pessoa não consegue alcançar isso. O backend precisa
+   estar hospedado em algum lugar acessível pela internet.
+2. Testar com `?prof=<user_id de um profissional real>` na URL da
+   página publicada.
+
+### Validação real
+- Extraí e validei a sintaxe do JavaScript inline com `node --check` —
+  válido.
+- Verifiquei balanceamento de tags HTML com um parser Python — pilha
+  final vazia (tudo fechado corretamente); os avisos que apareceram
+  eram falsos positivos do meu verificador simplificado com tags
+  auto-fechadas (`<meta/>`, `<input/>`), não problemas reais.
+- Corrigi um bug real antes de publicar: uso do `event` global implícito
+  (frágil) no clique de seleção de serviço — passei o elemento
+  explicitamente pro handler em vez de depender disso.
+
+### Ainda falta
+- Cartão via essa página (bloqueado pela limitação de CSP do Stripe.js
+  — precisaria de hospedagem própria fora do sistema de Artifacts pra
+  contornar, algo a considerar mais pra frente).
+- A integração de verdade com WhatsApp (depende do BSP escolhido).

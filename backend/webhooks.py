@@ -68,6 +68,8 @@ async def stripe_webhook(request: Request):
         await _handle_account_updated(db, obj)
     elif event_type == "payment_intent.canceled":
         await _handle_canceled(db, obj)
+    elif event_type == "payment_intent.succeeded":
+        await _handle_pix_succeeded(db, obj)
     elif event_type in ("customer.subscription.deleted", "customer.subscription.updated"):
         await _handle_subscription_change(db, obj)
     else:
@@ -126,6 +128,21 @@ async def _handle_canceled(db, payment_intent: dict) -> None:
         {"payment_intent_id": pi_id, "hold_status": "autorizado"},
         {"$set": {"hold_status": "expirado", "status_confirmacao": "sem_resposta"}},
     )
+
+
+async def _handle_pix_succeeded(db, payment_intent: dict) -> None:
+    """Único jeito de saber que um Pix do link público foi pago — acontece
+    no app do banco do cliente, fora do nosso controle. Só mexe em
+    agendamentos que ainda estão 'aguardando_pix' (idempotente: se o
+    webhook chegar duplicado, o segundo update_one não encontra nada pra
+    mudar e não faz nada de mal)."""
+    pi_id = payment_intent["id"]
+    result = await db.agendamentos.update_one(
+        {"payment_intent_id": pi_id, "hold_status": "aguardando_pix"},
+        {"$set": {"hold_status": "pago_integral", "valor_capturado_centavos": payment_intent.get("amount", 0)}},
+    )
+    if result.modified_count:
+        log.info("Pix confirmado via webhook para payment_intent %s", pi_id)
 
 
 

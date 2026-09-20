@@ -138,6 +138,7 @@ PLANOS = {
     "ultra":        {"nome": "Ultra",        "fee_bps": 200,  "preco_centavos": 5990, "price_env": "STRIPE_PRICE_ID_ULTRA"},
 }
 DEFAULT_PLANO = "free"
+PIX_RESERVA_MINUTOS = 20  # tempo que um agendamento via Pix fica reservado esperando pagamento antes de liberar o horário sozinho
 
 
 def _fee_bps_for(profissional_doc: Optional[dict]) -> int:
@@ -275,6 +276,37 @@ class ProfissionalDetail(BaseModel):
 class AgendamentoCreate(BaseModel):
     servico_id: str
     horario_inicio: datetime
+
+
+class AgendamentoPublicoCreate(BaseModel):
+    """Agendamento criado por um cliente SEM conta no app — fluxo do link
+    enviado no WhatsApp. Sem sessão/token nosso; identificamos o cliente
+    pelo telefone (criando/reaproveitando uma conta "sintética" pra ele)."""
+    profissional_id: str
+    servico_id: str
+    horario_inicio: datetime
+    nome: str = Field(min_length=2, max_length=120)
+    telefone: str
+
+    @field_validator("telefone")
+    @classmethod
+    def _valida_telefone(cls, v: str) -> str:
+        digitos = "".join(c for c in v if c.isdigit())
+        if len(digitos) not in (10, 11):  # DDD + número, com ou sem o 9
+            raise ValueError("Telefone inválido — use DDD + número (ex: 11987654321)")
+        return digitos
+
+
+class AgendamentoPublicoCartaoRequest(AgendamentoPublicoCreate):
+    payment_method_id: str  # já coletado/confirmado via Stripe.js Elements na página web
+
+
+class AgendamentoPublicoPixResponse(BaseModel):
+    agendamento_id: str
+    payment_intent_client_secret: str
+    qr_code_data: Optional[str] = None
+    hosted_instructions_url: Optional[str] = None
+    expira_em: datetime
 
 
 class Agendamento(BaseModel):
@@ -429,6 +461,57 @@ async def _current_user(authorization: Optional[str]) -> dict:
 async def _require_role(doc: dict, role: Role):
     if doc.get("role") != role:
         raise HTTPException(403, f"Requires role={role}")
+
+
+async def _find_or_create_cliente_por_telefone(nome: str, telefone: str) -> dict:
+    """Cliente vindo do link público (WhatsApp), sem sessão/conta prévia no
+    app. Usamos o telefone como identidade — se ele já agendou antes por
+    esse mesmo número, reaproveita a conta em vez de criar duplicata.
+    Nosso índice de usuário é por email (único, obrigatório); como esse
+    fluxo não coleta email, geramos um sintético e óbvio de reconhecer,
+    nunca usado pra login de verdade (login continua sendo só Google)."""
+    existing = await db.users.find_one({"telefone": telefone}, {"_id": 0})
+    if existing:
+        if existing.get("name") != nome:
+            await db.users.update_one({"user_id": existing["user_id"]}, {"$set": {"name": nome}})
+            existing["name"] = nome
+        return existing
+    user_id = f"user_{uuid.uuid4().hex[:12]}"
+    doc = {
+        "user_id": user_id,
+        "email": f"tel_{telefone}@showup.cliente",
+        "name": nome,
+        "telefone": telefone,
+        "picture": None,
+        "role": "cliente",
+        "categorias": [],
+        "created_at": _now(),
+    }
+    await db.users.insert_one(doc)
+    return doc
+
+
+async def _valida_servico_e_conflito(servico_id: str, horario_inicio: datetime) -> tuple[dict, dict, datetime]:
+    """Parte compartilhada entre o fluxo normal (app) e o público (link do
+    WhatsApp): busca o serviço, calcula horário_fim, e checa sobreposição
+    de agenda. Devolve (servico, profissional_doc, horario_fim)."""
+    svc = await db.servicos.find_one({"servico_id": servico_id, "ativo": True}, {"_id": 0})
+    if not svc:
+        raise HTTPException(404, "Serviço não encontrado")
+    horario = _aware(horario_inicio)
+    if horario <= _now():
+        raise HTTPException(422, "Horário deve ser futuro")
+    horario_fim = horario + timedelta(minutes=svc["duracao_min"])
+    conflito = await db.agendamentos.find_one({
+        "profissional_id": svc["profissional_id"],
+        "hold_status": {"$in": ["autorizado", "cancelando", "capturado_total", "capturado_taxa", "pago_integral", "aguardando_pix"]},
+        "horario_inicio": {"$lt": horario_fim},
+        "horario_fim": {"$gt": horario},
+    })
+    if conflito:
+        raise HTTPException(409, "Esse horário acabou de ser reservado por outro cliente. Escolha outro.")
+    prof = await db.users.find_one({"user_id": svc["profissional_id"]}, {"_id": 0})
+    return svc, prof, horario_fim
 
 
 # ---------------------------------------------------------------------------
@@ -897,7 +980,29 @@ async def connect_onboarding(
         if not acct_id:
             raise HTTPException(400, "Connect não habilitado na conta Stripe da plataforma. Ative em https://dashboard.stripe.com/connect")
         await db.users.update_one({"user_id": doc["user_id"]}, {"$set": {"stripe_account_id": acct_id}})
-    url = await gateway.create_onboarding_link(acct_id, return_url=return_url, refresh_url=refresh_url)
+
+    try:
+        url = await gateway.create_onboarding_link(acct_id, return_url=return_url, refresh_url=refresh_url)
+    except InvalidPaymentRequestError as e:
+        if "No such" not in str(e):
+            raise HTTPException(400, str(e))
+        # Mesmo cenário do customer_id órfão nos planos: a conta conectada
+        # salva é de outro modo/conta do Stripe (ex: foi criada em modo
+        # live, depois trocamos pra chave de teste) — recria e tenta de novo.
+        logging.warning("stripe_account_id %s não existe na conta/modo atual — recriando", acct_id)
+        acct_id = await gateway.create_connect_account(
+            doc["email"], doc["name"], country=MOEDA_PAIS_CONNECT.get(doc.get("moeda") or DEFAULT_MOEDA, "BR")
+        )
+        if not acct_id:
+            raise HTTPException(400, "Connect não habilitado na conta Stripe da plataforma. Ative em https://dashboard.stripe.com/connect")
+        await db.users.update_one({"user_id": doc["user_id"]}, {"$set": {"stripe_account_id": acct_id}})
+        try:
+            url = await gateway.create_onboarding_link(acct_id, return_url=return_url, refresh_url=refresh_url)
+        except InvalidPaymentRequestError as e2:
+            raise HTTPException(400, str(e2))
+    except PaymentError:
+        logging.exception("connect_onboarding falhou")
+        raise HTTPException(502, "Falha ao gerar link de onboarding junto ao gateway")
     return ConnectLink(url=url)
 
 
@@ -956,7 +1061,7 @@ async def plano_subscription_intent(request: Request, payload: PlanoCheckoutRequ
     try:
         ephemeral_key, sub = await _prepare_payment_sheet(billing_customer_id)
     except InvalidPaymentRequestError as e:
-        if "No such customer" not in str(e):
+        if "No such" not in str(e):
             raise HTTPException(400, str(e))
         # O customer_id salvo é de outra conta/modo do Stripe (ex: trocamos
         # de chave live pra teste durante o desenvolvimento) — clientes não
@@ -1136,6 +1241,168 @@ async def criar_agendamento(request: Request, payload: AgendamentoCreate, author
         "criado_em": _now(),
     })
     return await _hydrate(doc)
+
+
+@api_router.post("/public/agendamentos/cartao", response_model=Agendamento)
+@limiter.limit("10/minute")
+async def criar_agendamento_publico_cartao(request: Request, payload: AgendamentoPublicoCartaoRequest):
+    """Mesmo fluxo de hold do endpoint autenticado, mas pro cliente que vem
+    do link do WhatsApp (sem conta/sessão no app) — o cartão foi coletado
+    na página web via Stripe.js Elements, não no Payment Sheet nativo."""
+    cliente = await _find_or_create_cliente_por_telefone(payload.nome, payload.telefone)
+    svc, prof, horario_fim = await _valida_servico_e_conflito(payload.servico_id, payload.horario_inicio)
+    if svc["profissional_id"] != payload.profissional_id:
+        raise HTTPException(400, "servico_id não pertence ao profissional_id informado")
+    horario = _aware(payload.horario_inicio)
+
+    destination = None
+    if prof and prof.get("connect_ready") and prof.get("stripe_account_id"):
+        destination = prof["stripe_account_id"]
+
+    customer_id = await gateway.ensure_customer(cliente["user_id"], cliente["email"], cliente["name"])
+
+    try:
+        agendamento_id = f"agd_{uuid.uuid4().hex[:12]}"
+        hold_kwargs = dict(
+            customer_id=customer_id,
+            payment_method_id=payload.payment_method_id,
+            amount_centavos=svc["valor_centavos"],
+            moeda=svc["moeda"],
+            fee_bps=_fee_bps_for(prof),
+            idempotency_key=f"hold_{agendamento_id}",
+            metadata={"servico_id": svc["servico_id"], "cliente_id": cliente["user_id"], "origem": "link_publico"},
+        )
+        if GATEWAY_KIND == "stripe":
+            hold_kwargs["destination_account_id"] = destination
+        hold = await gateway.authorize(**hold_kwargs)
+    except CardDeclinedError:
+        raise HTTPException(402, "Cartão recusado pela operadora. Tente outro cartão.")
+    except GatewayUnavailableError:
+        raise HTTPException(503, "Gateway de pagamento indisponível no momento. Tente novamente em instantes.")
+    except (InvalidPaymentRequestError, PaymentError):
+        logging.exception("hold falhou (link público)")
+        raise HTTPException(402, "Falha ao autorizar cartão")
+
+    doc = {
+        "agendamento_id": agendamento_id,
+        "profissional_id": svc["profissional_id"],
+        "cliente_id": cliente["user_id"],
+        "servico_id": svc["servico_id"],
+        "horario_inicio": horario, "horario_fim": horario_fim,
+        "valor_total_centavos": svc["valor_centavos"],
+        "valor_no_show_centavos": svc["taxa_no_show_centavos"],
+        "moeda": svc["moeda"],
+        "status_agendamento": "agendado", "status_confirmacao": "pendente",
+        "payment_intent_id": hold["payment_intent_id"],
+        "hold_status": "autorizado",
+        "hold_expira_em": hold["hold_expira_em"],
+        "janela_confirmacao_expira_em": horario_fim + timedelta(hours=24),
+        "valor_capturado_centavos": 0,
+        "connect_destination": destination,
+        "origem": "link_publico",
+        "criado_em": _now(),
+        "push_pergunta_enviada_em": None,
+        "push_urgencia_enviada_em": None,
+    }
+    try:
+        await db.agendamentos.insert_one(dict(doc))
+    except DuplicateKeyError:
+        try:
+            await gateway.void(hold["payment_intent_id"], idempotency_key=f"void_race_{agendamento_id}")
+        except PaymentError:
+            logging.exception("Falha ao desfazer hold órfão de corrida p/ %s", agendamento_id)
+        raise HTTPException(409, "Esse horário acabou de ser reservado por outro cliente. Escolha outro.")
+    await db.transacoes.insert_one({
+        "transacao_id": f"tx_{uuid.uuid4().hex[:12]}",
+        "agendamento_id": doc["agendamento_id"], "tipo": "authorization",
+        "valor_centavos": doc["valor_total_centavos"], "moeda": doc["moeda"],
+        "gateway_object_id": doc["payment_intent_id"], "status": "requires_capture",
+        "criado_em": _now(),
+    })
+    return await _hydrate(doc)
+
+
+@api_router.post("/public/agendamentos/pix", response_model=AgendamentoPublicoPixResponse)
+@limiter.limit("10/minute")
+async def criar_agendamento_publico_pix(request: Request, payload: AgendamentoPublicoCreate):
+    """Pix não suporta hold (ver create_pix_payment_intent) — cobra o valor
+    TOTAL do serviço de uma vez, sem proteção de no-show. O agendamento
+    fica reservado por tempo LIMITADO (PIX_RESERVA_MINUTOS) esperando o
+    pagamento confirmar via webhook; se expirar sem pagar, libera o
+    horário sozinho (job _expirar_pix_pendentes)."""
+    if GATEWAY_KIND != "stripe":
+        raise HTTPException(400, "Pix requer gateway Stripe real")
+    cliente = await _find_or_create_cliente_por_telefone(payload.nome, payload.telefone)
+    svc, prof, horario_fim = await _valida_servico_e_conflito(payload.servico_id, payload.horario_inicio)
+    if svc["profissional_id"] != payload.profissional_id:
+        raise HTTPException(400, "servico_id não pertence ao profissional_id informado")
+    horario = _aware(payload.horario_inicio)
+
+    destination = None
+    if prof and prof.get("connect_ready") and prof.get("stripe_account_id"):
+        destination = prof["stripe_account_id"]
+
+    agendamento_id = f"agd_{uuid.uuid4().hex[:12]}"
+    try:
+        pix = await gateway.create_pix_payment_intent(
+            amount_centavos=svc["valor_centavos"],
+            moeda=svc["moeda"],
+            fee_bps=_fee_bps_for(prof),
+            idempotency_key=f"pix_{agendamento_id}",
+            metadata={"agendamento_id": agendamento_id, "servico_id": svc["servico_id"], "cliente_id": cliente["user_id"]},
+            destination_account_id=destination,
+        )
+    except (InvalidPaymentRequestError, PaymentError):
+        logging.exception("criação de PaymentIntent Pix falhou")
+        raise HTTPException(502, "Falha ao gerar cobrança Pix junto ao gateway")
+
+    expira_em = _now() + timedelta(minutes=PIX_RESERVA_MINUTOS)
+    doc = {
+        "agendamento_id": agendamento_id,
+        "profissional_id": svc["profissional_id"],
+        "cliente_id": cliente["user_id"],
+        "servico_id": svc["servico_id"],
+        "horario_inicio": horario, "horario_fim": horario_fim,
+        "valor_total_centavos": svc["valor_centavos"],
+        "valor_no_show_centavos": 0,  # Pix já cobrou o total — não há taxa de no-show separada
+        "moeda": svc["moeda"],
+        "status_agendamento": "agendado", "status_confirmacao": "pendente",
+        "payment_intent_id": pix["payment_intent_id"],
+        "hold_status": "aguardando_pix",
+        "hold_expira_em": expira_em,
+        "janela_confirmacao_expira_em": horario_fim + timedelta(hours=24),
+        "valor_capturado_centavos": 0,
+        "connect_destination": destination,
+        "metodo_pagamento": "pix",
+        "origem": "link_publico",
+        "criado_em": _now(),
+        "push_pergunta_enviada_em": None,
+        "push_urgencia_enviada_em": None,
+    }
+    try:
+        await db.agendamentos.insert_one(dict(doc))
+    except DuplicateKeyError:
+        raise HTTPException(409, "Esse horário acabou de ser reservado por outro cliente. Escolha outro.")
+    return AgendamentoPublicoPixResponse(
+        agendamento_id=agendamento_id,
+        payment_intent_client_secret=pix["client_secret"],
+        qr_code_data=pix.get("qr_code_data"),
+        hosted_instructions_url=pix.get("hosted_instructions_url"),
+        expira_em=expira_em,
+    )
+
+
+@api_router.get("/public/agendamentos/{agendamento_id}/status")
+@limiter.limit("60/minute")
+async def status_agendamento_publico(request: Request, agendamento_id: str):
+    """Endpoint público (sem auth) pra página web do link do WhatsApp fazer
+    polling e saber quando o Pix confirmou — o pagamento acontece fora do
+    nosso controle (app do banco do cliente), então não temos como saber
+    na hora, só via webhook + o cliente checando de volta."""
+    doc = await db.agendamentos.find_one({"agendamento_id": agendamento_id}, {"_id": 0, "hold_status": 1, "status_agendamento": 1})
+    if not doc:
+        raise HTTPException(404, "Agendamento não encontrado")
+    return {"hold_status": doc["hold_status"], "status_agendamento": doc["status_agendamento"]}
 
 
 @api_router.get("/agendamentos", response_model=list[Agendamento])
@@ -1322,6 +1589,19 @@ async def reminders_janela(
     return {"count": len(items), "items": [await _hydrate(it) for it in items]}
 
 
+async def _expirar_pix_pendentes() -> int:
+    """Reservas via Pix (link público) que passaram do prazo sem confirmar
+    pagamento — libera o horário pra outro cliente poder agendar. Diferente
+    do fluxo de cartão, não precisa desfazer hold nenhum no gateway: Pix
+    nunca trava nada no lado do cliente antes de pagar de verdade."""
+    now = _now()
+    result = await db.agendamentos.update_many(
+        {"hold_status": "aguardando_pix", "hold_expira_em": {"$lt": now}},
+        {"$set": {"hold_status": "expirado", "status_agendamento": "cancelado", "status_confirmacao": "sem_resposta"}},
+    )
+    return result.modified_count
+
+
 async def _expirar_janela() -> int:
     """Lógica de negócio isolada da rota HTTP para que o scheduler em processo
     possa chamá-la diretamente, sem dar uma volta desnecessária por HTTP (e
@@ -1467,6 +1747,9 @@ _scheduler = AsyncIOScheduler(timezone="UTC")
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await db.users.create_index("email", unique=True)
+    # esparso: só usuários criados via link público (WhatsApp) têm telefone;
+    # evita duplicar o mesmo cliente se ele volta a agendar pelo mesmo número.
+    await db.users.create_index("telefone", unique=True, sparse=True)
     await db.users.create_index("user_id", unique=True)
     await db.user_sessions.create_index("session_token", unique=True)
     await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
@@ -1500,6 +1783,10 @@ async def lifespan(_: FastAPI):
     # suficiente para não gerar carga, frequente o bastante para a UX de
     # "liberado automaticamente" fazer sentido.
     _scheduler.add_job(_expirar_janela, "interval", minutes=5, id="expirar_janela", max_instances=1)
+    # Reservas via Pix do link público expiram bem mais rápido (minutos, não
+    # horas) — o cliente decide na hora se paga ou não, não faz sentido
+    # segurar o horário por muito tempo esperando. Roda a cada 2 min.
+    _scheduler.add_job(_expirar_pix_pendentes, "interval", minutes=2, id="expirar_pix_pendentes", max_instances=1)
     # Mesma cadência para as notificações de confirmação — pergunta assim
     # que o horário termina, e aviso de urgência perto do hold expirar.
     _scheduler.add_job(_enviar_pushes_confirmacao, "interval", minutes=5, id="enviar_pushes", max_instances=1)

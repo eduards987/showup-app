@@ -201,6 +201,53 @@ class StripeGateway:
             "amount_capturable": pi.amount_capturable,
         }
 
+    async def create_pix_payment_intent(
+        self,
+        amount_centavos: int,
+        idempotency_key: str,
+        moeda: str = "BRL",
+        fee_bps: int = 1000,
+        metadata: Optional[dict[str, Any]] = None,
+        destination_account_id: Optional[str] = None,
+    ) -> dict:
+        """Pix não suporta capture_method='manual' (confirmado na doc oficial
+        da Stripe — é sempre instantâneo/irreversível, sem conceito de hold).
+        Por isso este método cobra o valor TOTAL do serviço de uma vez, sem
+        a proteção de no-show do fluxo de cartão — é um caminho
+        deliberadamente diferente, não um "hold que ainda não implementamos".
+
+        Confirma o PaymentIntent JÁ NA CRIAÇÃO (confirm=True,
+        payment_method_data type=pix) — assim o código Pix "copia e cola" e
+        o QR code vêm prontos na própria resposta, sem precisar do Stripe.js
+        no navegador do cliente (que exigiria carregar script de um domínio
+        fora da nossa lista de origens permitidas na página publicada)."""
+        kwargs: dict[str, Any] = dict(
+            amount=amount_centavos,
+            currency=moeda.lower(),
+            payment_method_types=["pix"],
+            payment_method_data={"type": "pix"},
+            confirm=True,
+            metadata=metadata or {},
+        )
+        if destination_account_id:
+            fee = (amount_centavos * fee_bps) // 10_000
+            kwargs["transfer_data"] = {"destination": destination_account_id}
+            kwargs["application_fee_amount"] = fee
+        try:
+            pi = stripe.PaymentIntent.create(**kwargs, idempotency_key=idempotency_key)
+        except stripe.error.StripeError as e:
+            log.warning("create_pix_payment_intent falhou (idempotency_key=%s): %s", idempotency_key, e)
+            raise _translate_stripe_error(e) from e
+        qr = None
+        if pi.next_action and getattr(pi.next_action, "pix_display_qr_code", None):
+            qr = pi.next_action.pix_display_qr_code
+        return {
+            "payment_intent_id": pi.id,
+            "client_secret": pi.client_secret,
+            "qr_code_data": qr.data if qr else None,
+            "hosted_instructions_url": qr.hosted_instructions_url if qr else None,
+        }
+
     async def void(self, payment_intent_id: str, idempotency_key: str) -> dict:
         try:
             pi = stripe.PaymentIntent.cancel(payment_intent_id, idempotency_key=idempotency_key)
@@ -236,17 +283,22 @@ class StripeGateway:
             if "Connect" in str(e):
                 log.warning("Connect not enabled on the platform account")
                 return None
-            raise
+            raise _translate_stripe_error(e) from e
+        except stripe.error.StripeError as e:
+            raise _translate_stripe_error(e) from e
 
     async def create_onboarding_link(
         self, account_id: str, return_url: str, refresh_url: str
     ) -> str:
-        link = stripe.AccountLink.create(
-            account=account_id,
-            refresh_url=refresh_url,
-            return_url=return_url,
-            type="account_onboarding",
-        )
+        try:
+            link = stripe.AccountLink.create(
+                account=account_id,
+                refresh_url=refresh_url,
+                return_url=return_url,
+                type="account_onboarding",
+            )
+        except stripe.error.StripeError as e:
+            raise _translate_stripe_error(e) from e
         return link.url
 
     async def account_status(self, account_id: str) -> dict:
