@@ -1,0 +1,184 @@
+{
+  "app_name": "HoldBooked",
+  "personality": "1 iOS-Native Clean",
+  "personality_one_liner": "A trustworthy, refined, and frictionless scheduling experience built on warm stone tones and sage green to balance financial security with approachable wellness.",
+  "color": {
+    "surface": "#F7F6F2",
+    "onSurface": "#1A1C1A",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#1A1C1A",
+    "surfaceTertiary": "#EAE8E3",
+    "onSurfaceTertiary": "#424543",
+    "surfaceInverse": "#2C2E2D",
+    "onSurfaceInverse": "#FFFFFF",
+    "brand": "#5C7C64",
+    "brandPrimary": "#5C7C64",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#9CAEA2",
+    "onBrandSecondary": "#1A1C1A",
+    "brandTertiary": "#E4EBE6",
+    "onBrandTertiary": "#3B5241",
+    "success": "#34C759",
+    "onSuccess": "#FFFFFF",
+    "warning": "#FF9F0A",
+    "onWarning": "#FFFFFF",
+    "error": "#FF3B30",
+    "onError": "#FFFFFF",
+    "info": "#4A4C4B",
+    "onInfo": "#FFFFFF",
+    "border": "#E5E3DF",
+    "borderStrong": "#C2C0BC",
+    "divider": "#E5E3DF",
+    "muted": "#8A8D8B",
+    "onBrand": "#FFFFFF"
+  },
+  "typography": {
+    "displayFontFamily": "Plus Jakarta Sans",
+    "textFontFamily": "Plus Jakarta Sans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Use iOS-native spacing rhythms. Ensure generous vertical breathing room and minimum 56pt tappable height for lists. Use safe-area paddings at all screen roots.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "1",
+  "navigation": "bottom_tabs",
+  "icon_set": "Ionicons",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use on bottom tab bar when content scrolls behind",
+      "Use on sticky bottom pay bar in checkout screens",
+      "Use on sticky headers over scrolling content",
+      "Pair with a translucent tinted base (≥70% of surface) underneath to guarantee text readability"
+    ],
+    "dont's": [
+      "Never apply to form fields, body text regions, or dense list rows",
+      "Do not use on low-end Android (fallback to solid surfaceSecondary)"
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Welcome",
+      "purpose": "First entry point containing the Google Sign-In button and communicating trust.",
+      "states": {
+        "loading": "Centered brand-colored spinner",
+        "empty": "N/A",
+        "error": "Standard error toast with retry"
+      },
+      "layout": "Full-bleed background image with a vertical gradient scrim (transparent to surfaceInverse at bottom). A floating 'surfaceSecondary' card at the bottom holds the logo, value prop text, and a large 'Sign in with Google' button (using Ionicons logo-google)."
+    },
+    {
+      "name": "RoleSelection",
+      "purpose": "A one-time setup screen post-login to branch the app into Client or Professional mode.",
+      "states": {
+        "loading": "Spinner over action",
+        "empty": "N/A",
+        "error": "Error message with retry action"
+      },
+      "layout": "Clean top header. Two large, equal-sized touchable cards stacked vertically. Each card has an icon (e.g., 'person' vs 'briefcase'), a title, and a short description. A sticky 'Continue' CTA sits at the bottom inside a KeyboardAvoidingView/SafeArea."
+    },
+    {
+      "name": "ClientHome",
+      "purpose": "Client dashboard showing upcoming appointments and service search.",
+      "states": {
+        "loading": "Skeleton loading for cards",
+        "empty": "Empty state illustration of a clean desk with 'No upcoming appointments. Book your next session.'",
+        "error": "Failed to load appointments message with retry CTA"
+      },
+      "layout": "Header with user greeting. A prominent 'Next Appointment' card (glassmorphism overlay if over an image, or surfaceSecondary card) with status of the payment hold. Below, a horizontal scrolling list of 'Suggested Professionals' or categories."
+    },
+    {
+      "name": "ProfessionalHome",
+      "purpose": "Professional dashboard showing daily agenda and pending attendance confirmations.",
+      "states": {
+        "loading": "Skeleton rows for agenda",
+        "empty": "Empty state illustration of a clean desk indicating a free schedule today.",
+        "error": "Failed to load agenda message with retry"
+      },
+      "layout": "Top section shows an active horizontal date selector (agenda view). The main body is a vertical list of the day's appointments. Appointments needing action (after time has passed) are highlighted with a 'brandTertiary' background to prompt attendance confirmation."
+    },
+    {
+      "name": "AppointmentActionSheet",
+      "purpose": "Professional view to confirm if the client attended or no-showed.",
+      "states": {
+        "loading": "Spinner on action buttons during API call",
+        "empty": "N/A",
+        "error": "Failed to capture payment alert"
+      },
+      "layout": "Bottom sheet presentation. Shows client details, total hold amount. Features two prominent buttons: Primary 'Client Attended (Capture 100%)' and Secondary/Warning 'No-Show (Capture Fee)'. Includes a countdown text showing when the hold naturally expires."
+    },
+    {
+      "name": "ScheduleCheckout",
+      "purpose": "Client flow to finalize booking and pre-authorize the payment hold.",
+      "states": {
+        "loading": "Processing hold spinner",
+        "empty": "N/A",
+        "error": "Payment failed state with 'Retry Payment' button"
+      },
+      "layout": "Vertical scroll listing service details, selected date/time, and a clear price breakdown (Total vs No-Show Fee). The screen has a fixed sticky bottom pay bar (glassmorphism) with a 'Pre-authorize $XX.XX' primary button. Ensures users don't have to scroll to act."
+    },
+    {
+      "name": "AppointmentDetail",
+      "purpose": "Detailed view of an appointment showing the specific lifecycle of the payment hold.",
+      "states": {
+        "loading": "Skeleton data points",
+        "empty": "N/A",
+        "error": "Failed to fetch details"
+      },
+      "layout": "Hero section with professional's image and a gradient scrim. Below, the appointment time and location. A dedicated 'Payment Status' card (surfaceSecondary) clearly indicates the hold status (Authorized / Captured / Expired) using a colored status badge."
+    }
+  ],
+  "images": {
+    "welcome_bg": {
+      "url": "https://images.unsplash.com/photo-1698486617282-2c9a0e3193f7?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1OTV8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMHdlbGxuZXNzJTIwc2NoZWR1bGluZyUyMGJhY2tncm91bmR8ZW58MHx8fHwxNzg5NTc1NzM5fDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Abstract soft blurred shapes in warm off-white and beige"
+    },
+    "professional_hero": {
+      "url": "https://images.pexels.com/photos/9064679/pexels-photo-9064679.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Professional therapist taking notes during a session"
+    },
+    "empty_calendar": {
+      "url": "https://images.pexels.com/photos/8092402/pexels-photo-8092402.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Minimalist bright desk with a closed laptop and calendar"
+    }
+  },
+  "instructions_to_main_agent": [
+    "CRITICAL: Use the '1 iOS-Native Clean' personality guidelines. Adhere strictly to the color palette. No blues, purples, or indigos are allowed; rely on the provided sage green and warm stone tones.",
+    "Implement a dynamic routing structure based on the user's role (Client vs Professional). Once the role is selected, the app should serve the appropriate tab navigator.",
+    "For the ScheduleCheckout screen, ensure the 'Pre-authorize' button is placed inside a sticky bottom container (outside the ScrollView) with a glass effect, so it remains accessible at all times.",
+    "When rendering images (like the Welcome background or Professional hero image), ALWAYS use a vertical gradient scrim (from transparent to surfaceInverse at the bottom) between the image and any overlay text to guarantee readability.",
+    "Add subtle haptic feedback (using expo-haptics) to the role selection cards, the 'Pre-authorize' button, and the 'Confirm Attendance' actions in the Professional's action sheet.",
+    "For the AppointmentActionSheet, ensure the destructive 'No-Show' action has sufficient friction (e.g., an Alert confirmation) before executing, as it captures funds."
+  ]
+}

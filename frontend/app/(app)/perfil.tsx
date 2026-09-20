@@ -1,0 +1,231 @@
+// Perfil: user info, save card (cliente), sign out.
+
+import Ionicons from "@react-native-vector-icons/ionicons";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "expo-router";
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { CardSetupButton } from "@/src/components/card-setup-button";
+import { api } from "@/src/lib/api";
+import { useAuth } from "@/src/lib/auth";
+import { CardInfo } from "@/src/lib/types";
+import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
+
+const useStyles = makeStyles((c) => ({
+  root: { flex: 1, backgroundColor: c.surface },
+  header: { paddingHorizontal: spacing.xl, paddingVertical: spacing.lg },
+  title: { fontSize: 24, fontWeight: "700", color: c.onSurface },
+  identity: {
+    marginHorizontal: spacing.xl,
+    padding: spacing.lg,
+    backgroundColor: c.surfaceSecondary,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: c.border,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  avatar: {
+    width: 52,
+    height: 52,
+    borderRadius: radius.pill,
+    backgroundColor: c.brandTertiary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: { color: c.brandPrimary, fontWeight: "800", fontSize: 20 },
+  name: { fontSize: 16, fontWeight: "700", color: c.onSurfaceSecondary },
+  email: { fontSize: 13, color: c.muted, marginTop: 2 },
+  roleTag: {
+    marginTop: spacing.xs,
+    alignSelf: "flex-start",
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    backgroundColor: c.brandPrimary,
+  },
+  roleText: { color: c.onBrandPrimary, fontSize: 11, fontWeight: "700" },
+  sectionTitle: {
+    marginHorizontal: spacing.xl,
+    marginTop: spacing.xl,
+    marginBottom: spacing.md,
+    fontSize: 12,
+    fontWeight: "800",
+    color: c.muted,
+    letterSpacing: 1,
+  },
+  card: {
+    marginHorizontal: spacing.xl,
+    padding: spacing.lg,
+    backgroundColor: c.surfaceSecondary,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: c.border,
+    gap: spacing.sm,
+  },
+  cardRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  cardLabel: { fontSize: 14, color: c.onSurfaceSecondary, fontWeight: "600" },
+  cardMeta: { fontSize: 13, color: c.muted },
+  cta: {
+    height: 48,
+    borderRadius: radius.md,
+    backgroundColor: c.brandPrimary,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  ctaText: { color: c.onBrandPrimary, fontSize: 15, fontWeight: "700" },
+  logout: {
+    marginHorizontal: spacing.xl,
+    marginTop: spacing.xxl,
+    height: 48,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: c.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  logoutText: { color: c.error, fontSize: 15, fontWeight: "600" },
+  note: {
+    marginHorizontal: spacing.xl,
+    marginTop: spacing.md,
+    fontSize: 11,
+    color: c.muted,
+    textAlign: "center",
+    lineHeight: 16,
+  },
+  errorText: {
+    color: c.onError,
+    fontSize: 12,
+    marginTop: spacing.sm,
+    textAlign: "center",
+  },
+}));
+
+export default function Perfil() {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const auth = useAuth();
+  const qc = useQueryClient();
+
+  const isCliente = auth.status === "authenticated" && auth.user.role === "cliente";
+
+  const cardQ = useQuery({
+    queryKey: ["card"],
+    queryFn: () => api<CardInfo>("/api/me/card"),
+    enabled: isCliente,
+  });
+
+  if (auth.status !== "authenticated") return null;
+  const user = auth.user;
+  const initials = user.name.split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
+
+  return (
+    <View style={[styles.root, { paddingTop: insets.top }]}>
+      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + spacing.xxl }}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Perfil</Text>
+        </View>
+        <View style={styles.identity}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{initials}</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.name}>{user.name}</Text>
+            <Text style={styles.email}>{user.email}</Text>
+            <View style={styles.roleTag}>
+              <Text style={styles.roleText}>
+                {user.role === "cliente" ? "CLIENTE" : "PROFISSIONAL"}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {isCliente ? (
+          <>
+            <Text style={styles.sectionTitle}>MÉTODO DE PAGAMENTO</Text>
+            <View style={styles.card}>
+              {cardQ.data?.has_card ? (
+                <>
+                  <View style={styles.cardRow}>
+                    <Ionicons name="card" size={20} color={colors.brandPrimary} />
+                    <Text style={styles.cardLabel}>
+                      {cardQ.data.brand?.toUpperCase()} •••• {cardQ.data.last4}
+                    </Text>
+                  </View>
+                  <Text style={styles.cardMeta}>
+                    Expira {cardQ.data.exp_month}/{cardQ.data.exp_year}
+                  </Text>
+                  <Text style={styles.note}>
+                    Cartão salvo com segurança pelo Stripe — nunca passa pelos nossos servidores.
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.cardLabel}>Nenhum cartão cadastrado</Text>
+                  <Text style={styles.cardMeta}>
+                    Precisamos de um cartão para pré-autorizar o hold no ato do agendamento.
+                  </Text>
+                  <CardSetupButton
+                    onSaved={() => {
+                      qc.invalidateQueries({ queryKey: ["card"] });
+                      auth.refresh();
+                    }}
+                  />
+                </>
+              )}
+            </View>
+          </>
+        ) : null}
+
+        {!isCliente ? (
+          <>
+            <Text style={styles.sectionTitle}>CONFIGURAÇÕES DO PROFISSIONAL</Text>
+            <Pressable
+              testID="open-configuracoes"
+              onPress={() => router.push("/(app)/configuracoes")}
+              style={styles.card}
+            >
+              <View style={styles.cardRow}>
+                <Ionicons name="settings-outline" size={20} color={colors.brandPrimary} />
+                <Text style={styles.cardLabel}>Categorias, disponibilidade e Stripe Connect</Text>
+                <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+              </View>
+            </Pressable>
+            <Pressable
+              testID="open-planos"
+              onPress={() => router.push("/(app)/planos")}
+              style={styles.card}
+            >
+              <View style={styles.cardRow}>
+                <Ionicons name="pricetag-outline" size={20} color={colors.brandPrimary} />
+                <Text style={styles.cardLabel}>Plano e taxa por agendamento</Text>
+                <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+              </View>
+            </Pressable>
+          </>
+        ) : null}
+
+        <Pressable
+          testID="logout-button"
+          onPress={auth.signOut}
+          style={styles.logout}
+        >
+          <Text style={styles.logoutText}>Sair</Text>
+        </Pressable>
+      </ScrollView>
+    </View>
+  );
+}

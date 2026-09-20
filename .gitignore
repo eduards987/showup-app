@@ -1,0 +1,57 @@
+# ---------------------------------------------------------------------------
+# Segredos e credenciais — NUNCA versionar, mesmo que sejam "só de teste"
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+backend/.env
+frontend/.env
+memory/test_credentials.md
+
+# ---------------------------------------------------------------------------
+# Backend (Python)
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+venv/
+.venv/
+env/
+
+# ---------------------------------------------------------------------------
+# Frontend (Expo / React Native / Node)
+# ---------------------------------------------------------------------------
+node_modules/
+.expo/
+.expo-shared/
+dist/
+web-build/
+.metro-cache/
+*.jsbundle
+*.hbc
+
+# builds nativos (gerados por `expo prebuild` / EAS build local)
+/ios/
+/android/
+
+# ---------------------------------------------------------------------------
+# Ferramentas / relatórios gerados
+# ---------------------------------------------------------------------------
+.emergent/
+test_reports/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ---------------------------------------------------------------------------
+# Sistema operacional / editor
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

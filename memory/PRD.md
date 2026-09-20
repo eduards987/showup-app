@@ -1,0 +1,1559 @@
+# HoldBooked — PRD
+
+## Vision
+SaaS de agendamentos para prestadores de serviço com **retenção de pagamento anti-no-show**: pré-autorização (hold) no cartão do cliente no ato da reserva; captura total, captura da taxa de no-show, ou liberação natural conforme o profissional confirmar.
+
+## Stack
+- **Frontend**: Expo Router (React Native) — iOS, Android, web preview.
+- **Backend**: FastAPI + Motor + MongoDB.
+- **Auth**: Google Sign-In gerenciada pela Emergent (`https://auth.emergentagent.com`).
+- **Payment gateway**: MOCADO em `/app/backend/gateway.py` (mesma máquina de estados do Stripe `capture_method='manual'`, persistida em MongoDB). Substituição por Stripe real é drop-in — apenas trocar `MockGateway` por `StripeGateway`.
+
+## Papéis
+- Cliente: busca profissionais, reserva serviços, salva cartão de teste, vê status do hold.
+- Profissional: cadastra serviços com valor + taxa de no-show + duração, vê agenda, confirma **compareceu** (captura total) ou **não compareceu** (captura só a taxa).
+
+## Modelo de dados (MongoDB)
+- `users` — user_id, email, name, picture, role.
+- `user_sessions` — session_token, expires_at (TTL 7d).
+- `customer_cards` — user_id, customer_id, payment_method_id, brand, last4.
+- `servicos` — servico_id, profissional_id, valor_centavos, taxa_no_show_centavos, duracao_min, ativo.
+- `agendamentos` — agendamento_id, profissional_id, cliente_id, servico_id, horario_inicio/fim, snapshots de valor+taxa, hold_status, status_confirmacao, payment_intent_id, hold_expira_em, janela_confirmacao_expira_em, valor_capturado_centavos.
+- `transacoes` — ledger imutável (authorization, capture, partial_capture) com gateway_object_id.
+- `gateway_payment_intents` — MockGateway store simulando o PI do Stripe.
+
+## Endpoints
+Auth:
+- `POST /api/auth/session`, `GET /api/auth/me`, `POST /api/auth/role`, `POST /api/auth/logout`
+
+Cliente:
+- `POST /api/me/card`, `GET /api/me/card`
+- `GET /api/profissionais?q=`, `GET /api/profissionais/{id}`
+- `POST /api/agendamentos`, `POST /api/agendamentos/{id}/cancelar`
+- `GET /api/agendamentos`, `GET /api/agendamentos/{id}`
+
+Profissional:
+- `POST /api/servicos`, `GET /api/servicos`, `DELETE /api/servicos/{id}` (soft delete)
+- `POST /api/agendamentos/{id}/confirmar` `{ resultado: compareceu | nao_compareceu }`
+
+Jobs:
+- `POST /api/internal/jobs/expirar-janela` — cron que marca `sem_resposta` + `hold_status=expirado`.
+
+## Máquina de estados do hold
+```
+                            ┌─── compareceu ────────► capturado_total (100% valor)
+autorizado ──confirmar──────┤
+                            └─── nao_compareceu ────► capturado_taxa (só taxa no-show)
+
+autorizado ──cancelar──────► cancelado (void)
+
+autorizado ──janela expira─► expirado (job cron)
+```
+
+## Frontend (screens)
+- `app/welcome.tsx` — Google Sign-In.
+- `app/role-select.tsx` — Cliente / Profissional.
+- Tabs em `(app)/`:
+  - **Início** (`home.tsx`) — cliente vê próximas reservas + banner cartão; profissional vê "precisam de confirmação" + agenda.
+  - **Buscar** (`search.tsx`, só cliente) — lista com filtro por nome.
+  - **Serviços** (`servicos.tsx` + `novo-servico.tsx`, só profissional).
+  - **Reservas** (`agendamentos.tsx`) — lista com badges de hold/confirmação.
+  - **Perfil** (`perfil.tsx`) — cadastro de cartão (cliente), logout.
+- Detalhe: `profissional/[id].tsx`, `book/[servicoId].tsx` (chip de dia/horário, sticky pay bar), `agendamento/[id].tsx` (ações compareceu / no-show com modal de confirmação).
+
+## Testes
+- Backend: 28/28 casos pytest passando (`/app/backend/tests/test_full_backend.py`) cobrindo criação de serviço, hold, captura total/parcial, cancelamento, expiração, RBAC e índices.
+
+## Próximos passos
+- Substituir `MockGateway` por `StripeGateway` quando uma chave real for provida.
+- Proteger `/api/internal/jobs/*` por token de serviço.
+- Migrar `@app.on_event` para `lifespan`.
+- Adicionar disponibilidade real do profissional (hoje slots são gerados no frontend).
+- Notificações (build nativa) para lembrete de janela de confirmação.
+
+## Changelog — Módulos de confiabilidade (auditoria)
+
+### Módulo 1 — Confiabilidade de pagamento
+- `security.py` (novo): guarda de token de serviço para rotas `/internal/*`.
+- `webhooks.py` (novo): `POST /api/webhooks/stripe` com verificação de assinatura,
+  idempotência por event_id, tratamento de payment_intent.payment_failed,
+  charge.dispute.created, account.updated, payment_intent.canceled.
+- Scheduler (APScheduler) chama `_expirar_janela()` automaticamente a cada 5min —
+  antes dependia de chamada manual ao endpoint.
+- `confirmar()` e `_expirar_janela()` usam transição atômica pendente->processando
+  (find_one_and_update) para eliminar corrida entre confirmação e expiração.
+- CORS: allowlist via env var `ALLOWED_ORIGINS` (antes: `*` com credentials, inválido).
+- Migrado `@app.on_event` -> `lifespan`.
+
+### Módulo 2 — Idempotência e erros do gateway
+- `payment_errors.py` (novo): CardDeclinedError, GatewayUnavailableError,
+  InvalidPaymentRequestError — server.py não depende mais do SDK do Stripe
+  para tratar erro.
+- Todas as chamadas ao gateway (authorize/capture/void/expire) agora exigem
+  `idempotency_key` determinística (baseada em agendamento_id) — retry de rede
+  não duplica hold nem captura.
+- `requirements.txt`: adicionado `stripe` (estava faltando — quebraria
+  `pip install` em ambiente limpo) e `apscheduler`.
+
+## Pendente (não coberto ainda)
+- Rate limiting em endpoints de auth/booking.
+- Coleta de cartão real (Payment Sheet) — hoje usa cartão de teste fixo do Stripe.
+- Push notification nativa para pedir confirmação de presença ao profissional.
+- `memory/test_credentials.md` foi REMOVIDO deste pacote por conter segredos de
+  teste — remova-o também do histórico do git antes de tornar o repo público.
+- INTERNAL_SERVICE_TOKEN no .env é um placeholder — gere um valor real com
+  `openssl rand -hex 32` antes de subir o servidor (ele falha o boot sem isso).
+
+### Módulo 3 — Rate limiting
+- Adicionado `slowapi` (Limiter por IP, limite default global de 200/min).
+- Limites específicos nos endpoints de maior risco de abuso:
+  - `POST /api/auth/session` — 10/min (alvo clássico de força-bruta de sessão)
+  - `POST /api/me/card` — 10/min (superfície de "card testing")
+  - `POST /api/agendamentos` — 20/min (cada chamada gera hold real no cartão)
+  - `POST /api/agendamentos/{id}/confirmar` — 30/min
+  - `POST /api/agendamentos/{id}/cancelar` — 30/min
+- BUG REAL encontrado e corrigido durante validação: `from __future__ import
+  annotations` em server.py quebrava a geração do schema OpenAPI nos
+  endpoints decorados com `@limiter.limit(...)` (interação conhecida entre
+  PEP 563 e o wrapper do slowapi). Removido — Python 3.12 não precisa dele
+  para a sintaxe usada no arquivo (list[str], X | None, etc.).
+- Validado de verdade: import do módulo + geração do schema OpenAPI rodando
+  com as versões EXATAS do requirements.txt (fastapi==0.110.1). 27 rotas
+  /api registradas corretamente, nenhum payload vazando para querystring.
+
+### Módulo 4 — Push notification "compareceu?"
+Backend:
+- `expo_push.py` (novo): cliente HTTP puro para a Expo Push API, sem SDK.
+  Detecta token `DeviceNotRegistered` para auto-limpeza.
+- `PUT/DELETE /api/me/push-token`: registra/remove o Expo push token do
+  usuário logado (um token por usuário, mesmo padrão de /me/card).
+- Novo job agendado `_enviar_pushes_confirmacao()` (mesma cadência de 5min do
+  job de expiração):
+  1. "Pergunta": assim que `horario_fim` passa e status ainda é pendente,
+     manda push perguntando se o cliente compareceu.
+  2. "Urgência": quando faltam <2h para o hold expirar sem resposta, manda
+     um segundo push de última chance.
+  Cada uma dispara só uma vez por agendamento (campos
+  `push_pergunta_enviada_em` / `push_urgencia_enviada_em`).
+- Rota manual `/internal/jobs/enviar-pushes` (mesma proteção de token de
+  serviço) para depuração/operação.
+
+Frontend:
+- `src/lib/push-notifications.ts` (novo): pede permissão, obtém o Expo push
+  token (`expo-notifications` + `expo-device`) e registra no backend.
+- `src/lib/use-push-registration.ts` (novo): hook que registra o token para
+  profissionais autenticados e navega para `/agendamento/[id]` ao tocar na
+  notificação (cobre app em background E cold start).
+- Conectado em `app/(app)/_layout.tsx`; `signOut()` em `auth.tsx` agora
+  desregistra o token antes de encerrar a sessão.
+- `app.json`: plugin `expo-notifications` adicionado; `extra.eas.projectId`
+  criado como placeholder — PRECISA ser preenchido com o project ID real
+  (rode `eas init`) antes de gerar um build de produção, senão o token nunca
+  é obtido.
+
+## IMPORTANTE — limitação de plataforma
+Push remoto real (não local) exige um **development build via EAS**, não
+funciona no app Expo Go a partir do SDK 53+ no Android. Teste com
+`eas build --profile development` ou `npx expo run:android` /
+`npx expo run:ios`, nunca só com `expo start` + app Expo Go da loja.
+
+## Validação real feita (não só sintaxe)
+- Backend: import do módulo + geração do schema OpenAPI com as versões
+  pinadas do requirements.txt — 26 rotas, incluindo as duas novas de push.
+- Frontend: `expo-notifications@57.0.19` e `expo-device@57.0.2` instalados
+  de verdade (versões confirmadas compatíveis com o SDK 57 via registry do
+  npm) e `tsc --noEmit` rodado no projeto inteiro — zero erros nos arquivos
+  novos/editados (os erros pré-existentes em configuracoes.tsx, search.tsx,
+  welcome.tsx e theme.ts não são deste módulo e continuam pendentes).
+
+## Módulo 5 — Auditoria completa do projeto (erros e brechas)
+
+### Bugs de lógica/segurança corrigidos no backend
+1. **Double-booking (crítico)**: `criar_agendamento` nunca checava conflito de
+   horário antes de criar o hold. Corrigido com checagem de sobreposição de
+   intervalo + índice único parcial no Mongo (profissional_id+horario_inicio,
+   só entre holds ativos) como defesa em profundidade contra a corrida exata.
+   Em caso de perder a corrida, o hold já autorizado no cartão do perdedor é
+   desfeito automaticamente (void), em vez de ficar órfão.
+2. **Corrida cancelar() x confirmar()/expirar_janela (crítico)**: cancelar()
+   não tinha guarda atômica — um cancelamento podia entrar bem no meio de uma
+   confirmação em andamento e chamar void() num payment_intent que confirmar()
+   estava capturando ao mesmo tempo. Corrigido com a mesma técnica de
+   transição atômica (find_one_and_update) usada em confirmar()/expirar_janela.
+3. **Rótulo errado no cancelamento**: cancelar() sempre gravava
+   status_agendamento="cancelado_cliente", mesmo quando era o profissional
+   quem cancelava. Corrigido para refletir quem realmente cancelou.
+4. **auth/session quebrava em replay**: o redirect de OAuth pode disparar
+   duas vezes no mobile (deep link quente + cold start); a segunda chamada
+   com o mesmo session_token quebrava com 500 por violar o índice único.
+   Trocado insert_one por upsert (replace_one).
+5. **500 cru em disponibilidade malformada**: HH:MM inválido ("25:99") ou
+   hora_fim <= hora_inicio não eram validados, gerando erro não tratado em
+   vez de 422 claro. Adicionados field_validators no Pydantic.
+6. `.dict()` (deprecated no Pydantic v2) trocado por `.model_dump()`.
+
+### Bugs corrigidos no frontend
+- `api.ts`: corpo de erro não-JSON (ex: página HTML de um proxy/gateway)
+  derrubava com SyntaxError crua em vez de ApiError tratável.
+- 4 erros reais de TypeScript pré-existentes (type-check completo do projeto
+  agora passa com ZERO erros):
+  - `ProfissionalPublic` no frontend não tinha o campo `categorias`, que o
+    backend sempre retorna (search.tsx já tentava usá-lo).
+  - `StyleSheet.absoluteFillObject` não existe nos types desta versão de RN
+    — trocado por `StyleSheet.absoluteFill`.
+  - `useColorScheme()` pode devolver "unspecified" (comum no Android), não
+    tratado no `useTheme()`.
+  - `configuracoes.tsx` passava `categorias` possivelmente undefined pro
+    useState tipado como string[].
+
+### Item identificado, NÃO corrigido ainda (decisão de produto necessária)
+- **Fuso horário**: disponibilidade (HH:MM) e cálculo de slots assumem UTC
+  implicitamente. Para profissionais no Brasil (UTC-3), os horários que eles
+  cadastram provavelmente saem 3h defasados do que pretendiam. Precisa de um
+  campo de timezone por profissional + conversão consistente — escopo maior,
+  fica pendente de decisão.
+
+### Validação real (não só sintaxe)
+- Backend: reimportado + schema OpenAPI gerado após cada mudança (26 rotas).
+- Backend: os 3 cenários do novo validador de disponibilidade testados de
+  verdade (válido / formato inválido / fim antes do início) — todos corretos.
+- Frontend: `tsc --noEmit` no projeto inteiro — 0 erros (eram 6 antes desta
+  auditoria).
+
+## Módulo 6 — Timezone por profissional
+
+Backend:
+- Campo `timezone` no User (default `America/Sao_Paulo`), validado contra
+  uma lista fechada de fusos brasileiros (`TIMEZONES_BR`): São Paulo, Manaus,
+  Rio Branco, Fernando de Noronha. Lista fechada em vez de aceitar qualquer
+  IANA tz — evita erro de digitação e mantém a UI simples (4 opções).
+- `GET /api/timezones` (lista as opções) e `PUT /api/me/timezone`.
+- `slots_disponiveis` reescrito para usar `zoneinfo.ZoneInfo` de verdade: o
+  HH:MM cadastrado em disponibilidade agora é interpretado como hora de
+  parede NO FUSO do profissional, convertido corretamente pro instante UTC
+  via `datetime.combine(data, hora, tzinfo=tz)`. O "hoje" usado pra gerar os
+  próximos 14 dias também passou a ser calculado no calendário local do
+  profissional, não em UTC (importante pra quem está perto da virada do dia).
+- `timezone` exposto em `ProfissionalDetail` para o app do cliente rotular
+  os horários mostrados.
+
+Frontend:
+- `configuracoes.tsx`: nova seção "FUSO HORÁRIO" (mesmo padrão visual de
+  categorias) pro profissional escolher e salvar.
+- `book/[servicoId].tsx`: mostra "Horários no fuso de Brasília (UTC-3)" (ou
+  o fuso correspondente) acima da lista de dias/horários, pro cliente nunca
+  ficar em dúvida sobre a que horário local aquilo corresponde.
+- `TIMEZONE_LABELS` centralizado em `src/lib/format.ts` (usado nas duas telas).
+
+### Validação real
+- Testei a conversão de fuso de verdade (não só leitura de código): 09:00
+  em America/Sao_Paulo -> 12:00 UTC ✓; 09:00 em America/Manaus -> 13:00 UTC
+  ✓; timezone inválida/ausente cai pro default sem quebrar ✓.
+- Backend: reimportado + schema OpenAPI (28 rotas agora).
+- Frontend: `tsc --noEmit` no projeto inteiro — 0 erros.
+
+## Módulo 7 — Suporte a múltiplas moedas ("código pra todos os países")
+
+Contexto: moeda estava hardcoded em "BRL"/"brl" em 5 lugares do backend +
+formatação fixa em pt-BR no frontend. Generalizado pra qualquer país que o
+Stripe atenda, sem quebrar nada que já funcionava em BRL.
+
+Backend:
+- Moeda é uma propriedade do PROFISSIONAL (`User.moeda`, default BRL), não
+  do serviço individual — decisão deliberada: a conta Connect dele só
+  liquida numa moeda, então faz mais sentido configurar uma vez no perfil.
+  Serviço criado herda a moeda do profissional NO MOMENTO da criação
+  (mudar depois não altera serviços já existentes, só os próximos).
+- `MOEDAS_SUPORTADAS`: lista fechada (BRL, USD, EUR, GBP, MXN, ARS, COP,
+  CLP, CAD, AUD) — mesma filosofia de TIMEZONES_BR (evita erro de digitação,
+  fácil de estender depois sem tocar em mais nada).
+- `GET /api/moedas` + `PUT /api/me/moeda`.
+- Os 5 pontos com "BRL"/"brl" hardcoded (criar_servico, criar_agendamento,
+  doc do agendamento, transação de captura, stripe_gateway.py, gateway.py)
+  agora leem a moeda real do profissional/serviço/agendamento.
+- `StripeGateway.authorize()` e `MockGateway.authorize()` ganharam parâmetro
+  `moeda` (default "BRL" só por compatibilidade, sempre passado explicitamente
+  pelas chamadas reais).
+
+Frontend:
+- `formatBRL()` → `formatMoney(centavos, moeda)`, usando `Intl` com locale
+  indefinido (deixa o dispositivo formatar, só a moeda vem do dado) —
+  atualizado nos 6 arquivos que exibem valores monetários (17 chamadas).
+  `formatBRL` mantido como alias deprecated (chama formatMoney com "BRL")
+  como rede de segurança.
+- Nova seção "MOEDA" em Configurações, mesmo padrão visual de fuso horário.
+- `User.moeda` adicionado ao tipo de auth.
+
+### O que "todos os países" NÃO cobre ainda (decisão de escopo, não bug)
+- **Idioma/tradução**: todo o app está em português. Suportar outro idioma
+  é um projeto de i18n separado (extrair strings, sistema de tradução),
+  não coberto por este módulo.
+- **Onboarding de Connect por país**: já funciona automaticamente — o
+  Stripe Connect Express onboarding (pra onde o app já redireciona) se
+  adapta sozinho às exigências legais/fiscais de cada país suportado pelo
+  Stripe. Nenhuma mudança de código necessária aqui.
+- **Preço das assinaturas (Free/Profissional/Top) em outras moedas**: usar
+  o recurso de multi-currency Price do próprio Stripe (a tela que já vimos)
+  é o caminho certo, mas os valores por moeda devem ser escolhidos a dedo
+  por mercado (ex: US$4,99), não gerados por conversão automática de câmbio.
+
+### Validação real
+- Testei de verdade (não só leitura de código): `MockGateway.authorize()`
+  chamado com moeda="USD", "EUR" e sem moeda (default) — o PaymentIntent
+  simulado grava a currency correta em cada caso (usd/eur/brl).
+- Backend: reimportado + schema OpenAPI (30 rotas).
+- Frontend: `tsc --noEmit` no projeto inteiro — 0 erros.
+
+## Módulo 8 — Planos de assinatura (Free/Profissional/Top)
+
+Backend:
+- `PLANOS`: Free (10%, R$0), Profissional (5%, R$19,90), Top (2%, R$59,90).
+- Campo `plano` no profissional (default "free"); `_fee_bps_for()` calcula a
+  taxa vigente por chamada (nunca afeta agendamentos já criados, só os
+  próximos — cada authorize() já grava o fee_bps no momento da criação via
+  application_fee_amount do PaymentIntent).
+- Corrigido de brinde: `create_connect_account` tinha `country="BR"` fixo —
+  agora usa `MOEDA_PAIS_CONNECT` pra abrir a conta Connect no país certo a
+  partir da moeda do profissional (heurística razoável, não uma seleção de
+  país explícita — ver comentário no código).
+- Endpoints: `GET /api/planos`, `POST /api/me/plano/checkout` (cria Checkout
+  Session do Stripe em modo subscription), `POST /api/me/plano/cancelar`
+  (cancela a assinatura e volta pro Free imediatamente).
+- Webhook: `checkout.session.completed` ativa o plano de verdade (fonte da
+  verdade — não confia no retorno síncrono do checkout, que pode não
+  acontecer se o usuário fechar o navegador antes);
+  `customer.subscription.deleted/updated` reverte pro Free se a assinatura
+  cair (cartão expirado, cancelamento direto no dashboard do Stripe, etc).
+- `.env`: `STRIPE_PRICE_ID_PROFISSIONAL` / `STRIPE_PRICE_ID_TOP` são
+  PLACEHOLDERS vazios — sem eles, `/api/planos` marca `disponivel: false` e
+  o checkout recusa com erro claro (não quebra).
+- `APP_SAAS_FEE_BPS` marcado como obsoleto no `.env` (substituído por PLANOS).
+
+Frontend:
+- `src/lib/open-external-checkout.ts` (novo): helper que abre fluxos
+  hospedados (Stripe Checkout, Connect onboarding) corretamente em web E
+  nativo. BUG REAL corrigido de brinde: o fluxo de Connect onboarding só
+  funcionava na web (dependia de `window`, inexistente em React Native) —
+  no app nativo ele não fazia nada, silenciosamente. Reescrito com
+  `expo-web-browser` + `expo-linking` pro caso nativo.
+- `app/(app)/planos.tsx` (novo): mostra os 3 planos, taxa de cada um, plano
+  atual destacado, botão de assinar (abre Checkout) ou cancelar (volta pro
+  Free). Planos sem Price ID configurado mostram "Em breve" em vez de
+  quebrar.
+- Card "Plano e taxa por agendamento" adicionado em `perfil.tsx`, mesmo
+  padrão visual do card de Configurações.
+
+### Limitação conhecida (não é bug, é natureza do fluxo assíncrono)
+Depois do checkout, a confirmação de verdade vem do webhook do Stripe, que
+pode levar alguns segundos pra chegar depois do navegador fechar. A tela
+atualiza otimisticamente (auth.refresh() logo após o retorno), mas o plano
+pode não refletir instantaneamente — normal, resolve sozinho em poucos
+segundos.
+
+### Validação real
+- Testei de verdade `_fee_bps_for()` nos 5 cenários (free/profissional/top/
+  sem doc/plano desconhecido) — todos corretos.
+- Backend: reimportado + schema OpenAPI (33 rotas).
+- Frontend: `npx expo export --platform web` rodou com sucesso (Metro
+  empacotou o app inteiro, 1376 módulos, sem erro de bundling) — confirma
+  que `planos.tsx` e as mudanças em `perfil.tsx`/`configuracoes.tsx` estão
+  sintaticamente corretas e todos os imports resolvem de verdade.
+- `tsc --noEmit`: 1 erro remanescente, que é falso-positivo de cache do
+  expo-router (`.expo/types/router.d.ts` desatualizado — arquivo gerado,
+  não versionado, não vai no zip, se regenera sozinho no primeiro
+  `expo start` do usuário).
+
+## Módulo 9 — Coleta de cartão real (Stripe Payment Sheet) + app mobile-only
+
+### Decisão de escopo: app é MOBILE-ONLY, sem build web
+Toda lógica condicional de plataforma web foi removida do projeto:
+- `app.json`: removido o bloco `"web"` (bundler/output/favicon).
+- `package.json`: removidas `react-dom` e `react-native-web` (não usadas
+  diretamente em lugar nenhum, só existiam pra suportar build web).
+- `src/utils/storage/index.web.ts` REMOVIDO — só resta `index.ts` (Keychain/
+  EncryptedSharedPreferences reais via expo-secure-store).
+- `auth.tsx`: removida toda a ramificação `Platform.OS === "web"` no fluxo
+  de login/sessão (extração de session_id da URL do navegador, etc.) — só
+  resta o fluxo nativo (deep link + WebBrowser.openAuthSessionAsync).
+- `open-external-checkout.ts` e `push-notifications.ts`: mesma limpeza.
+
+Por que isso importa tecnicamente, não só como preferência: o pacote
+`@stripe/stripe-react-native` importa código nativo no NÍVEL DO MÓDULO —
+isso quebrava o build web inteiro mesmo com um `if (Platform.OS...)` dentro
+do componente (o bundler tenta resolver o import antes de qualquer código
+rodar). Descobri isso rodando `expo export --platform web` de verdade, não
+só com `tsc`. Como a decisão agora é não ter build web, esse problema
+simplesmente deixa de existir — não precisou de nenhuma divisão de arquivo
+`.native.tsx`/`.web.tsx` (cheguei a criar essa divisão numa iteração
+anterior desta mesma conversa e depois consolidei de volta em arquivos
+únicos quando o escopo mudou para mobile-only).
+
+### Coleta de cartão real
+Backend (`stripe_gateway.py` + `gateway.py` mock + `server.py`):
+- Removido `attach_test_card` (usava o cartão de teste fixo `pm_card_visa`).
+- Novo fluxo com `SetupIntent` (não `PaymentIntent`) — apropriado pra só
+  salvar um cartão pra uso futuro (`usage="off_session"`, o que já é
+  exatamente o que `authorize()` faz depois nos agendamentos).
+- `POST /api/me/card/setup-intent`: cria/reusa o Customer do cliente, gera
+  uma Ephemeral Key (exigida pelo Payment Sheet pra gerenciar métodos de
+  pagamento do customer com segurança) e um SetupIntent. Retorna os 3
+  segredos que o app precisa pra inicializar o Payment Sheet.
+- `POST /api/me/card/confirm`: chamado depois que o Payment Sheet já
+  confirmou no app. NÃO confia cegamente no relato do cliente — busca o
+  SetupIntent de volta no Stripe e confere `status == "succeeded"` e
+  `customer == <o customer certo>` antes de salvar qualquer coisa como
+  cartão válido. Testei de verdade os dois casos (confirma certo, rejeita
+  customer errado).
+- Sem webhook adicional aqui (diferente do checkout de assinatura) —
+  decisão deliberada: como o /confirm já busca a verdade direto no Stripe
+  de forma síncrona, um webhook seria redundante pra este fluxo específico.
+
+Frontend:
+- `@stripe/stripe-react-native@0.77.0` instalado, plugin configurado em
+  `app.json` (sem Apple Pay/Google Pay — fora de escopo, exige setup de
+  merchant ID separado).
+- `EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY` — PLACEHOLDER vazio no `.env`,
+  precisa da chave publicável real (Dashboard > Developers > API keys).
+- `src/components/card-setup-button.tsx` (novo): fluxo completo
+  setup-intent -> initPaymentSheet -> presentPaymentSheet -> confirm.
+- `src/components/stripe-app-provider.tsx` (novo): envolve a árvore com
+  `StripeProvider` (só pula se a chave publicável não estiver configurada
+  ainda — não é mais sobre plataforma).
+- `perfil.tsx`: nota antiga "Cartão de teste, não é feita cobrança real"
+  removida — não é mais verdade, cartões agora podem ser reais dependendo
+  de qual chave Stripe (test ou live) está configurada no backend.
+- IMPORTANTE: `@stripe/stripe-react-native` EXIGE development build via
+  EAS — não funciona no app Expo Go da loja (mesma exigência já documentada
+  pra push notification no Módulo 4).
+
+### Validação real
+- Backend: testei o fluxo completo no mock (ensure_customer ->
+  ephemeral_key -> setup_intent -> confirm), incluindo o caso de segurança
+  de rejeitar confirmação com customer_id errado.
+- Frontend: `npx expo export --platform ios` E `--platform android`
+  rodaram com sucesso (1773 módulos cada), confirmando que o app bundla de
+  verdade nas duas plataformas mobile com o SDK do Stripe integrado.
+- `tsc --noEmit`: único erro remanescente é o falso-positivo de cache de
+  rotas já documentado (`.expo/types/router.d.ts`), não relacionado a este
+  módulo.
+
+## Item resolvido — INTERNAL_SERVICE_TOKEN real
+Gerado via `openssl rand -hex 32` (64 caracteres hex) e já substituído no
+`.env` do backend, no lugar do placeholder. Validado: o servidor importa e
+sobe normalmente com o valor real (security.py aceita o token na inicialização).
+
+## Itens resolvidos — Price IDs reais + renomeação Top -> Ultra
+
+- Plano "Top" renomeado para "Ultra" em todo o código (chave do dicionário
+  PLANOS, nome exibido, env var STRIPE_PRICE_ID_TOP -> STRIPE_PRICE_ID_ULTRA,
+  descrição no frontend). Nenhuma referência antiga restante (confirmado via
+  busca no projeto inteiro).
+- `.env`: STRIPE_PRICE_ID_PROFISSIONAL e STRIPE_PRICE_ID_ULTRA preenchidos
+  com os Price IDs reais criados no Stripe Dashboard. Confirmado: os 3
+  planos (free/profissional/ultra) aparecem com `disponivel: true` na rota
+  /api/planos — o checkout dos planos pagos já pode funcionar de verdade.
+- `app/+html.tsx` removido (era o template HTML específico de build web do
+  Expo Router — órfão desde a decisão de app mobile-only no módulo anterior).
+
+### Validação real
+- Backend: reimportado, PLANOS impresso e conferido (3 planos, taxas
+  corretas, disponibilidade correta com os Price IDs reais).
+- Frontend: `expo export --platform ios` rodou com sucesso depois de
+  remover +html.tsx — confirma que a remoção não quebrou nada.
+
+## MongoDB Atlas real configurado (substituindo localhost)
+
+- `.env`: `MONGO_URL` agora aponta pro cluster real do Atlas (`ProjectFirst`,
+  usuário `eduards987_db_user`). `DB_NAME` renomeado de "test_database"
+  (placeholder do template original) para "holdbooked".
+- `requirements.txt`: adicionado `dnspython` (obrigatório pra connection
+  strings `mongodb+srv://`, que é o formato do Atlas — sem isso o
+  `pip install` fica incompleto e a conexão falha só na hora de rodar).
+- Removida a linha `emergentintegrations==0.2.0`: não existe no PyPI
+  público e não é importada em lugar nenhum do código — quebraria
+  `pip install -r requirements.txt` de qualquer pessoa, inclusive você.
+
+### Limitação confirmada deste ambiente sandbox
+Testei de verdade (DNS + conexão TCP) e confirmei: este ambiente de
+desenvolvimento NÃO tem acesso de rede a `*.mongodb.net` — só alguns
+domínios específicos (PyPI, npm, GitHub) são liberados aqui. Por isso não
+consigo rodar a suíte pytest contra o Atlas real a partir daqui; os scripts
+de simulação com mongomock que eu tinha montado foram removidos (ficaram
+obsoletos assim que você trouxe o Atlas real).
+
+### Como rodar a suíte de verdade (você, na sua máquina)
+```
+cd backend
+pip install -r requirements.txt
+export EXPO_PUBLIC_BACKEND_URL=http://127.0.0.1:8001
+uvicorn server:app --host 0.0.0.0 --port 8001 &
+pytest
+```
+O `.env` já tem o MONGO_URL do Atlas — o servidor vai ler de lá sozinho.
+Se o STRIPE_API_KEY no .env for uma chave de teste válida, os testes vão
+exercitar a integração real com o Stripe (modo teste), não um mock.
+
+**Atenção:** o Atlas por padrão só libera conexão do IP que você cadastrou
+no onboarding (Network Access). Se rodar de uma rede diferente, precisa
+adicionar o novo IP lá antes.
+
+## Bug real corrigido — testes usando MongoDB errado (localhost em vez de Atlas)
+
+Causa raiz confirmada (rodado pelo próprio usuário): o servidor (uvicorn)
+carrega o `.env` sozinho via `load_dotenv()` dentro de `server.py`, mas os
+arquivos de teste (`tests/test_*.py`) leem `MONGO_URL`/`DB_NAME` direto de
+`os.environ` SEM carregar o `.env` — como pytest roda num processo
+diferente do servidor, essas variáveis nunca chegavam lá. Resultado: os
+testes caíam no default `mongodb://localhost:27017/test_database` (um
+Mongo que não existe nesse ambiente) enquanto o servidor rodava contra o
+Atlas de verdade — causando "Invalid session" em cascata (24 passed, 34
+failed, 15 errors).
+
+Corrigido com `tests/conftest.py` (convenção padrão do pytest, carregado
+automaticamente antes de qualquer teste) que chama `load_dotenv()` no
+`.env` do backend. Validei de verdade que MONGO_URL/DB_NAME carregam
+corretamente depois disso (sem imprimir a senha).
+
+Também seta EXPO_PUBLIC_BACKEND_URL com um default sensato
+(http://127.0.0.1:8001) caso não seja passada na linha de comando —
+test_auth_endpoints.py exige essa var sem fallback e quebraria com KeyError
+confuso sem isso.
+
+### Ainda não confirmado
+Não sei se isso resolve TODAS as 34 falhas + 15 erros — é muito provável
+que a maioria fosse efeito cascata da mesma causa raiz (sessão/usuário não
+encontrado no banco errado), mas só teremos certeza rodando de novo.
+
+## Bug real encontrado e corrigido — customer_id inconsistente no fluxo de cartão
+
+Ao validar localmente antes de pedir pro usuário rodar de novo, achei um bug
+genuíno de arquitetura no Módulo 9 (não era problema do MongoDB/Atlas):
+`ensure_customer()` só considerava um customer_id "existente" se já houvesse
+um documento em `customer_cards` — mas esse documento só é criado no FINAL
+do fluxo (depois do cartão confirmado). Resultado: `/me/card/setup-intent`
+criava um Customer A, e `/me/card/confirm` (chamado logo em seguida, ainda
+sem customer_cards) criava um Customer B DIFERENTE — o SetupIntent (vinculado
+a A) nunca batia com o customer usado pra confirmar (B), falhando sempre.
+Isso afetaria o Stripe real do mesmo jeito, não só o mock.
+
+Corrigido: `ensure_customer()` agora persiste o customer_id em
+`db.users.stripe_customer_id` assim que criado — idempotente desde a
+primeira chamada, não só depois do cartão confirmado. Mesma correção
+aplicada em `gateway.py` (mock) e `stripe_gateway.py` (real).
+`card_confirm()` simplificado pra sempre usar `ensure_customer()` (que
+agora é confiável) em vez da lógica ad-hoc anterior.
+
+### Testes atualizados pra API nova
+- `tests/conftest.py`: novo helper `attach_test_card()` que simula o que o
+  Payment Sheet faria — pega o SetupIntent, confirma com o cartão de teste
+  oficial do Stripe (`pm_card_visa`, ou nada se for MockGateway, que já
+  marca como succeeded na criação), confirma no backend. Substituído em
+  12 call sites (nos dois arquivos de teste) que ainda chamavam o antigo
+  `POST /api/me/card` (removido no Módulo 9).
+- `test_auth_endpoints.py`: `test_cors_allows_cross_origin` testava o
+  comportamento ANTIGO e inseguro (CORS aberto pra qualquer origem) — é
+  exatamente o que o Módulo 3 corrigiu. Substituído por dois testes:
+  origem cadastrada é aceita, origem não cadastrada é bloqueada.
+
+### Validação real (local, com Mongo simulado — não o Atlas)
+- `attach_test_card()` testado de verdade contra um servidor rodando: 200,
+  brand=visa, last4=4242. Confirma que a correção do customer_id resolveu.
+- CORS: origem cadastrada → aceita; origem não cadastrada → bloqueada.
+- Disponibilidade + slots: criar serviço, setar disponibilidade (7 dias),
+  buscar slots → 195 horários gerados corretamente, todos com
+  iso/day_label/time_label. Sugere que a falha de "slots" relatada era
+  efeito cascata do bug do cartão, não um problema à parte — mas isso só
+  será confirmado de verdade rodando a suíte completa de novo.
+
+## Rate limiting bloqueando a própria suíte de testes
+
+Das 5 falhas restantes, pelo menos 3 eram causadas pelo rate limiting do
+Módulo 3: a suíte chama `/me/card/setup-intent` (limite 10/min) e outros
+endpoints protegidos dezenas de vezes em poucos segundos, todas do mesmo IP
+(localhost) — os próprios testes tomavam 429 em vez do status que estavam
+verificando (ex: esperava 403 "profissional não pode salvar cartão", veio
+429 "rate limit excedido" antes de sequer chegar na checagem de role).
+
+Corrigido com uma env var dedicada `TESTING=1` que desliga o rate limiter
+inteiro (`Limiter(..., enabled=not _TESTING)` — parâmetro nativo do
+slowapi). Testado nos dois sentidos: com TESTING=1 o limiter fica
+desabilitado; sem a variável (produção), continua protegido por padrão.
+
+### Comando de teste atualizado
+```
+TESTING=1 uvicorn server:app --host 0.0.0.0 --port 8001 &
+EXPO_PUBLIC_BACKEND_URL=http://127.0.0.1:8001 pytest
+```
+
+### As 2 falhas de "slots sem serviço disponível" — hipótese, não confirmada
+`test_no_disponibilidade_returns_empty` (TestSlots) espera que um serviço já
+exista pra profissional2, criado antes em `test_filter_by_categoria`
+(TestDiscoveryCategoria, classe diferente no mesmo arquivo). O pytest.ini
+usa `-n 2 --dist loadscope`, que por padrão mantém testes do mesmo MÓDULO
+(arquivo) no mesmo worker — então a hipótese de corrida entre workers
+paralelos é fraca, mas não descartada. Não tive como confirmar sem rodar de
+verdade; pedido ao usuário a saída completa (traceback, não só resumo) caso
+persista depois do fix do rate limit.
+
+## Última falha corrigida — 73/74 → 74/74 (esperado)
+
+`TestExpirarJanela::test_job_marks_expired` chamava
+`POST /api/internal/jobs/expirar-janela` sem o header `X-Internal-Token` —
+exatamente a proteção que adicionamos no Módulo 1 pra esse endpoint nunca
+ficar acessível sem autenticação. Corrigido: o teste agora manda
+`X-Internal-Token: <INTERNAL_SERVICE_TOKEN do .env>`, lido via
+`os.environ["INTERNAL_SERVICE_TOKEN"]` (já carregado pelo conftest.py).
+
+De brinde: `httpx` estava faltando no `requirements.txt` — usado de
+verdade em `server.py` (chamada ao serviço de auth do Emergent), mas nunca
+declarado. Adicionado.
+
+### Suíte de testes: status final
+73 passando / 1 falhando (antes desta correção) → esperado 74/74 depois
+dela. Progresso total desde o início: 24 passed/34 failed/15 errors →
+74/74 esperado, todas as causas raiz identificadas e corrigidas:
+1. conftest.py não carregava .env (Mongo errado)
+2. Endpoint de cartão mudou de API (Módulo 9) — testes desatualizados
+3. Bug real: customer_id inconsistente no fluxo de SetupIntent
+4. Teste de CORS testava o comportamento antigo inseguro de propósito
+5. Rate limiting (Módulo 3) bloqueando a própria suíte
+6. Teste do job interno sem o token de serviço exigido (Módulo 1)
+
+## As 2 últimas falhas — causa raiz confirmada
+
+Eram exatamente a hipótese que eu tinha levantado: `pytest-xdist` com
+`--dist loadscope` agrupa testes por CLASSE (não por arquivo inteiro) —
+então `TestDiscoveryCategoria` e `TestSlots`, apesar de estarem no mesmo
+arquivo, podem rodar em workers paralelos diferentes, sem garantia de
+ordem entre si. Dois testes em `TestSlots` dependiam de um serviço criado
+por `TestDiscoveryCategoria.test_filter_by_categoria` — uma corrida, não
+uma garantia, e por isso passava ou falhava dependendo de qual worker
+terminava primeiro.
+
+Corrigido tornando os dois testes autossuficientes — cada um cria seu
+próprio serviço via API em vez de depender de outra classe já ter rodado:
+- `TestSlots.test_no_disponibilidade_returns_empty`
+- `TestSlots.test_slots_generated_for_14_days`
+
+Isso é uma correção de design de teste, não uma mudança em `pytest.ini`
+(que segue como estava, -n 2 --dist loadscope intocado).
+
+### Status esperado: 74/74
+
+## ✅ SUÍTE DE TESTES: 74/74 PASSANDO (confirmado pelo usuário, contra Atlas real)
+
+Validação ponta a ponta completa: MongoDB Atlas real + servidor real +
+suíte pytest real, todas as causas raiz corrigidas. Backend considerado
+validado para este ciclo de desenvolvimento.
+
+## .gitignore criado + .env.example (backend e frontend)
+
+Criado `.gitignore` na raiz cobrindo: segredos (.env, memory/test_credentials.md),
+Python (__pycache__, .pytest_cache, venv), Expo/Node (node_modules, .expo,
+.metro-cache, builds nativos ios/android), ferramentas geradas (.emergent,
+test_reports) e SO/editor (.DS_Store, .vscode).
+
+Criados `backend/.env.example` e `frontend/.env.example` com todas as
+variáveis necessárias, sem valores reais — documentação de setup pra quem
+clonar o projeto do zero.
+
+### Validação real
+Rodei `git init` temporário + `git add -A` + `git status` pra confirmar de
+verdade (não só ler o .gitignore): apenas os `.env.example` ficaram
+rastreados, os `.env` reais e `memory/test_credentials.md` foram
+corretamente ignorados, e node_modules/__pycache__ não apareceram. O `.git`
+de teste foi removido antes de empacotar — o usuário roda `git init` de
+verdade na própria máquina.
+
+**Ação pendente do usuário:** se já tinha um `.git` local antes desta
+mudança com test_credentials.md commitado em algum commit antigo, precisa
+apagar `.git` e rodar `git init` de novo (nunca foi pra um repositório
+remoto, então é seguro) — passos já dados na conversa.
+
+## ✅ EAS project ID configurado
+
+Projeto criado na conta Expo do usuário (educerqueira): slug
+"holdbooked-app", ID e403a3c9-d25f-4337-860a-2bd5df12e201. Atualizado no
+app.json: `extra.eas.projectId` (era placeholder), `slug` (era "frontend",
+agora bate com o nome real do projeto na Expo) e `owner` adicionado
+explicitamente. Validado via leitura do JSON.
+
+Com isso, todos os itens do checklist de lançamento estão fechados:
+cartão real, planos com Price IDs reais, INTERNAL_SERVICE_TOKEN,
+MongoDB Atlas real, suíte pytest 74/74, .gitignore, e agora EAS project ID.
+Push notification e Payment Sheet já têm tudo que precisam pra funcionar
+num development build.
+
+## eas.json criado (perfis de build)
+
+Não existia ainda — criado com 3 perfis:
+- **development**: `developmentClient: true` (obrigatório — sem isso, o
+  build não inclui os módulos nativos do Stripe/push, e viraria só mais um
+  "Expo Go" que não serve pro que precisamos testar), distribuição interna
+  (instala direto por link, sem loja), Android gera `.apk` (mais fácil de
+  instalar manualmente que `.aab`). iOS aponta pra dispositivo físico por
+  padrão (`simulator: false`) — Payment Sheet real e push notification real
+  precisam de aparelho físico pra validação de verdade.
+- **preview**: build interno sem dev client, pra testar antes de produção.
+- **production**: incremento automático de versão, pronto pra either loja.
+
+Testei `eas whoami` neste ambiente: "Not logged in" — confirma que a build
+em si (`eas build`) precisa rodar na máquina do usuário, onde a sessão de
+login (feita via navegador) realmente existe. Este ambiente sandbox não tem
+acesso à sessão da conta Expo do usuário.
+
+## Plano de build: Android agora, iOS em duas etapas
+
+Usuário confirmou: sem conta Apple Developer ainda. Adicionado perfil
+`development-simulator` no eas.json (ios.simulator: true) — não exige conta
+Apple nem gera custo, mas só roda no Simulador Xcode (precisa de Mac) e não
+recebe push notification real (limitação da própria Apple pra simuladores,
+não do nosso código).
+
+Plano:
+1. Android: `eas build --profile development --platform android` — sem
+   bloqueio, testa push E cartão real.
+2. iOS sem conta Apple: `eas build --profile development-simulator --platform ios`
+   — só testa cartão (Payment Sheet), não push.
+3. iOS completo (quando tiver conta Apple, US$99/ano):
+   `eas build --profile development --platform ios` (perfil original,
+   dispositivo físico) — testa tudo, inclusive push.
+
+## Rebranding: HoldBooked → ShowUp
+
+Nome final escolhido pelo usuário: **ShowUp**. Atualizado:
+- `app.json`: `name` ("frontend" → "ShowUp" — esse era o problema mais
+  sério, "frontend" apareceria embaixo do ícone no celular);
+  `android.package` (de "com.emergent.noshowguard.e2b287", resquício da
+  plataforma original, para "com.educerqueira.showup" — usando o username
+  Expo do usuário como namespace, já que ele não tem domínio próprio e não
+  precisa ter pra isso).
+- `slug` mantido como "holdbooked-app" DE PROPÓSITO — o projeto já foi
+  criado na Expo com esse slug vinculado ao projectId real
+  (e403a3c9-d25f-4337-860a-2bd5df12e201); trocar o slug agora sem recriar o
+  projeto geraria inconsistência. Slug é só técnico, nunca aparece pro
+  usuário final, então não há problema prático em ficar diferente do nome
+  visível do app.
+- Frontend: texto da tela de seleção de papel, `merchantDisplayName` do
+  Payment Sheet (visível na tela de pagamento de verdade).
+- Backend: título da API FastAPI, resposta do endpoint raiz, docstrings.
+- Testes: `test_auth_endpoints.py` verificava o texto exato
+  `"HoldBooked API"` na resposta — corrigido pra não quebrar a suíte
+  74/74 que tínhamos acabado de fechar.
+
+### ⚠️ IMPORTANTE — package Android é praticamente permanente
+Depois de publicar na Play Store com um `android.package`, trocar esse
+valor depois equivale a lançar um app NOVO do zero (perde reviews,
+histórico, downloads). Se o usuário quiser mudar de novo, precisa ser
+ANTES do primeiro upload real pra Play Store.
+
+### Validação real
+- Backend: `py_compile` em todos os arquivos alterados (incl. testes).
+- Frontend: `tsc --noEmit` (só o falso-positivo de cache de rotas já
+  documentado) + `expo export --platform android` rodou com sucesso
+  (bundle de 4.4MB gerado sem erro).
+
+## Ícone do app criado (ShowUp)
+
+O ícone anterior (`assets/images/icon.png`) era o logo genérico da
+plataforma "Emergent" que gerou o projeto originalmente — nunca tinha sido
+trocado. Desenhei um ícone novo do zero: um calendário estilizado com um
+check mark grande, comunicando "confirmado/compareceu" (o conceito central
+do produto). Cor de marca reaproveitada do `theme.ts` (#5C7C64), com um
+gradiente sutil pro fundo do ícone principal.
+
+Arquivos gerados (via SVG desenhado à mão + cairosvg pra conversão):
+- `icon.png` (1024×1024): ícone principal, com fundo em gradiente.
+- `adaptive-icon.png` (1024×1024): só o foreground (calendário+check),
+  fundo transparente, desenhado dentro da "safe zone" de ~66% central —
+  o Android aplica sua própria máscara de forma (círculo/squircle) por
+  cima, então o conteúdo real não pode encostar nas bordas.
+- `splash-image.png` (1024×1024): mesmo design, escala maior (85%), usado
+  centralizado sobre o `backgroundColor` na tela de abertura do app.
+
+`app.json`: `adaptiveIcon.backgroundColor` e o `backgroundColor` do plugin
+`expo-splash-screen` trocados de `#000000` (preto, não combinava) para
+`#4A6650` (o tom mais escuro do gradiente do ícone) — consistência visual
+entre o ícone e a tela de abertura.
+
+### Validação real
+Testado em duas resoluções (512px e 80px simulando o tamanho real na tela
+do celular) — o design permanece legível e reconhecível mesmo pequeno.
+Simulei também a máscara circular do Android sobre o adaptive-icon pra
+confirmar que nada importante fica cortado. `expo export --platform
+android` rodou com sucesso depois de trocar os assets.
+
+## Ícone trocado de novo — monograma "S/U" (versão refinada)
+
+Usuário trouxe 5 variações de monograma "SU" (fita/ribbon style) geradas
+externamente, pediu avaliação. Testei as 5 redimensionadas pra 100px (uso
+real de ícone) — confirmou visualmente que as 2 com efeito "negative
+space" (segundo tom verde-claro sobre fundo verde-escuro) perdem
+legibilidade nesse tamanho: o segundo tom quase desaparece por baixo
+contraste, virando uma mancha confusa em vez de uma letra reconhecível.
+As 3 de tom único (fita creme sólida) se mantiveram nítidas.
+
+Usuário pediu uma versão MELHOR ainda, usando as 5 como referência. Redesenhei
+do zero um monograma S→U: um único traço contínuo, sem se cruzar (as
+primeiras tentativas cruzavam o traço no meio e ficavam confusas, tipo nó/
+letra "8" quebrada — descartadas). A versão final é um gesto de "S" na
+metade de cima que se estende pra baixo e abre numa alça de "U", em fita
+creme sólida (#F5F1E8) sobre fundo em gradiente verde-floresta (#345940 →
+#213B29) — paleta extraída por amostragem de pixel das referências do
+usuário, não inventada.
+
+Arquivos gerados (mesmo processo de sempre: SVG à mão + cairosvg):
+- `icon.png`: monograma completo, com fundo gradiente + sombra suave.
+- `adaptive-icon.png`: só o traço, sem fundo, dentro da safe zone Android.
+- `splash-image.png`: mesmo traço, escala maior, centralizado.
+- `app.json`: `adaptiveIcon.backgroundColor` e `expo-splash-screen.
+  backgroundColor` trocados de #4A6650 (do ícone anterior, calendário) pra
+  #213B29 (tom mais escuro do gradiente novo).
+
+### ⚠️ Ponto em aberto — consistência de marca
+A cor de marca usada DENTRO do app (`theme.ts`, `brandPrimary: "#5C7C64"`,
+um verde-oliva claro) agora está DIFERENTE da paleta do ícone (verde-
+floresta escuro + creme). Ficou assim de propósito — o pedido foi só pelo
+ícone — mas fica uma inconsistência visual entre o ícone na tela inicial
+do celular e as cores dentro do app. Não alterado ainda; decisão do
+usuário se quer unificar.
+
+### Validação real
+- Testei as 5 referências do usuário reduzidas a 100px ANTES de opinar —
+  não dei recomendação só olhando em tamanho grande.
+- 3 iterações do meu próprio design, testando em 512px, 100px e 48px a
+  cada rodada, até eliminar cruzamentos confusos no traço.
+- `expo export --platform android` rodou com sucesso depois da troca final.
+
+## Ícone e paleta refeitos por completo — baseados numa referência do usuário
+
+Usuário achou minha versão anterior (monograma verde-floresta sólido) "cara
+de feito por criança" e trouxe uma referência gerada externamente
+(Gemini): um logo S→U com um check integrado, em gradiente azul→verde,
+com brilho/profundidade "glossy". Pediu pra recriar isso como ícone de
+app de verdade E levar essa paleta pro app inteiro.
+
+### Processo de design (várias iterações até acertar)
+1. Extraí as cores REAIS da referência por amostra de pixel automatizada
+   (filtrando por saturação HSV pra ignorar o fundo cinza) — não inventei:
+   azul #3071A7→#4E98C2, verde #5FAE6E.
+2. Tentei reconstruir com arcos SVG geométricos "perfeitos" (svg arc
+   command) — resultado ficou parecendo um número "6"/"b", não S→U.
+   Descartado.
+3. Tentei S e U como 2 formas separadas sobrepostas — o S ficou incompleto,
+   lendo como "C". Descartado.
+4. Voltei pra estrutura de curvas bezier já validada numa iteração anterior
+   da conversa (que lia bem como S→U), aplicando o gradiente novo — forma
+   boa, mas o check ficou escondido atrás da curva do S.
+5. Afastei o check pra fora da forma principal — aí sim ficou reconhecível
+   como ✓ separado, sem se perder na curva.
+6. Adicionei brilho sutil (gradiente branco translúcido) na borda superior
+   das curvas + sombra suave — o efeito "glossy" que dava a sensação
+   premium na referência.
+
+### Arquivos gerados
+- `icon.png`, `adaptive-icon.png` (foreground, safe zone Android),
+  `splash-image.png` — mesmo processo de sempre (SVG à mão + cairosvg).
+- `app.json`: `backgroundColor` do adaptive icon e splash trocado de
+  #213B29 (verde escuro, ícone anterior) pra #F4F4F2 (cinza bem claro,
+  igual ao fundo da nova referência).
+
+### Paleta levada pro app inteiro (não só o ícone)
+`theme.ts` é a fonte única de cores de marca do app inteiro (usado via
+`makeStyles` em praticamente toda tela) — trocar lá propaga sozinho pra
+quase todos os botões/destaques, sem precisar caçar tela por tela:
+- `brandPrimary`/`brand`: #5C7C64 (verde-oliva antigo) → #3F86B5 (azul do
+  logo)
+- `brandSecondary`: #9CAEA2 → #5FAE6E (verde do logo)
+- `brandTertiary`/`onBrandTertiary`: tons claros de verde → tons claros
+  de azul (#E3EEF5 / #1E4A63)
+Achei também 2 lugares com a cor antiga hardcoded FORA do theme.ts
+(`agendamentos.tsx` e `agendamento/[id].tsx`, no mapa de cor do badge de
+status "info") — corrigidos pra bater com a paleta nova.
+
+### Validação real
+- Testei cada iteração do desenho em 512px/100px/48px antes de seguir pra
+  próxima etapa — só avancei quando a legibilidade se confirmava.
+- `tsc --noEmit`: só o falso-positivo de cache de rotas já documentado.
+- `expo export --platform android` rodou com sucesso depois de toda a
+  mudança de tema.
+
+## Revertido — usuário não gostou do ícone azul-verde com check
+
+O ícone/paleta azul-verde (S→U→check, gradiente, tema do app inteiro
+mudado) foi revertido a pedido do usuário ("ficou muito ruim, mantenha
+como estava"). Voltou tudo ao estado anterior:
+- `icon.png`/`adaptive-icon.png`/`splash-image.png`: monograma S→U verde-
+  floresta sólido (sem check, sem gradiente azul).
+- `app.json`: backgroundColor de volta pra #213B29.
+- `theme.ts`: brand/brandPrimary/brandSecondary/brandTertiary de volta
+  pro verde-oliva original (#5C7C64 e derivados).
+- `agendamentos.tsx` / `agendamento/[id].tsx`: badge "info" de volta pra
+  #E4EBE6/#3B5241.
+
+Lição: antes de propagar uma mudança de paleta pro app inteiro, vale
+confirmar com o usuário só o ícone primeiro, já validado em isolamento,
+antes de levar a mudança pra mais lugares.
+
+## Ícone final — usando a imagem real do usuário (não recriação manual)
+
+Depois de várias tentativas frustradas de recriar o logo S/U/check à mão
+via SVG (nenhuma ficou boa o suficiente), o usuário mandou a imagem já
+ajustada/limpa e pediu pra usar ELA diretamente. Mudei de abordagem:
+processar a imagem real em vez de redesenhar do zero.
+
+### Processo
+1. Detecção da bounding box do logo por saturação HSV (mais robusto que
+   comparar cor de fundo direto — a imagem tinha uma leve vinheta/gradiente
+   no fundo que confundia uma detecção ingênua).
+2. Recorte com margem de 6%, centralizado num canvas quadrado 1024×1024
+   (a imagem original era 1439×1149, não quadrada).
+3. Remoção de fundo por threshold de saturação, gerando canal alpha suave
+   (transição curta, não corte binário duro) — sem serrilhado visível.
+4. `adaptive-icon.png`: logo transparente redimensionado pra 62% do canvas
+   (safe zone Android) — simulei a máscara circular do sistema por cima
+   pra confirmar que nada corta errado.
+5. `splash-image.png`: mesma logo, 78% do canvas.
+6. Cores extraídas por amostragem automática (filtro de saturação HSV,
+   igual да vez anterior): azul #4C97C1, verde #7FB667, fundo #EDEBEC.
+
+### Paleta levada pro app inteiro de novo
+`theme.ts`: brandPrimary/brand → #4C97C1 (azul), brandSecondary → #7FB667
+(verde), brandTertiary/onBrandTertiary → tons claros de azul. Mais os 2
+hardcodes de badge "info" em `agendamentos.tsx`/`agendamento/[id].tsx`
+atualizados pra combinar.
+
+### Validação real
+- Testei a versão recortada em 100px e 48px antes de aplicar — muito mais
+  legível que qualquer uma das minhas tentativas de recriação manual.
+- Simulei a máscara circular do Android sobre o adaptive-icon.
+- `tsc --noEmit` + `expo export --platform android` rodaram limpos.
+
+### Lição registrada
+Quando o usuário já tem uma imagem de referência PRONTA (não um esboço
+pra interpretar), processar a imagem real (recorte, remoção de fundo,
+extração de cor) é muito mais confiável do que tentar recriar o desenho à
+mão via SVG — evita a divergência de qualidade que causou 2 rodadas de
+insatisfação antes desta.
+
+## 🎉 App rodou de verdade no emulador Android pela primeira vez
+
+Depois de 3 erros de ambiente resolvidos em sequência pelo usuário (JAVA_HOME
+inválido, NDK corrompido, JDK do Android Studio incompatível com o CMake do
+React Native — resolvido instalando JDK 17 dedicado), o build funcionou:
+"Android Bundled 17193ms, node_modules/expo-router/entry.js (2026 modules)".
+Tela de boas-vindas renderizada no emulador Pixel 10a.
+
+## Último resquício de branding "HOLDBOOKED" encontrado e corrigido
+`app/welcome.tsx` tinha `<Text style={styles.brand}>HOLDBOOKED</Text>` —
+escapou da varredura de rebranding anterior (a busca original não pegou
+esse arquivo por algum motivo). Corrigido pra "SHOWUP". Sweep final
+case-insensitive confirmou mais 2 ocorrências triviais (domínio de e-mail
+fictício `@holdbooked.example.com` usado só internamente pelos testes,
+sem nenhum efeito visível) — corrigidas por consistência total.
+Frontend e backend confirmados 100% livres do nome antigo agora.
+
+## Limpeza de resquícios da plataforma Emergent (parte 1 — cosmética)
+
+Removidos artefatos internos da plataforma original que não têm nenhum
+valor pro projeto:
+- `.emergent/` (config interna da plataforma: emergent.yml, cron, markers)
+- `test_result.md` (protocolo de comunicação entre agentes da própria
+  Emergent — "main_agent"/"testing_agent" — não é nosso)
+- `test_reports/` (relatórios de execuções antigas, gerados pela Emergent)
+- `design_guidelines.json` (paleta de cores "HoldBooked" já desatualizada
+  desde o rebranding pra ShowUp — nada no código lê esse arquivo)
+- `README.md` reescrito do zero (antes só tinha o placeholder "Here are
+  your Instructions" da plataforma)
+
+Corrigido de brinde: `app.json` tinha `ios.bundleIdentifier:
+"com.emergent.noshowguard.e2b287"` — só troquei o `android.package`
+antes e esqueci esse. Agora "com.educerqueira.showup".
+
+Achado real (não só cosmético): os arquivos de teste tinham um
+**fallback pra um servidor de demonstração hospedado pela própria
+Emergent** (`https://no-show-guard.preview.emergentagent.com`) — se
+alguém rodasse a suíte sem configurar EXPO_PUBLIC_BACKEND_URL
+explicitamente, tentaria bater nesse servidor de terceiros em vez de
+falhar claramente. Trocado pra `http://127.0.0.1:8001`.
+
+## ⚠️ PENDENTE — dependência crítica de arquitetura (parte 2, não feita ainda)
+
+O sistema de login inteiro do app depende de dois endpoints que pertencem
+à Emergent, não a nós:
+- Backend: `EMERGENT_AUTH_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"`
+- Frontend: `AUTH_URL = "https://auth.emergentagent.com/"`
+
+O fluxo hoje: o app abre a página de login da Emergent (não do Google
+direto), o usuário loga com Google LÁ, a Emergent devolve um session_id,
+nosso backend troca esse ID por dados do usuário chamando o servidor
+deles. A Emergent atua como proxy completo do OAuth — nunca falamos com o
+Google diretamente.
+
+Isso é um risco real de continuidade: é um serviço rotulado "demo" que
+pode sair do ar sem aviso, e o usuário não tem controle nenhum sobre ele.
+
+Correção necessária: integrar direto com o Google OAuth (Google Cloud
+Console, criando Client IDs OAuth próprios do usuário — isso precisa ser
+feito pelo usuário, não é algo que dá pra fazer sem a conta Google dele),
+usando `expo-auth-session` ou `@react-native-google-signin/google-signin`
+no frontend, e validação direta do ID token do Google no backend (sem
+mais depender de nenhum servidor de terceiros).
+
+Ainda não implementado — depende de decisão/setup do usuário no Google
+Cloud Console antes de eu poder escrever o código.
+
+## ✅ Item crítico resolvido — login direto com o Google, sem Emergent
+
+Substituído o fluxo inteiro de autenticação que dependia de servidores de
+terceiros (`demobackend.emergentagent.com` e `auth.emergentagent.com`) por
+integração direta com o Google.
+
+### Backend (`server.py`)
+- `SessionRequest.session_id` → `SessionRequest.id_token`.
+- `/auth/session` agora usa `google.oauth2.id_token.verify_oauth2_token()`
+  (biblioteca oficial `google-auth`) pra validar o ID token que o app manda
+  — confere assinatura, expiração, e que o `audience` bate com
+  `GOOGLE_WEB_CLIENT_ID`. Zero chamada de rede pra qualquer servidor
+  nosso ou de terceiros além do próprio Google.
+- `GOOGLE_WEB_CLIENT_ID` obrigatório no `.env` — servidor recusa subir sem
+  isso, mesmo padrão de proteção já usado pro `INTERNAL_SERVICE_TOKEN`.
+- Tratamento de erro específico: `ValueError` (token malformado/assinatura
+  inválida/expirado) → 401; `GoogleAuthError` (falha de rede buscando as
+  chaves públicas do Google) → 503, distinto de token realmente inválido.
+- `session_token` (a sessão interna do nosso app) agora é gerado por nós
+  mesmos (`uuid4+uuid4`), nunca mais repassado de um servidor externo.
+- `httpx` removido dos imports do server.py (não é mais usado ali — segue
+  sendo dependência real via `expo_push.py`, não removido do
+  requirements.txt).
+- `google-auth>=2.35.0` adicionado ao requirements.txt.
+
+### Frontend (`auth.tsx` reescrito)
+- `@react-native-google-signin/google-signin` instalado (SDK nativo oficial
+  do Google) + plugin no `app.json`.
+- Todo o mecanismo de deep link (`Linking`, `WebBrowser`,
+  `extractSessionId`, captura de URL fria/quente) foi removido — o SDK
+  nativo devolve o resultado direto no app, sem precisar de navegador nem
+  redirect.
+- `signIn()`: `GoogleSignin.hasPlayServices()` → `GoogleSignin.signIn()` →
+  extrai `idToken` → manda pro backend em `POST /auth/session
+  {id_token}`.
+- `GoogleSignin.configure({webClientId: ...})` lido de
+  `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` — precisa ser o MESMO Client ID tipo
+  Web usado no backend (`GOOGLE_WEB_CLIENT_ID`), já que é o "audience" que
+  o backend confere.
+- `signOut()` agora também chama `GoogleSignin.signOut()`.
+
+### Placeholders que o usuário precisa preencher (Google Cloud Console)
+- `backend/.env`: `GOOGLE_WEB_CLIENT_ID=""`
+- `frontend/.env`: `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID="SUBSTITUA_PELO_CLIENT_ID_TIPO_WEB"`
+- Os dois precisam ter o MESMO valor (o Client ID tipo "Web application",
+  não o Android nem o iOS).
+- Também precisa criar Client ID tipo Android (package
+  com.educerqueira.showup + SHA-1 do keystore de debug) e tipo iOS
+  (bundle com.educerqueira.showup) no mesmo projeto do Google Cloud —
+  esses dois não entram em nenhum arquivo de código, só precisam existir
+  cadastrados no Console pra o SDK nativo funcionar.
+
+### Validação real
+- Testei local (sandbox sem rede pra googleapis.com): confirmado que um
+  token válido tentaria buscar as chaves reais do Google (comportamento
+  correto); um token malformado ainda tenta a chamada de rede antes de
+  falhar — meu tratamento de GoogleAuthError cobre esse caso como 503.
+  Numa máquina com internet normal, um token realmente malformado deve
+  cair em ValueError (401) depois de baixar as chaves — não consegui
+  confirmar esse caminho específico aqui por falta de rede no sandbox,
+  mas a lógica e o teste estão corretos para o ambiente real.
+- Backend: reimportado com um Client ID de teste configurado + schema
+  OpenAPI gerado (35 rotas, sem mudança de contagem — só o payload mudou).
+- Frontend: `tsc --noEmit` (só o falso-positivo de cache já documentado) +
+  `expo export --platform android` rodou com sucesso incluindo o novo
+  módulo nativo de login.
+- Teste `test_auth_session_invalid_session_id_returns_401` renomeado e
+  atualizado pra `test_auth_session_invalid_id_token_returns_401`,
+  refletindo o novo payload e mensagem de erro.
+
+## ✅ Client IDs do Google configurados com valores reais
+
+Usuário criou os 3 Client IDs no Google Cloud Console (projeto "showup"):
+- **Web** (com Client Secret, não usada no fluxo mobile —
+  offlineAccess:false não precisa dela): usado nos dois `.env`.
+- **Android**: package `com.educerqueira.showup` + SHA-1 do keystore de
+  debug — cadastrado no Console, não entra em nenhum arquivo de código.
+- **iOS**: bundle `com.educerqueira.showup` — idem, só cadastrado.
+
+`backend/.env` (`GOOGLE_WEB_CLIENT_ID`) e `frontend/.env`
+(`EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`) atualizados com o Client ID tipo Web
+real — confirmei programaticamente que os dois valores são idênticos
+(condição necessária pro backend aceitar o token que o app manda).
+
+### Validação real
+Backend reimportado com o Client ID real carregado do `.env` — subiu sem
+erro, schema OpenAPI gerado normalmente (35 rotas).
+
+### Próximo passo do usuário
+Rodar `npx expo run:android` de novo (recompila com o módulo nativo do
+Google Sign-In) e testar o botão de login de verdade.
+
+## Limpeza de resquícios da Emergent — parte 3 (sistema de "guarda de comandos")
+
+Achado ao investigar o erro `npm install` no Windows: um sistema inteiro de
+"guarda de comandos" (`cmd-guard.js`, `cmd-guard/` com modes.js/rules.js/
+matcher.js, `install-guard.sh`, `sync-shims.sh`) que a Emergent usa
+internamente pra interceptar/validar binários executados durante o
+desenvolvimento (referências a `/opt/install-guard/bin`, que só existe no
+ambiente sandbox deles). Isso escapou das varreduras anteriores porque não
+continha a palavra "emergent" no texto.
+
+Esse sistema tornava o `npm install` do usuário disparar um hook
+`preinstall` que rodava `./scripts/cmd-guard.js` — sintaxe de shell Unix
+(`./`) que o `cmd.exe` do Windows não reconhece, quebrando a instalação
+com "'.' não é reconhecido como um comando interno".
+
+Removido por completo: os 4 arquivos/pastas do sistema de guarda + a linha
+`"preinstall"` do `package.json`. Mantido `scripts/reset-project.js` —
+esse é um utilitário PADRÃO e legítimo do próprio template Expo Router
+(o comentário no arquivo até avisa que é seguro remover depois de usado),
+nada a ver com a Emergent.
+
+Backend conferido também — não tinha nada equivalente lá, o sistema de
+guarda existia só no frontend.
+
+### Validação real
+- `npm install --dry-run` rodou sem erro, confirmando que o hook quebrado
+  não dispara mais.
+- `tsc --noEmit`: só o falso-positivo de cache de rotas já documentado.
+
+## 🔴 Achado grave — limpeza de Emergent parte 4: arquivos .env nunca foram varridos
+
+O erro 404 reportado pelo usuário ao tentar logar (depois do Google Sign-In
+já estar funcionando) tinha uma causa raiz simples mas séria:
+`frontend/.env` tinha 3 variáveis apontando pra infraestrutura da própria
+Emergent, usada internamente durante o desenvolvimento no ambiente
+sandbox deles:
+- `EXPO_PUBLIC_BACKEND_URL=https://no-show-guard.preview.emergentagent.com`
+  — o app estava tentando logar num SERVIDOR DE DEMONSTRAÇÃO DA EMERGENT,
+  não no nosso próprio backend. Daí o 404 (rota inexistente lá).
+- `EXPO_PACKAGER_HOSTNAME` e `EXPO_PACKAGER_PROXY_URL` — mesma URL de
+  demo, usadas só em cenários de túnel/proxy do ambiente deles.
+- `METRO_CACHE_ROOT=/app/frontend/.metro-cache` — caminho ABSOLUTO estilo
+  Linux, específico de onde o projeto ficava DENTRO do sandbox da
+  Emergent (`/app/frontend`), sem sentido nenhum no Windows do usuário.
+- `EXPO_TUNNEL_SUBDOMAIN=no-show-guard` — nome antigo do projeto, órfão.
+
+**Por que isso escapou de 3 rodadas anteriores de limpeza:** minhas
+varreduras anteriores só cobriam `--include="*.py" --include="*.tsx"
+--include="*.ts" --include="*.json" --include="*.md"` — nunca incluí
+`.env` explicitamente. Arquivo de config não é "código-fonte" no sentido
+estrito, mas claramente devia ter sido varrido desde o início.
+
+### Corrigido
+`.env` reescrito do zero: `EXPO_PUBLIC_BACKEND_URL="http://10.0.2.2:8001"`
+(10.0.2.2 é o endereço especial que o emulador Android usa pra apontar de
+volta pro localhost da máquina host — "localhost" sozinho, de dentro do
+emulador, aponta pro PRÓPRIO emulador, não pro Windows do usuário — essa é
+a causa de confusão mais comum em quem testa Android pela primeira vez).
+Removidas as 4 variáveis órfãs. `.env.example` também atualizado com essa
+explicação documentada, pra não se perder de novo.
+
+### Validação real
+Sweep final confirmado programaticamente: `grep -rli "emergent"
+--include=".env" --include="*.env*"` em todo backend/ e frontend/ agora
+retorna vazio.
+
+**Lição registrada:** ao fazer varredura de "resquícios de uma
+plataforma/marca", incluir SEMPRE arquivos de configuração/ambiente
+(`.env`, `.env.*`), não só código-fonte — são frequentemente esquecidos
+por não parecerem "código", mas podem conter os resquícios mais
+impactantes (like this one, that quebrava o login inteiro).
+
+## Varredura ampla e final — parte 5 (a pedido explícito do usuário)
+
+Usuário pediu uma varredura completa antes de testar de novo. Fui além de
+busca de texto por "emergent" — procurei também estruturas/caminhos que
+são infraestrutura da plataforma mesmo sem a palavra aparecer:
+
+1. **`frontend/constants/testIds/`** (auth.js + index.js) — infraestrutura
+   de testes automatizados do bot de QA da própria Emergent ("qabot"),
+   com uma regra de lint literalmente chamada `emergent(kebab-case-...)`.
+   Continha campos pra um fluxo de login por e-mail/senha que nosso app
+   nem tem (login é só Google) — confirmado como código 100% órfão
+   (nenhum import em lugar nenhum) antes de remover.
+2. **`tests/__init__.py`** na RAIZ do projeto (diferente de
+   `backend/tests/`) — pasta vazia/órfã, sem nenhum teste real dentro.
+   Removida.
+3. **`frontend/src/theme.ts`** — comentário órfão referenciando
+   `/app/design_guidelines.json` (caminho absoluto do sandbox da Emergent,
+   apontando pro arquivo que já tinha sido removido numa limpeza
+   anterior). Corrigido; também removida uma duplicata acidental da linha
+   de comentário "Design tokens for ShowUp" que ficou repetida.
+4. **`backend/pytest.ini`** — comentário endereçado a um "AGENT:"
+   genérico. A explicação técnica por trás (por que `-n 2 --dist
+   loadscope` não pode ser mudado sem cuidado) continua válida e real —
+   reformulado em português, sem o endereçamento a "agente", mantendo a
+   justificativa técnica.
+5. **`frontend/package.json`**: `"name": "frontend"` → `"showup"`.
+
+### Observação separada (não é "info da Emergent", mas notada durante a varredura)
+`backend/requirements.txt` tem várias dependências que nenhuma parte do
+código usa (boto3, pandas, numpy, black, mypy, flake8, isort, jq, typer,
+passlib, bcrypt, python-jose, requests-oauthlib) — parecem ser um conjunto
+padrão que a plataforma inclui em todo projeto FastAPI gerado por ela.
+Não removido nesta rodada (fora do escopo do pedido específico), só
+sinalizado como possível limpeza futura.
+
+### Validação real
+- Confirmado que `constants/testIds/` não tinha nenhum import em nenhum
+  arquivo real do app antes de remover.
+- Sweep final com grep por "emergentagent", "preview\.", "qabot", "/app/"
+  em TODOS os tipos de arquivo de texto do projeto (não só as extensões
+  de código que eu vinha filtrando antes) — retornou vazio.
+- Backend: `py_compile` no server.py, OK.
+- Frontend: `tsc --noEmit` (só o falso-positivo de cache já documentado)
+  + `expo export --platform android` rodou com sucesso.
+
+## Limpeza geral de dependências não usadas (backend + frontend)
+
+A pedido do usuário ("tire tudo que não tenha nada a ver com o projeto").
+Verifiquei uso real de CADA dependência antes de remover qualquer uma —
+nunca por suposição.
+
+### Backend (`requirements.txt`): 33 → 17 linhas
+Removidas (zero uso, direto ou indireto, confirmado por grep): boto3,
+requests-oauthlib, cryptography (redundante — já vem via `google-auth`,
+confirmado com `pip show google-auth` listando cryptography como
+dependência dela), pyjwt, bcrypt, passlib, python-jose, pandas, numpy,
+python-multipart (nenhum endpoint usa File/Form/UploadFile), jq, typer,
+black, isort, flake8, mypy.
+
+Mantidos apesar de zero import direto, por uso indireto confirmado:
+- `pymongo`: `from pymongo.errors import DuplicateKeyError` em server.py +
+  `MongoClient` usado nos 3 arquivos de teste.
+- `email-validator`: exigido pelo Pydantic quando usa `EmailStr` (linha
+  179 do server.py) — Pydantic v2 delega validação de e-mail pra essa lib
+  por baixo dos panos, sem import explícito nosso.
+- `dnspython`: necessário pro pymongo resolver `mongodb+srv://` (a URL do
+  Atlas usa esse esquema).
+- `tzdata`: necessário pro `zoneinfo.ZoneInfo` (usado em `_tz_for()`)
+  funcionar corretamente em alguns SOs sem banco de dados IANA nativo.
+- `requests`: usado nos 3 arquivos de teste (chamadas HTTP síncronas pro
+  servidor rodando durante os testes) — não é usado no código de
+  PRODUÇÃO (que usa httpx), mas é uma dependência de teste real.
+
+### Frontend (`package.json`): 35 → 30 dependências
+Removidas (zero uso confirmado por grep, inclusive busca ampla por
+`Haptics.` sem import nomeado específico): `date-fns`, `dayjs` (dois
+formatadores de data concorrentes, nenhum dos dois usado — a formatação
+deve ser feita manualmente/Intl nativo), `expo-symbols`, `expo-blur`,
+`expo-haptics`.
+
+Mantidos apesar de zero import direto, por serem dependências reais
+confirmadas via package.json de outras libs:
+- `react-native-worklets`: peerDependency real do `react-native-
+  reanimated` (confirmado lendo o package.json dele).
+- `@expo/metro-runtime`: dependência real do `expo-router` (idem).
+
+Rodei `npm install` pra sincronizar node_modules com o package.json
+editado — removeu 4 pacotes fisicamente.
+
+### Validação real
+- Backend: reimportei `server.py` depois da limpeza — OK.
+- Frontend: `tsc --noEmit` (só o falso-positivo de cache já documentado)
+  + `expo export --platform android` — bundle gerado com o MESMO hash de
+  antes da limpeza (85f74c5c...), confirmando que essas dependências
+  nunca influenciaram o bundle final (eram peso morto real, sem
+  tree-shaking necessário porque nem chegavam a ser referenciadas).
+
+## ⚠️ Correção importante: o erro de TS que eu vinha chamando de "falso-positivo" NÃO era
+
+Ao longo de TODA a sessão, toda validação com `tsc --noEmit` mostrava o
+mesmo erro: `app/(app)/perfil.tsx(209,42): error TS2345: Argument of type
+'"/(app)/planos"' is not assignable to...`. Eu vinha classificando isso
+como "falso-positivo de cache de rotas" sem nunca confirmar de verdade —
+erro meu de julgamento, repetido em dezenas de validações.
+
+Usuário reportou o sintoma real: clicar no card "Plano e taxa por
+agendamento" em perfil.tsx não fazia nada. Investiguei a fundo dessa vez:
+
+1. `app/(app)/planos.tsx` existe, com `export default function Planos()`
+   válido — arquivo correto, sem bug de código.
+2. Inspecionei o arquivo de tipos que o Expo Router gera de verdade
+   (`.expo/types/router.d.ts`) — TODAS as outras rotas apareciam
+   (`/perfil`, `/agendamentos`, `/configuracoes`, etc.) MENOS "planos".
+3. Confirmei que `npx expo export` e `npx tsc --noEmit` sozinhos NÃO
+   regeneram esse arquivo do zero — só um Metro dev server rodando de
+   verdade (`npx expo start`) reconstrói a lista de rotas completa.
+4. Depois de apagar `.expo/` e rodar o Metro de verdade, "planos" passou
+   a aparecer na lista, e o erro do `tsc` sumiu por completo (exit code 0,
+   zero erros) — confirma que a causa raiz era cache desatualizado do
+   próprio Expo Router, não um bug no código do app.
+
+### Instrução passada ao usuário
+Apagar a pasta `frontend/.expo/` na máquina dele e rodar `npx expo
+run:android` de novo, forçando a reconstrução completa do cache de rotas.
+
+### Lição registrada (importante pra mim mesmo)
+Nunca mais classificar um erro de TypeScript recorrente como
+"falso-positivo" sem investigar a fundo — mesmo que pareça inofensivo por
+não travar o bundle, pode ser sintoma de um bug real esperando o cenário
+certo pra se manifestar (nesse caso, o clique que não fazia nada). O teste
+real não é "o bundle compila apesar do erro", é "o erro realmente não
+teria efeito nenhum on runtime" — e eu nunca verifiquei isso de verdade
+antes de agora.
+
+## Bug real: checkout externo (Stripe) "não faz nada" — corrigido tratamento de erro silencioso
+
+Usuário reportou: clicar em "Assinar" (planos) e no botão de conectar
+Stripe (configurações) — os dois usam a mesma função `openExternalCheckout`
+— mostra um "rodinha" de carregamento breve e depois não abre nenhum
+navegador, sem nenhuma mensagem de erro visível em lugar nenhum.
+
+Diagnóstico feito por eliminação:
+- Confirmado que o problema afeta os DOIS fluxos igualmente (não é bug do
+  backend específico de planos).
+- Confirmado que o Chrome funciona normalmente dentro do emulador quando
+  aberto manualmente (não é "Chrome quebrado").
+- Causa raiz do sintoma "nada acontece, sem erro": `openExternalCheckout`
+  chamava `WebBrowser.openAuthSessionAsync(url, returnUrl)` e IGNORAVA
+  completamente o valor de retorno — se o navegador falhasse ao abrir
+  (`type: 'cancel'`, `'dismiss'` inesperado, ou qualquer coisa que não
+  fosse sucesso), a função nunca lançava erro nem logava nada. Do ponto de
+  vista do usuário, silêncio total.
+
+### Corrigido
+`open-external-checkout.ts`: agora captura o `result` de
+`openAuthSessionAsync`, loga com `console.warn` se não for
+`'success'`/`'dismiss'`, e lança um `Error` com mensagem clara nesse caso
+— que agora aparece de verdade na tela via o estado `erro` que já existia
+em `planos.tsx` (só nunca era populado porque a exceção nunca era lançada).
+
+De brinde: achei que `app.json`'s `"scheme"` ainda era `"frontend"` (nome
+genérico de antes do rebranding) — trocado pra `"showup"`.
+
+### ⚠️ Ação necessária do usuário
+Mudança de `scheme` no app.json só é aplicada numa pasta `android/`
+NOVA — precisa apagar `frontend/android/` de novo e rodar `npx expo
+run:android` do zero pra essa mudança entrar em vigor. Depois disso, se
+o problema persistir, agora vai aparecer uma mensagem de erro real na
+tela (embaixo da lista de planos), revelando a causa exata pela primeira
+vez — meu próximo passo depende de ver essa mensagem.
+
+### Validação real
+`tsc --noEmit`: zero erros (confirmei os valores reais do enum
+`WebBrowserResultType`/`WebBrowserRedirectResult` direto no `.d.ts` da
+lib antes de escrever a condição, não assumi). `expo export
+--platform android` rodou com sucesso.
+
+## Checkout de planos migrado pro fluxo 100% nativo (sem navegador)
+
+A pedido do usuário: Stripe Checkout (página hospedada, exigia
+WebBrowser) substituído por criação direta da assinatura via API +
+Payment Sheet nativo — mesmo padrão já usado pro cartão do cliente no
+fluxo de no-show. Resolve de vez o "nada acontece" nessa tela
+especificamente (o Connect, que segue precisando do navegador por
+exigência de conformidade do próprio Stripe — KYC, sem alternativa de
+API —, já tinha sido corrigido antes com tratamento de erro real).
+
+### Backend
+- `stripe_gateway.py`: `create_plano_checkout_session` (Checkout Session)
+  REMOVIDO — substituído por `create_plano_subscription` (cria a
+  Subscription direto via API com `payment_behavior='default_incomplete'`,
+  `payment_settings.save_default_payment_method='on_subscription'`,
+  expandindo `latest_invoice.payment_intent` pra pegar o client_secret) e
+  `get_subscription_status` (confere o status real depois do pagamento).
+- `server.py`: `POST /me/plano/checkout` REMOVIDO. Dois novos endpoints:
+  - `POST /me/plano/subscription-intent`: cria a assinatura pendente,
+    devolve `{customer_id, ephemeral_key_secret,
+    payment_intent_client_secret, subscription_id}` pro Payment Sheet.
+  - `POST /me/plano/confirm`: recebe `{subscription_id, plano}`, CONFERE
+    direto com o Stripe (`get_subscription_status`) que o status é
+    `active`/`trialing` antes de liberar a taxa reduzida — nunca confia só
+    no "sucesso" que o SDK do app reporta.
+- `webhooks.py`: handler `_handle_checkout_completed` (tratava
+  `checkout.session.completed`) REMOVIDO — órfão, já que não criamos mais
+  Checkout Sessions em lugar nenhum do projeto (confirmado por grep antes
+  de remover).
+
+### Frontend (`planos.tsx`)
+Reescrita a mutation de checkout: chama `/subscription-intent` →
+`initPaymentSheet` → `presentPaymentSheet` → se sucesso, chama `/confirm`
+→ `auth.refresh()` + invalida a query da lista de planos. Removida a
+dependência de `openExternalCheckout`/`WebBrowser` nesta tela
+especificamente (`open-external-checkout.ts` continua existindo e sendo
+usado só por `configuracoes.tsx`, o fluxo de Connect).
+
+### Validação real
+- Confirmei por grep que nenhum teste cobria o fluxo antigo de checkout
+  de plano, e que o próprio endpoint já bloqueava o caminho MockGateway
+  por design (`if GATEWAY_KIND != "stripe": raise HTTPException`) — não
+  precisei implementar os novos métodos no mock.
+- Confirmei por grep que `create_plano_checkout_session` era o ÚNICO lugar
+  no projeto inteiro que criava um `stripe.checkout.Session` antes de
+  remover — e que `_handle_checkout_completed` era o único consumidor do
+  evento `checkout.session.completed` antes de remover esse handler.
+- Backend: reimportado com sucesso, schema OpenAPI confirma as novas
+  rotas (`/me/plano/subscription-intent`, `/me/plano/confirm`) e a
+  ausência da antiga (`/me/plano/checkout`).
+- Frontend: `tsc --noEmit` zero erros, `expo export --platform android`
+  gerou bundle com sucesso.
+- Confirmado por grep que `openExternalCheckout` continua em uso ativo
+  só em `configuracoes.tsx` (Connect) — a correção de tratamento de erro
+  feita nela antes continua válida e necessária pra esse fluxo.
+
+## Bug real de produção: campo removido pela própria Stripe (API "Basil")
+
+Ao testar o checkout nativo de planos de verdade, erro 500:
+`AttributeError: The 'payment_intent' attribute is no longer available
+on Invoice objects`.
+
+Causa: a Stripe removeu de propósito o campo `payment_intent` do objeto
+Invoice na mudança de API "Basil" (31/03/2025) — parte do suporte a
+pagamentos parciais múltiplos por fatura. Nosso código expandia
+`latest_invoice.payment_intent`, que simplesmente não existe mais na
+versão da API que o SDK Python instalado usa por padrão (não fixamos
+nenhuma versão específica no código, então pega sempre a mais recente).
+
+### Corrigido
+`stripe_gateway.py::create_plano_subscription`: expande
+`latest_invoice.confirmation_secret` em vez de `.payment_intent`, lê
+`.client_secret` de lá. Confirmei na documentação OFICIAL da Stripe
+especificamente pro SDK React Native (não só pro componente web "Payment
+Element") que esse client_secret funciona exatamente igual com
+`initPaymentSheet` — não precisou mudar nada no frontend, só o campo que
+o backend lê internamente antes de devolver a mesma chave de resposta de
+sempre (`payment_intent_client_secret`, mantida por compatibilidade,
+comentário explicando a decisão).
+
+### Validação real
+Pesquisei a documentação oficial da Stripe duas vezes: uma pra confirmar
+a mudança de API em si (changelog Basil), outra especificamente pra
+confirmar compatibilidade com `stripe-react-native` (não bastava saber
+que existia um substituto — precisava confirmar que funcionava no SDK
+mobile, não só no componente web). Backend reimportado com sucesso depois
+da correção.
+
+## ✅ Migração pra modo TEST do Stripe — chaves atualizadas
+
+Causa raiz do "Payment Sheet abre e fecha sozinho" confirmada: a chave
+publicável do frontend (`EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY`) ainda era o
+placeholder original (`pk_test_SUBSTITUA_PELA_SUA_CHAVE`), nunca
+substituída — o SDK nativo do Stripe não conseguia inicializar de verdade.
+
+Descoberta séria durante a investigação: a conta Stripe estava em modo
+LIVE (produção real) durante os testes anteriores — risco real de gerar
+cobrança/assinatura de verdade. Confirmado com o usuário que NENHUMA
+assinatura ativa foi criada (a mesma falha do Payment Sheet, ironicamente,
+evitou qualquer cobrança real — a assinatura nunca saiu do estado
+"incomplete" porque o pagamento nunca foi confirmado).
+
+Migração completa feita:
+- `backend/.env`: `STRIPE_API_KEY` trocado pela chave secreta de TESTE
+  real (`sk_test_...`), substituindo uma chave de teste genérica antiga
+  que estava lá (não era a chave real da conta do usuário).
+- `frontend/.env`: `EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY` trocado pela
+  chave publicável de TESTE real (`pk_test_...`), substituindo o
+  placeholder que nunca tinha sido preenchido.
+
+### Validação real
+Ao validar, meu primeiro teste apontou "LIVE" por engano — investiguei e
+descobri que era um bug no MEU script de teste (importei `stripe_gateway`
+diretamente, pulando o `load_dotenv()` que só roda no topo do `server.py`,
+então peguei uma chave vazia/residual, não a real). Corrigido importando
+`server` primeiro (ordem certa) — confirmado TEST mode com a chave certa.
+
+### ⚠️ Pendente — usuário ainda precisa
+- Recriar os 2 produtos/preços (Profissional R$19,90, Ultra R$59,90) em
+  modo TESTE no Stripe (os Price IDs de teste são diferentes dos de
+  produção) e atualizar `STRIPE_PRICE_ID_PROFISSIONAL`/
+  `STRIPE_PRICE_ID_ULTRA` no `.env` com os novos valores de teste.
+- Reiniciar backend e frontend (`npx expo run:android`) depois de tudo
+  configurado.
+- Testar "Assinar Profissional" com cartão de teste `4242 4242 4242 4242`.
+
+## Robustez: erro de Price ID inválido não derruba mais o servidor com 500
+
+Usuário testou o checkout de planos antes de eu ter passado os Price IDs
+de teste novos pra ele — resultado esperado (Price ID de produção não
+existe pra uma chave de teste), mas o servidor respondeu com um 500 cru e
+traceback completo do Python, em vez de uma mensagem de erro limpa.
+
+### Corrigido
+- `stripe_gateway.py::create_plano_subscription`: chamada ao Stripe
+  envolvida em try/except, traduzindo `stripe.error.StripeError` via
+  `_translate_stripe_error` (função já existente, reaproveitada — mesmo
+  padrão usado em outros métodos deste arquivo).
+- `server.py::plano_subscription_intent`: captura `InvalidPaymentRequestError`
+  → HTTP 400 com a mensagem real do Stripe; `PaymentError` genérico → 502.
+  Mesmo padrão já usado no endpoint de confirmação de cartão
+  (`confirm_setup_intent_card`), só replicado aqui.
+
+### Validação real
+Simulei o erro EXATO do log do usuário
+(`InvalidRequestError("No such price: 'price_...'")`) diretamente contra
+`_translate_stripe_error()` — confirmado que vira `InvalidPaymentRequestError`
+com a mensagem original preservada. Backend reimportado com sucesso.
+
+## Price IDs de teste configurados
+
+`STRIPE_PRICE_ID_PROFISSIONAL` e `STRIPE_PRICE_ID_ULTRA` atualizados no
+`backend/.env` com os Price IDs reais de modo TESTE (recriados pelo
+usuário no Product catalog em sandbox), substituindo os antigos de
+produção. Confirmado que o Price ID do Profissional é idêntico ao que
+apareceu no erro "No such price" da tentativa anterior — indício de que o
+produto ainda não tinha propagado no Stripe na hora daquele teste, e
+agora já existe de verdade.
+
+## Correção: erro de transcrição meu na chave secreta do Stripe
+
+Ao ler a chave secreta de um print anterior, transcrevi errado um
+caractere ambíguo: `pgm1SN` (dígito 1) em vez do correto `pgmlSN` (letra
+L minúscula) — erro clássico de OCR/leitura visual em strings longas com
+caracteres parecidos. Isso gerou `AuthenticationError: Invalid API Key`
+quando o usuário testou.
+
+Corrigido: usuário colou o valor certo diretamente em texto (não print) —
+`backend/.env` atualizado com o valor exato. Confirmei a correção
+comparando caractere por caractere (não visualmente) contra o texto que
+o usuário digitou.
+
+**Lição registrada:** nunca mais transcrever chaves/segredos longos a
+partir de screenshots sem alertar sobre o risco de erro de leitura
+(1 vs l, 0 vs O, etc.) — pedir pro usuário colar o texto direto sempre
+que possível, evitando essa classe inteira de erro.
+
+### Limitação de validação
+Tentei confirmar a chave nova com uma chamada real (`stripe.Balance.
+retrieve()`) — meu próprio sandbox não tem acesso de rede irrestrito a
+`api.stripe.com` (erro de certificado/proxy, limitação do ambiente, não
+da chave). Validação real só acontece na máquina do usuário.
+
+## Robustez: auto-recuperação quando o customer_id salvo é de outra conta/modo
+
+Usuário testou com a chave corrigida — chave OK agora, mas novo erro:
+"No such customer: 'cus_VIC0mclbmLh24i'". Causa: o `stripe_billing_
+customer_id` já estava salvo no banco de uma tentativa anterior (quando
+a chave ainda era live, ou a de teste antiga) — clientes do Stripe não
+são compartilhados entre contas/modos diferentes, então esse ID ficou
+órfão assim que trocamos a chave.
+
+### Corrigido
+- `stripe_gateway.py::create_ephemeral_key`: agora também traduz erros
+  do Stripe via `_translate_stripe_error` (antes chamava a API crua sem
+  nenhum tratamento — o erro real do log veio daqui, não de
+  `create_plano_subscription`).
+- `server.py::plano_subscription_intent`: extraída a lógica de preparar o
+  Payment Sheet (`_prepare_payment_sheet`) numa função auxiliar. Se a
+  primeira tentativa falhar com "No such customer" especificamente,
+  recria o customer automaticamente, salva o novo ID no banco, e tenta
+  de novo UMA vez antes de desistir — evita que o usuário fique travado
+  pra sempre por causa de um ID órfão de uma sessão de configuração
+  anterior (troca de chave live→teste, recriação de conta Stripe, etc.).
+  Qualquer outro erro de "invalid request" (não relacionado a customer
+  órfão) continua indo direto pro 400 sem tentar de novo.
+
+### Validação real
+Simulei o erro EXATO do log (`InvalidRequestError("No such customer:
+'cus_...'")`) contra `_translate_stripe_error()` — confirmado que vira
+`InvalidPaymentRequestError` com "No such customer" na mensagem,
+disparando corretamente a lógica de recriação. Backend compilado sem
+erro.
