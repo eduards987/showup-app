@@ -219,7 +219,7 @@
       <p class="card-label">4 · Pagamento</p>
       <div class="summary" id="resumo"></div>
       <div id="pagamentoInicial">
-        <p class="card-label">Como você prefere pagar?</p>
+        <p class="card-label" id="metodoLabel">Como você prefere pagar?</p>
         <div id="metodoLista">
           <button type="button" class="option selected" data-metodo="cartao">
             <span>
@@ -275,6 +275,13 @@
   // Chave PUBLICÁVEL do Stripe (pk_...) — feita pra ficar em página pública,
   // não é segredo. Hoje é a de TESTE; trocar pela pk_live_... junto com a
   // troca das chaves do backend na hora de ir pra produção.
+  // Pix DESLIGADO: no Stripe Brasil o Pix é liberado por convite (conta em boa
+  // situação e 60+ dias processando) e a nossa conta ainda não tem — o Stripe
+  // recusa com "payment method type pix is invalid". Enquanto isso, a página
+  // oferece só cartão. Quando o Stripe liberar o Pix (Dashboard > Settings >
+  // Payment methods), é só trocar pra true e republicar. Todo o fluxo de Pix
+  // (QR code, copia e cola, confirmação) continua aqui, pronto.
+  const PIX_DISPONIVEL = false;
   const STRIPE_PUBLISHABLE_KEY = "pk_test_51UGMv4Fl9Xrvr2JyV4mtBMqZ62J4Cu9vAtxl3R7SWrRnHhNXIQWUO4HE7QdZSIl9ziXInXMuMRX3YxSSNoKBDnFb00NYihUD6f";
 
   const params = new URLSearchParams(window.location.search);
@@ -471,7 +478,8 @@
       el.classList.toggle("selected", el.dataset.metodo === metodo);
     });
     document.getElementById("cartaoForm").classList.toggle("hidden", metodo !== "cartao");
-    document.getElementById("pixForm").classList.toggle("hidden", metodo !== "pix");
+    const pixForm = document.getElementById("pixForm");
+    if (pixForm) pixForm.classList.toggle("hidden", metodo !== "pix");
     document.getElementById("pagamentoErro").classList.add("hidden");
     renderResumo();
     if (metodo === "cartao") montarCartao();
@@ -629,6 +637,14 @@
   document.querySelectorAll("[data-back]").forEach((btn) => {
     btn.addEventListener("click", () => showStep(Number(btn.dataset.back)));
   });
+
+  if (!PIX_DISPONIVEL) {
+    // Só cartão: sem seletor, sem o botão de Pix — o cliente vai direto pro formulário.
+    document.querySelector('#metodoLista [data-metodo="pix"]').remove();
+    document.getElementById("metodoLista").classList.add("hidden");
+    document.getElementById("metodoLabel").classList.add("hidden");
+    document.getElementById("pixForm").remove();
+  }
 
   carregarProfissional();
 })();

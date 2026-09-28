@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://js.stripe.com/v3/"></script>
 <style>
   :root {
     --bg: #F5F1E8;
@@ -88,8 +89,8 @@
   .option:last-child { margin-bottom: 0; }
   .option:hover { border-color: var(--brand); }
   .option.selected { border-color: var(--brand); background: var(--brand-tint); }
-  .option .opt-title { font-weight: 600; }
-  .option .opt-sub { font-size: 13px; color: var(--ink-soft); margin-top: 2px; }
+  .option .opt-title { display: block; font-weight: 600; }
+  .option .opt-sub { display: block; font-size: 13px; color: var(--ink-soft); margin-top: 2px; }
   .option .opt-price { font-weight: 600; color: var(--brand-dark); white-space: nowrap; }
 
   .day-group { margin-bottom: 14px; }
@@ -150,6 +151,11 @@
   .success-box h2 { font-family: "Fraunces", serif; font-size: 22px; margin: 0 0 8px; }
   .success-box p { color: var(--ink-soft); font-size: 14px; margin: 0; }
 
+  #card-element {
+    padding: 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg);
+  }
+  #card-element.StripeElement--focus { outline: 2px solid var(--brand); outline-offset: 1px; }
+  .summary-row.note { font-size: 13px; color: var(--ink-soft); }
   .error-note { color: var(--error); font-size: 14px; margin-top: 10px; }
   .hidden { display: none !important; }
   .back-link { background: none; border: none; color: var(--ink-soft); font-family: inherit; font-size: 14px; cursor: pointer; padding: 0 0 14px; }
@@ -213,13 +219,36 @@
       <p class="card-label">4 · Pagamento</p>
       <div class="summary" id="resumo"></div>
       <div id="pagamentoInicial">
-        <button class="btn-primary" id="btnPagarPix">Pagar com Pix</button>
-        <p class="waiting-note" style="margin-top:10px; text-align:center;">Cartão ainda não disponível por este link — em breve.</p>
+        <p class="card-label" id="metodoLabel">Como você prefere pagar?</p>
+        <div id="metodoLista">
+          <button type="button" class="option selected" data-metodo="cartao">
+            <span>
+              <span class="opt-title">Cartão de crédito</span>
+              <span class="opt-sub">O valor fica reservado no cartão e só é cobrado depois do atendimento</span>
+            </span>
+          </button>
+          <button type="button" class="option" data-metodo="pix">
+            <span>
+              <span class="opt-title">Pix</span>
+              <span class="opt-sub">Pago agora, pelo valor total</span>
+            </span>
+          </button>
+        </div>
+
+        <div id="cartaoForm" style="margin-top:16px">
+          <div id="card-element"></div>
+          <div id="cartaoErroCampo" class="error-note hidden"></div>
+          <button class="btn-primary" id="btnPagarCartao" style="margin-top:14px">Reservar com cartão</button>
+        </div>
+
+        <div id="pixForm" class="hidden" style="margin-top:16px">
+          <button class="btn-primary" id="btnPagarPix">Pagar com Pix</button>
+        </div>
       </div>
       <div id="pixBox" class="pix-box hidden">
         <div id="qrcode"></div>
         <div class="pix-copy">
-          <input type="text" id="pixCode" readonly />
+          <input type="text" id="pixCode" readonly aria-label="Código Pix copia e cola" />
           <button id="btnCopiarPix">Copiar</button>
         </div>
         <p class="waiting-note"><span class="spinner"></span>Aguardando confirmação do pagamento…</p>
@@ -243,6 +272,17 @@
 <script>
 (function () {
   const BACKEND_URL = "https://showup-backend-s9y1.onrender.com/api";
+  // Chave PUBLICÁVEL do Stripe (pk_...) — feita pra ficar em página pública,
+  // não é segredo. Hoje é a de TESTE; trocar pela pk_live_... junto com a
+  // troca das chaves do backend na hora de ir pra produção.
+  // Pix DESLIGADO: no Stripe Brasil o Pix é liberado por convite (conta em boa
+  // situação e 60+ dias processando) e a nossa conta ainda não tem — o Stripe
+  // recusa com "payment method type pix is invalid". Enquanto isso, a página
+  // oferece só cartão. Quando o Stripe liberar o Pix (Dashboard > Settings >
+  // Payment methods), é só trocar pra true e republicar. Todo o fluxo de Pix
+  // (QR code, copia e cola, confirmação) continua aqui, pronto.
+  const PIX_DISPONIVEL = false;
+  const STRIPE_PUBLISHABLE_KEY = "pk_test_51UGMv4Fl9Xrvr2JyV4mtBMqZ62J4Cu9vAtxl3R7SWrRnHhNXIQWUO4HE7QdZSIl9ziXInXMuMRX3YxSSNoKBDnFb00NYihUD6f";
 
   const params = new URLSearchParams(window.location.search);
   const profissionalId = params.get("prof");
@@ -256,7 +296,12 @@
     telefone: "",
     agendamentoId: null,
     pollTimer: null,
+    metodo: "cartao",
   };
+
+  let stripe = null;
+  let cardElement = null;
+  let cardMounted = false;
 
   function formatMoney(centavos, moeda) {
     const valor = (centavos / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -310,11 +355,11 @@
       const btn = document.createElement("button");
       btn.className = "option";
       btn.innerHTML = `
-        <div>
-          <div class="opt-title">${s.nome}</div>
-          <div class="opt-sub">${s.duracao_min} min</div>
-        </div>
-        <div class="opt-price">${formatMoney(s.valor_centavos, s.moeda)}</div>
+        <span>
+          <span class="opt-title">${s.nome}</span>
+          <span class="opt-sub">${s.duracao_min} min</span>
+        </span>
+        <span class="opt-price">${formatMoney(s.valor_centavos, s.moeda)}</span>
       `;
       btn.addEventListener("click", () => selecionarServico(s, btn));
       list.appendChild(btn);
@@ -382,18 +427,134 @@
     if (telefone.replace(/\D/g, "").length < 10) { alert("Telefone inválido — inclui o DDD."); return; }
     state.nome = nome;
     state.telefone = telefone;
-    renderResumo();
     showStep(4);
+    escolherMetodo(state.metodo);
   });
 
   function renderResumo() {
     const s = state.servico;
+    const ehCartao = state.metodo === "cartao";
+    const notaNoShow = ehCartao
+      ? `<div class="summary-row note"><span>Taxa se faltar sem avisar</span><span>${formatMoney(s.taxa_no_show_centavos, s.moeda)}</span></div>`
+      : "";
     document.getElementById("resumo").innerHTML = `
       <div class="summary-row"><span>Profissional</span><span>${state.profissional.name}</span></div>
       <div class="summary-row"><span>Serviço</span><span>${s.nome}</span></div>
       <div class="summary-row"><span>Horário</span><span>${state.slotLabel}</span></div>
-      <div class="summary-row total"><span>Total (Pix)</span><span>${formatMoney(s.valor_centavos, s.moeda)}</span></div>
+      <div class="summary-row total"><span>${ehCartao ? "Valor do serviço" : "Total (Pix)"}</span><span>${formatMoney(s.valor_centavos, s.moeda)}</span></div>
+      ${notaNoShow}
     `;
+  }
+
+  // ---- Escolha do método de pagamento ----
+  function initStripe() {
+    if (stripe || !window.Stripe) return;
+    stripe = window.Stripe(STRIPE_PUBLISHABLE_KEY);
+    const css = getComputedStyle(document.documentElement);
+    const ink = css.getPropertyValue("--ink").trim() || "#1C2E22";
+    const soft = css.getPropertyValue("--ink-soft").trim() || "#5B6B60";
+    cardElement = stripe.elements().create("card", {
+      hidePostalCode: true,
+      style: {
+        base: {
+          color: ink, fontFamily: "Inter, system-ui, sans-serif", fontSize: "16px",
+          "::placeholder": { color: soft },
+        },
+      },
+    });
+  }
+
+  function montarCartao() {
+    initStripe();
+    if (cardElement && !cardMounted) {
+      cardElement.mount("#card-element");
+      cardMounted = true;
+    }
+  }
+
+  function escolherMetodo(metodo) {
+    state.metodo = metodo;
+    document.querySelectorAll("#metodoLista .option").forEach((el) => {
+      el.classList.toggle("selected", el.dataset.metodo === metodo);
+    });
+    document.getElementById("cartaoForm").classList.toggle("hidden", metodo !== "cartao");
+    const pixForm = document.getElementById("pixForm");
+    if (pixForm) pixForm.classList.toggle("hidden", metodo !== "pix");
+    document.getElementById("pagamentoErro").classList.add("hidden");
+    renderResumo();
+    if (metodo === "cartao") montarCartao();
+  }
+
+  document.querySelectorAll("#metodoLista .option").forEach((btn) => {
+    btn.addEventListener("click", () => escolherMetodo(btn.dataset.metodo));
+  });
+
+  function mostrarErroPagamento(msg) {
+    const el = document.getElementById("pagamentoErro");
+    el.textContent = msg || "Algo deu errado. Tente de novo.";
+    el.classList.remove("hidden");
+  }
+
+  function mensagemDoErro(data, padrao) {
+    // FastAPI devolve `detail` como texto nos nossos erros e como lista nos
+    // erros de validação (422) — só o texto é amigável pra mostrar.
+    return data && typeof data.detail === "string" ? data.detail : padrao;
+  }
+
+  // ---- Cartão: SetupIntent -> Stripe.js salva o cartão -> hold no backend ----
+  document.getElementById("btnPagarCartao").addEventListener("click", pagarComCartao);
+
+  async function pagarComCartao() {
+    const btn = document.getElementById("btnPagarCartao");
+    document.getElementById("pagamentoErro").classList.add("hidden");
+    if (!stripe || !cardElement) {
+      mostrarErroPagamento("Não foi possível carregar o formulário de cartão. Recarregue a página e tente de novo.");
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "Reservando…";
+    const restaurar = () => { btn.disabled = false; btn.textContent = "Reservar com cartão"; };
+    try {
+      // 1) backend prepara o SetupIntent do cliente (identificado pelo telefone)
+      const r1 = await fetch(`${BACKEND_URL}/public/cartao/setup-intent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nome: state.nome, telefone: state.telefone }),
+      });
+      const d1 = await r1.json().catch(() => ({}));
+      if (!r1.ok) throw new Error(mensagemDoErro(d1, "Não foi possível preparar o pagamento com cartão."));
+
+      // 2) o número do cartão vai direto do navegador pro Stripe (nunca pelo nosso servidor)
+      const { setupIntent, error } = await stripe.confirmCardSetup(d1.setup_intent_client_secret, {
+        payment_method: {
+          card: cardElement,
+          billing_details: { name: state.nome, phone: state.telefone },
+        },
+      });
+      if (error) throw new Error(error.message || "Não foi possível validar o cartão.");
+
+      // 3) backend reserva (hold) o valor no cartão e cria o agendamento
+      const r2 = await fetch(`${BACKEND_URL}/public/agendamentos/cartao`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profissional_id: profissionalId,
+          servico_id: state.servico.servico_id,
+          horario_inicio: state.slotIso,
+          nome: state.nome,
+          telefone: state.telefone,
+          payment_method_id: setupIntent.payment_method,
+        }),
+      });
+      const d2 = await r2.json().catch(() => ({}));
+      if (!r2.ok) throw new Error(mensagemDoErro(d2, "Não foi possível concluir o agendamento."));
+
+      state.agendamentoId = d2.agendamento_id;
+      mostrarSucesso("O valor ficou reservado no seu cartão e só será cobrado depois do atendimento.");
+    } catch (e) {
+      restaurar();
+      mostrarErroPagamento(e.message);
+    }
   }
 
   document.getElementById("btnPagarPix").addEventListener("click", pagarComPix);
@@ -416,7 +577,7 @@
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Não foi possível gerar a cobrança.");
+      if (!res.ok) throw new Error(mensagemDoErro(data, "Não foi possível gerar a cobrança."));
       state.agendamentoId = data.agendamento_id;
       document.getElementById("pagamentoInicial").classList.add("hidden");
       document.getElementById("pixBox").classList.remove("hidden");
@@ -464,17 +625,26 @@
     }, 3000);
   }
 
-  function mostrarSucesso() {
+  function mostrarSucesso(complemento) {
     [1, 2, 3, 4].forEach((i) => document.getElementById("step" + i).classList.add("hidden"));
     document.querySelectorAll(".steps .dot").forEach((d) => d.classList.add("done"));
     document.getElementById("sucessoDetalhe").textContent =
-      `${state.servico.nome} com ${state.profissional.name} — ${state.slotLabel}.`;
+      `${state.servico.nome} com ${state.profissional.name} — ${state.slotLabel}.` +
+      (complemento ? ` ${complemento}` : "");
     document.getElementById("stepSucesso").classList.remove("hidden");
   }
 
   document.querySelectorAll("[data-back]").forEach((btn) => {
     btn.addEventListener("click", () => showStep(Number(btn.dataset.back)));
   });
+
+  if (!PIX_DISPONIVEL) {
+    // Só cartão: sem seletor, sem o botão de Pix — o cliente vai direto pro formulário.
+    document.querySelector('#metodoLista [data-metodo="pix"]').remove();
+    document.getElementById("metodoLista").classList.add("hidden");
+    document.getElementById("metodoLabel").classList.add("hidden");
+    document.getElementById("pixForm").remove();
+  }
 
   carregarProfissional();
 })();

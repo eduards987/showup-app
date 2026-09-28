@@ -1514,7 +1514,16 @@ async def criar_agendamento_publico_pix(request: Request, payload: AgendamentoPu
             metadata={"agendamento_id": agendamento_id, "servico_id": svc["servico_id"], "cliente_id": cliente["user_id"]},
             destination_account_id=destination,
         )
-    except (InvalidPaymentRequestError, PaymentError):
+    except InvalidPaymentRequestError as e:
+        logging.exception("criação de PaymentIntent Pix falhou")
+        # Pix é liberado por convite pro Stripe Brasil (conta com 60+ dias
+        # processando). Se o Stripe recusa o tipo "pix", o problema não é
+        # transitório nem do cliente — é a conta ainda não ter Pix. Mensagem
+        # própria em vez de "falha no gateway", pra pagina poder orientar.
+        if "pix" in str(e).lower() and "invalid" in str(e).lower():
+            raise HTTPException(503, "Pix indisponível no momento. Pague com cartão.")
+        raise HTTPException(502, "Falha ao gerar cobrança Pix junto ao gateway")
+    except PaymentError:
         logging.exception("criação de PaymentIntent Pix falhou")
         raise HTTPException(502, "Falha ao gerar cobrança Pix junto ao gateway")
 

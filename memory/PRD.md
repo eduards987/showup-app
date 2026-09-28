@@ -2231,3 +2231,28 @@ ocupado).
   profissional sem a capability de Pix.
 - Cartão nunca testado contra o Stripe de verdade (só com Stripe.js
   simulado): testar com 4242 4242 4242 4242.
+
+## Pix: causa do erro e decisão (28/09/2026)
+
+Log do Stripe (`POST /v1/payment_intents`, 400): "The payment method type
+"pix" is invalid. Please ensure the provided type is activated in your
+dashboard…". Não é bug nosso: no Stripe **Brasil o Pix é por convite**
+(conta em boa situação + 60+ dias processando; conta criada em 19/09/2026,
+ainda não elegível). Contas de outros países (US, EU…) aceitam Pix com
+liquidação em moeda local, mas a nossa é BR.
+
+Decisão: Pix **desligado** no link público até o Stripe liberar.
+- `agendar.html`: `const PIX_DISPONIVEL = false;` — some seletor e botão,
+  fica só o formulário de cartão. Fluxo de Pix (QR, copia e cola,
+  polling) continua no código; pra religar: trocar pra `true`, republicar.
+- Backend: `POST /public/agendamentos/pix` devolve 503 "Pix indisponível
+  no momento. Pague com cartão." quando o Stripe recusa o tipo pix (antes
+  era 502 genérico); outros erros seguem 502.
+
+### Pra religar o Pix depois
+Dashboard Stripe > Settings > Payment methods: se Pix aparecer, ativar;
+se não, pedir acesso ao suporte do Stripe. Depois de ativado, testar em
+modo teste (email de teste do Stripe simula pago/expirado) e só então
+`PIX_DISPONIVEL = true`. Se usar conta Connect com cobrança direta ou
+`on_behalf_of`, a conta conectada também precisa da capability
+`pix_payments`.
