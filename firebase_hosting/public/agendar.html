@@ -89,8 +89,8 @@
   .option:last-child { margin-bottom: 0; }
   .option:hover { border-color: var(--brand); }
   .option.selected { border-color: var(--brand); background: var(--brand-tint); }
-  .option .opt-title { font-weight: 600; }
-  .option .opt-sub { font-size: 13px; color: var(--ink-soft); margin-top: 2px; }
+  .option .opt-title { display: block; font-weight: 600; }
+  .option .opt-sub { display: block; font-size: 13px; color: var(--ink-soft); margin-top: 2px; }
   .option .opt-price { font-weight: 600; color: var(--brand-dark); white-space: nowrap; }
 
   .day-group { margin-bottom: 14px; }
@@ -222,16 +222,16 @@
         <p class="card-label">Como você prefere pagar?</p>
         <div id="metodoLista">
           <button type="button" class="option selected" data-metodo="cartao">
-            <div>
-              <div class="opt-title">Cartão de crédito</div>
-              <div class="opt-sub">O valor fica reservado no cartão e só é cobrado depois do atendimento</div>
-            </div>
+            <span>
+              <span class="opt-title">Cartão de crédito</span>
+              <span class="opt-sub">O valor fica reservado no cartão e só é cobrado depois do atendimento</span>
+            </span>
           </button>
           <button type="button" class="option" data-metodo="pix">
-            <div>
-              <div class="opt-title">Pix</div>
-              <div class="opt-sub">Pago agora, pelo valor total</div>
-            </div>
+            <span>
+              <span class="opt-title">Pix</span>
+              <span class="opt-sub">Pago agora, pelo valor total</span>
+            </span>
           </button>
         </div>
 
@@ -248,7 +248,7 @@
       <div id="pixBox" class="pix-box hidden">
         <div id="qrcode"></div>
         <div class="pix-copy">
-          <input type="text" id="pixCode" readonly />
+          <input type="text" id="pixCode" readonly aria-label="Código Pix copia e cola" />
           <button id="btnCopiarPix">Copiar</button>
         </div>
         <p class="waiting-note"><span class="spinner"></span>Aguardando confirmação do pagamento…</p>
@@ -348,11 +348,11 @@
       const btn = document.createElement("button");
       btn.className = "option";
       btn.innerHTML = `
-        <div>
-          <div class="opt-title">${s.nome}</div>
-          <div class="opt-sub">${s.duracao_min} min</div>
-        </div>
-        <div class="opt-price">${formatMoney(s.valor_centavos, s.moeda)}</div>
+        <span>
+          <span class="opt-title">${s.nome}</span>
+          <span class="opt-sub">${s.duracao_min} min</span>
+        </span>
+        <span class="opt-price">${formatMoney(s.valor_centavos, s.moeda)}</span>
       `;
       btn.addEventListener("click", () => selecionarServico(s, btn));
       list.appendChild(btn);
