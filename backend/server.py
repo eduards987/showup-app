@@ -30,9 +30,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse
 from google.auth.exceptions import GoogleAuthError
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
+import httpx
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from pymongo.errors import DuplicateKeyError
@@ -78,17 +80,35 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
-# Login direto com o Google — GOOGLE_WEB_CLIENT_ID é o Client ID tipo "Web
-# application" criado no Google Cloud Console (não o Android nem o iOS).
-# É esse tipo especificamente porque é o "audience" que aparece no ID token
-# que o SDK nativo do Google Sign-In emite no app, independente da
-# plataforma (Android ou iOS) — validamos contra ele aqui, nunca contra um
-# servidor de terceiros.
+# Login com o Google via navegador — GOOGLE_WEB_CLIENT_ID é o Client ID
+# tipo "Web application" criado no Google Cloud Console (não o Android nem
+# o iOS). É esse tipo especificamente porque é o único que aceita o
+# redirect_uri HTTPS que usamos aqui (GOOGLE_OAUTH_REDIRECT_URI) — Client
+# IDs tipo Android/iOS existem pra outro propósito (vincular ao
+# certificado que assina o app) e não entram nesse fluxo.
 GOOGLE_WEB_CLIENT_ID = os.environ.get("GOOGLE_WEB_CLIENT_ID", "")
 if not GOOGLE_WEB_CLIENT_ID:
     raise RuntimeError(
         "GOOGLE_WEB_CLIENT_ID não configurado. Crie um OAuth Client ID tipo "
         "'Web application' no Google Cloud Console e coloque o valor no .env."
+    )
+# Client Secret do MESMO Client ID acima — só existe no backend, nunca no
+# app. É o que prova pro Google que é realmente o nosso servidor trocando
+# o code por tokens, não alguém que interceptou o code no meio do caminho.
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+if not GOOGLE_CLIENT_SECRET:
+    raise RuntimeError(
+        "GOOGLE_CLIENT_SECRET não configurado. Está na mesma tela do Google "
+        "Cloud Console onde pegou o GOOGLE_WEB_CLIENT_ID."
+    )
+# URL completa desse próprio backend + /api/auth/google/callback — tem que
+# ser IDÊNTICA (char por char) à cadastrada como "URI de redirecionamento
+# autorizado" no Client ID Web do Google Cloud Console.
+GOOGLE_OAUTH_REDIRECT_URI = os.environ.get("GOOGLE_OAUTH_REDIRECT_URI", "")
+if not GOOGLE_OAUTH_REDIRECT_URI:
+    raise RuntimeError(
+        "GOOGLE_OAUTH_REDIRECT_URI não configurado. Ex: "
+        "https://showup-backend-s9y1.onrender.com/api/auth/google/callback"
     )
 Role = Literal["cliente", "profissional"]
 
@@ -522,27 +542,11 @@ async def root():
     return {"service": "ShowUp API", "status": "ok", "gateway": GATEWAY_KIND}
 
 
-@api_router.post("/auth/session", response_model=SessionResponse)
-@limiter.limit("10/minute")
-async def auth_session(request: Request, payload: SessionRequest):
-    """Recebe o ID token que o SDK nativo do Google (@react-native-google-
-    signin) já obteve no app, e valida ele DIRETO com o Google — sem
-    nenhum servidor de terceiros no meio. `verify_oauth2_token` confere a
-    assinatura, a expiração, e que o "audience" bate com o nosso
-    GOOGLE_WEB_CLIENT_ID (prova de que o token foi emitido pra este app,
-    não copiado de outro)."""
-    try:
-        claims = google_id_token.verify_oauth2_token(
-            payload.id_token, google_requests.Request(), audience=GOOGLE_WEB_CLIENT_ID,
-        )
-    except ValueError as e:
-        raise HTTPException(401, f"Token do Google inválido: {e}")
-    except GoogleAuthError as e:
-        # Falha de rede/transporte buscando as chaves públicas do Google —
-        # transitório, diferente de um token genuinamente inválido.
-        logging.exception("Falha ao verificar token do Google")
-        raise HTTPException(503, "Não foi possível verificar o login com o Google agora. Tente de novo.")
-
+async def _login_or_create_session_from_google_claims(claims: dict) -> SessionResponse:
+    """Lógica compartilhada entre os dois jeitos de chegar num id_token do
+    Google validado: o endpoint antigo (/auth/session, recebe direto do
+    app) e o novo (/auth/google/callback, troca um `code` pelo token no
+    fluxo via navegador)."""
     email = claims.get("email")
     if not email:
         raise HTTPException(401, "Token do Google sem e-mail")
@@ -578,6 +582,79 @@ async def auth_session(request: Request, payload: SessionRequest):
     return SessionResponse(session_token=session_token, user=await _serialize_user(doc))
 
 
+@api_router.post("/auth/session", response_model=SessionResponse)
+@limiter.limit("10/minute")
+async def auth_session(request: Request, payload: SessionRequest):
+    """Mantido por compatibilidade, mas o app não usa mais esse caminho —
+    ele foi trocado pelo fluxo via navegador (/auth/google/callback) pra
+    não depender do SDK nativo do Google nem de SHA-1 de certificado.
+    Recebe um id_token e valida ele DIRETO com o Google — sem nenhum
+    servidor de terceiros no meio. `verify_oauth2_token` confere a
+    assinatura, a expiração, e que o "audience" bate com o nosso
+    GOOGLE_WEB_CLIENT_ID (prova de que o token foi emitido pra este app,
+    não copiado de outro)."""
+    try:
+        claims = google_id_token.verify_oauth2_token(
+            payload.id_token, google_requests.Request(), audience=GOOGLE_WEB_CLIENT_ID,
+        )
+    except ValueError as e:
+        raise HTTPException(401, f"Token do Google inválido: {e}")
+    except GoogleAuthError as e:
+        # Falha de rede/transporte buscando as chaves públicas do Google —
+        # transitório, diferente de um token genuinamente inválido.
+        logging.exception("Falha ao verificar token do Google")
+        raise HTTPException(503, "Não foi possível verificar o login com o Google agora. Tente de novo.")
+    return await _login_or_create_session_from_google_claims(claims)
+
+
+@api_router.get("/auth/google/callback")
+async def auth_google_callback(code: Optional[str] = None, error: Optional[str] = None):
+    """O app abre o navegador direto na URL de autorização do Google, com
+    redirect_uri apontando pra CÁ (tem que ser HTTPS — Client ID tipo
+    "Web" não aceita esquema customizado tipo showup:// como redirect,
+    é bloqueado pelo próprio Google). O Google manda o usuário de volta
+    pra cá com um `code`; a gente troca esse code por tokens (usando o
+    Client Secret, que só o backend tem — nunca vai pro app), monta a
+    sessão normalmente, e só então redireciona de volta pro app via
+    showup://auth-callback, já com o nosso session_token pronto."""
+    if error or not code:
+        return RedirectResponse(f"showup://auth-callback?error={error or 'sem_code'}")
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        token_resp = await client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": GOOGLE_WEB_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": GOOGLE_OAUTH_REDIRECT_URI,
+                "grant_type": "authorization_code",
+            },
+        )
+    if token_resp.status_code != 200:
+        logging.error("Falha trocando code por token no Google: %s", token_resp.text)
+        return RedirectResponse("showup://auth-callback?error=token_exchange_failed")
+
+    id_token_str = token_resp.json().get("id_token")
+    if not id_token_str:
+        return RedirectResponse("showup://auth-callback?error=sem_id_token")
+
+    try:
+        claims = google_id_token.verify_oauth2_token(
+            id_token_str, google_requests.Request(), audience=GOOGLE_WEB_CLIENT_ID,
+        )
+    except (ValueError, GoogleAuthError) as e:
+        logging.exception("id_token inválido no callback do Google")
+        return RedirectResponse("showup://auth-callback?error=token_invalido")
+
+    try:
+        session = await _login_or_create_session_from_google_claims(claims)
+    except HTTPException as e:
+        return RedirectResponse(f"showup://auth-callback?error={e.detail}")
+
+    return RedirectResponse(f"showup://auth-callback?token={session.session_token}")
+
+
 @api_router.get("/auth/me", response_model=MeResponse)
 async def auth_me(authorization: Optional[str] = Header(default=None)):
     return MeResponse(user=await _serialize_user(await _current_user(authorization)))
@@ -596,6 +673,51 @@ async def auth_logout(authorization: Optional[str] = Header(default=None)):
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1].strip()
         await db.user_sessions.delete_one({"session_token": token})
+    return {"ok": True}
+
+
+@api_router.delete("/me")
+@limiter.limit("5/minute")
+async def excluir_conta(request: Request, authorization: Optional[str] = Header(default=None)):
+    """Exigido pela política da Play Store: qualquer app que permite criar
+    conta precisa oferecer um jeito de excluí-la de dentro do próprio app.
+
+    Não apaga o documento do usuário de verdade — anonimiza os campos
+    pessoais (nome, e-mail, foto, telefone) e marca deleted_at, mas
+    preserva agendamentos/transações já ocorridos (obrigação fiscal/legal
+    de manter registro financeiro), agora desvinculados de qualquer dado
+    pessoal identificável. Ver Política de Privacidade, seção "Por quanto
+    tempo guardamos seus dados"."""
+    doc = await _current_user(authorization)
+    user_id = doc["user_id"]
+
+    compromisso_pendente = await db.agendamentos.find_one({
+        "$and": [
+            {"$or": [{"cliente_id": user_id}, {"profissional_id": user_id}]},
+            {"$or": [
+                {"hold_status": {"$in": ["autorizado", "cancelando", "aguardando_pix"]}},
+                {"status_agendamento": "agendado", "horario_inicio": {"$gt": _now()}},
+            ]},
+        ],
+    })
+    if compromisso_pendente:
+        raise HTTPException(
+            409,
+            "Você tem agendamentos pendentes ou futuros. Cancele ou aguarde eles "
+            "terminarem antes de excluir sua conta.",
+        )
+
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "name": "Usuário excluído",
+            "email": f"deleted_{user_id}@showup.excluido",
+            "picture": None,
+            "telefone": None,
+            "deleted_at": _now(),
+        }, "$unset": {"stripe_customer_id": "", "stripe_billing_customer_id": "", "stripe_account_id": ""}},
+    )
+    await db.user_sessions.delete_many({"user_id": user_id})
     return {"ok": True}
 
 
