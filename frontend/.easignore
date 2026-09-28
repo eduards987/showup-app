@@ -1,0 +1,10 @@
+# Controla o que é enviado pro EAS Build — prioridade sobre o .gitignore.
+# Sem isso, o EAS lê tudo que existe fisicamente na pasta, gitignorado ou não.
+
+node_modules/
+android/
+ios/
+.expo/
+.metro-cache/
+.git/
+*.orig.*

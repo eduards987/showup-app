@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Agendar — ShowUp</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root {
+    --bg: #F5F1E8;
+    --surface: #FFFFFF;
+    --ink: #1C2E22;
+    --ink-soft: #5B6B60;
+    --brand: #345940;
+    --brand-dark: #213B29;
+    --brand-tint: #E7EEE8;
+    --line: #E1DACB;
+    --success: #2F9E62;
+    --error: #B3432E;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16211A;
+      --surface: #1D2A21;
+      --ink: #F1EFE6;
+      --ink-soft: #A8B5AC;
+      --brand: #6FA482;
+      --brand-dark: #8FBBA0;
+      --brand-tint: #26362C;
+      --line: #33443A;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16211A; --surface: #1D2A21; --ink: #F1EFE6; --ink-soft: #A8B5AC;
+    --brand: #6FA482; --brand-dark: #8FBBA0; --brand-tint: #26362C; --line: #33443A;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Inter", system-ui, sans-serif;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    min-height: 100%;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 480px; margin: 0 auto; padding: 28px 20px 48px; }
+  .brand-row { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; }
+  .brand-mark {
+    width: 30px; height: 30px; border-radius: 8px; background: var(--brand-dark);
+    display: flex; align-items: center; justify-content: center; color: var(--bg);
+    font-family: "Fraunces", serif; font-weight: 600; font-size: 15px; flex-shrink: 0;
+  }
+  .brand-name { font-size: 14px; color: var(--ink-soft); letter-spacing: 0.02em; }
+
+  .prof-header { margin-bottom: 26px; }
+  .prof-header h1 {
+    font-family: "Fraunces", serif; font-weight: 600; font-size: 28px;
+    margin: 0 0 4px; color: var(--ink); line-height: 1.15;
+  }
+  .prof-header p { margin: 0; color: var(--ink-soft); font-size: 15px; }
+
+  .steps { display: flex; gap: 6px; margin-bottom: 22px; }
+  .steps .dot {
+    flex: 1; height: 3px; border-radius: 2px; background: var(--line); transition: background .25s;
+  }
+  .steps .dot.active, .steps .dot.done { background: var(--brand); }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+    padding: 22px; margin-bottom: 16px;
+  }
+  .card-label {
+    font-size: 12px; color: var(--ink-soft); margin: 0 0 12px; font-weight: 500;
+  }
+
+  .option {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    width: 100%; text-align: left; background: none; border: 1px solid var(--line);
+    border-radius: 12px; padding: 14px 16px; margin-bottom: 8px; cursor: pointer;
+    font-family: inherit; font-size: 15px; color: var(--ink); transition: border-color .15s, background .15s;
+  }
+  .option:last-child { margin-bottom: 0; }
+  .option:hover { border-color: var(--brand); }
+  .option.selected { border-color: var(--brand); background: var(--brand-tint); }
+  .option .opt-title { font-weight: 600; }
+  .option .opt-sub { font-size: 13px; color: var(--ink-soft); margin-top: 2px; }
+  .option .opt-price { font-weight: 600; color: var(--brand-dark); white-space: nowrap; }
+
+  .day-group { margin-bottom: 14px; }
+  .day-group:last-child { margin-bottom: 0; }
+  .day-label { font-size: 13px; color: var(--ink-soft); margin: 0 0 8px; font-weight: 500; }
+  .slot-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .slot-btn {
+    border: 1px solid var(--line); background: none; border-radius: 10px; padding: 10px 6px;
+    font-family: inherit; font-size: 14px; color: var(--ink); cursor: pointer;
+  }
+  .slot-btn:hover { border-color: var(--brand); }
+  .slot-btn.selected { border-color: var(--brand); background: var(--brand-tint); color: var(--brand-dark); font-weight: 600; }
+
+  label.field { display: block; margin-bottom: 14px; }
+  label.field:last-child { margin-bottom: 0; }
+  label.field span { display: block; font-size: 13px; color: var(--ink-soft); margin-bottom: 6px; }
+  input[type="text"], input[type="tel"] {
+    width: 100%; padding: 13px 14px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink); font-family: inherit; font-size: 16px;
+  }
+  input:focus { outline: 2px solid var(--brand); outline-offset: 1px; }
+
+  .summary { background: var(--brand-tint); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .summary-row { display: flex; justify-content: space-between; font-size: 14px; padding: 3px 0; }
+  .summary-row.total { font-weight: 700; font-size: 16px; margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--brand-dark); }
+
+  .btn-primary {
+    width: 100%; background: var(--brand-dark); color: var(--bg); border: none;
+    border-radius: 12px; padding: 15px; font-family: inherit; font-size: 16px; font-weight: 600;
+    cursor: pointer; transition: opacity .15s;
+  }
+  .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn-secondary {
+    width: 100%; background: none; color: var(--ink-soft); border: 1px solid var(--line);
+    border-radius: 12px; padding: 13px; font-family: inherit; font-size: 14px; cursor: pointer; margin-top: 10px;
+  }
+
+  .pix-box { text-align: center; }
+  #qrcode { display: inline-block; padding: 12px; background: #fff; border-radius: 12px; margin: 6px 0 16px; }
+  .pix-copy {
+    display: flex; gap: 8px; align-items: center; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 12px; margin-bottom: 14px;
+  }
+  .pix-copy input { border: none; background: none; flex: 1; font-size: 12px; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; }
+  .pix-copy button { border: none; background: var(--brand); color: #fff; border-radius: 8px; padding: 8px 12px; font-size: 13px; cursor: pointer; font-family: inherit; }
+  .waiting-note { font-size: 13px; color: var(--ink-soft); }
+  .spinner {
+    width: 16px; height: 16px; border: 2px solid var(--line); border-top-color: var(--brand);
+    border-radius: 50%; display: inline-block; animation: spin 0.8s linear infinite; margin-right: 6px; vertical-align: -3px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .success-box { text-align: center; padding: 10px 0; }
+  .success-mark {
+    width: 56px; height: 56px; border-radius: 50%; background: var(--success); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 28px; margin: 0 auto 16px;
+  }
+  .success-box h2 { font-family: "Fraunces", serif; font-size: 22px; margin: 0 0 8px; }
+  .success-box p { color: var(--ink-soft); font-size: 14px; margin: 0; }
+
+  .error-note { color: var(--error); font-size: 14px; margin-top: 10px; }
+  .hidden { display: none !important; }
+  .back-link { background: none; border: none; color: var(--ink-soft); font-family: inherit; font-size: 14px; cursor: pointer; padding: 0 0 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand-row">
+    <div class="brand-mark">S</div>
+    <div class="brand-name">ShowUp</div>
+  </div>
+
+  <div id="loadingProf">Carregando...</div>
+
+  <div id="app" class="hidden">
+    <div class="prof-header">
+      <h1 id="profNome">—</h1>
+      <p>Escolha o serviço, o horário, e finalize o pagamento — sem precisar instalar nada.</p>
+    </div>
+
+    <div class="steps">
+      <div class="dot" data-step="1"></div>
+      <div class="dot" data-step="2"></div>
+      <div class="dot" data-step="3"></div>
+      <div class="dot" data-step="4"></div>
+    </div>
+
+    <!-- Step 1: serviço -->
+    <section id="step1" class="card">
+      <p class="card-label">1 · Escolha o serviço</p>
+      <div id="servicosList"></div>
+    </section>
+
+    <!-- Step 2: horário -->
+    <section id="step2" class="card hidden">
+      <button class="back-link" data-back="1">‹ Trocar serviço</button>
+      <p class="card-label">2 · Escolha o horário</p>
+      <div id="slotsList"></div>
+    </section>
+
+    <!-- Step 3: dados -->
+    <section id="step3" class="card hidden">
+      <button class="back-link" data-back="2">‹ Trocar horário</button>
+      <p class="card-label">3 · Seus dados</p>
+      <label class="field">
+        <span>Nome</span>
+        <input type="text" id="inputNome" placeholder="Seu nome completo" />
+      </label>
+      <label class="field">
+        <span>Telefone (com DDD)</span>
+        <input type="tel" id="inputTelefone" placeholder="11987654321" inputmode="numeric" />
+      </label>
+      <div style="margin-top:16px">
+        <button class="btn-primary" id="btnContinuarDados">Continuar</button>
+      </div>
+    </section>
+
+    <!-- Step 4: pagamento -->
+    <section id="step4" class="card hidden">
+      <button class="back-link" data-back="3">‹ Voltar</button>
+      <p class="card-label">4 · Pagamento</p>
+      <div class="summary" id="resumo"></div>
+      <div id="pagamentoInicial">
+        <button class="btn-primary" id="btnPagarPix">Pagar com Pix</button>
+        <p class="waiting-note" style="margin-top:10px; text-align:center;">Cartão ainda não disponível por este link — em breve.</p>
+      </div>
+      <div id="pixBox" class="pix-box hidden">
+        <div id="qrcode"></div>
+        <div class="pix-copy">
+          <input type="text" id="pixCode" readonly />
+          <button id="btnCopiarPix">Copiar</button>
+        </div>
+        <p class="waiting-note"><span class="spinner"></span>Aguardando confirmação do pagamento…</p>
+      </div>
+      <div id="pagamentoErro" class="error-note hidden"></div>
+    </section>
+
+    <!-- Sucesso -->
+    <section id="stepSucesso" class="card hidden">
+      <div class="success-box">
+        <div class="success-mark">✓</div>
+        <h2>Agendamento confirmado!</h2>
+        <p id="sucessoDetalhe">Você vai receber a confirmação. Chegue com alguns minutos de antecedência.</p>
+      </div>
+    </section>
+  </div>
+
+  <div id="erroGeral" class="error-note hidden"></div>
+</div>
+
+<script>
+(function () {
+  const BACKEND_URL = "https://showup-backend-s9y1.onrender.com/api";
+
+  const params = new URLSearchParams(window.location.search);
+  const profissionalId = params.get("prof");
+
+  const state = {
+    profissional: null,
+    servico: null,
+    slotIso: null,
+    slotLabel: null,
+    nome: "",
+    telefone: "",
+    agendamentoId: null,
+    pollTimer: null,
+  };
+
+  function formatMoney(centavos, moeda) {
+    const valor = (centavos / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const simbolo = moeda === "BRL" ? "R$" : moeda;
+    return `${simbolo} ${valor}`;
+  }
+
+  function showStep(n) {
+    [1, 2, 3, 4].forEach((i) => {
+      document.getElementById("step" + i).classList.toggle("hidden", i !== n);
+    });
+    document.getElementById("stepSucesso").classList.add("hidden");
+    document.querySelectorAll(".steps .dot").forEach((dot) => {
+      const s = Number(dot.dataset.step);
+      dot.classList.toggle("done", s < n);
+      dot.classList.toggle("active", s === n);
+    });
+  }
+
+  function erroGeral(msg) {
+    const el = document.getElementById("erroGeral");
+    el.textContent = msg;
+    el.classList.remove("hidden");
+  }
+
+  async function carregarProfissional() {
+    if (!profissionalId) {
+      erroGeral("Link inválido — falta identificar o profissional.");
+      return;
+    }
+    try {
+      const res = await fetch(`${BACKEND_URL}/profissionais/${profissionalId}`);
+      if (!res.ok) throw new Error("not_found");
+      const data = await res.json();
+      state.profissional = data;
+      document.getElementById("profNome").textContent = data.name;
+      renderServicos(data.servicos.filter((s) => s.ativo));
+      document.getElementById("loadingProf").classList.add("hidden");
+      document.getElementById("app").classList.remove("hidden");
+      showStep(1);
+    } catch (e) {
+      document.getElementById("loadingProf").classList.add("hidden");
+      erroGeral("Não foi possível carregar esse profissional. Confira o link e tente de novo.");
+    }
+  }
+
+  function renderServicos(servicos) {
+    const list = document.getElementById("servicosList");
+    list.innerHTML = "";
+    servicos.forEach((s) => {
+      const btn = document.createElement("button");
+      btn.className = "option";
+      btn.innerHTML = `
+        <div>
+          <div class="opt-title">${s.nome}</div>
+          <div class="opt-sub">${s.duracao_min} min</div>
+        </div>
+        <div class="opt-price">${formatMoney(s.valor_centavos, s.moeda)}</div>
+      `;
+      btn.addEventListener("click", () => selecionarServico(s, btn));
+      list.appendChild(btn);
+    });
+  }
+
+  async function selecionarServico(servico, btnEl) {
+    state.servico = servico;
+    document.querySelectorAll("#servicosList .option").forEach((el) => el.classList.remove("selected"));
+    btnEl.classList.add("selected");
+    showStep(2);
+    document.getElementById("slotsList").innerHTML = "Carregando horários…";
+    try {
+      const res = await fetch(`${BACKEND_URL}/profissionais/${profissionalId}/slots?servico_id=${servico.servico_id}`);
+      const slots = await res.json();
+      renderSlots(slots);
+    } catch (e) {
+      document.getElementById("slotsList").innerHTML = "Não foi possível carregar os horários.";
+    }
+  }
+
+  function renderSlots(slots) {
+    const list = document.getElementById("slotsList");
+    list.innerHTML = "";
+    if (!slots.length) {
+      list.innerHTML = "<p style='color:var(--ink-soft); font-size:14px;'>Sem horários livres nos próximos dias.</p>";
+      return;
+    }
+    const byDay = {};
+    slots.forEach((s) => {
+      byDay[s.day_label] = byDay[s.day_label] || [];
+      byDay[s.day_label].push(s);
+    });
+    Object.entries(byDay).forEach(([day, items]) => {
+      const group = document.createElement("div");
+      group.className = "day-group";
+      const label = document.createElement("p");
+      label.className = "day-label";
+      label.textContent = day;
+      group.appendChild(label);
+      const grid = document.createElement("div");
+      grid.className = "slot-grid";
+      items.forEach((slot) => {
+        const btn = document.createElement("button");
+        btn.className = "slot-btn";
+        btn.textContent = slot.time_label;
+        btn.addEventListener("click", () => {
+          document.querySelectorAll(".slot-btn").forEach((b) => b.classList.remove("selected"));
+          btn.classList.add("selected");
+          state.slotIso = slot.iso;
+          state.slotLabel = `${day}, ${slot.time_label}`;
+          showStep(3);
+        });
+        grid.appendChild(btn);
+      });
+      group.appendChild(grid);
+      list.appendChild(group);
+    });
+  }
+
+  document.getElementById("btnContinuarDados").addEventListener("click", () => {
+    const nome = document.getElementById("inputNome").value.trim();
+    const telefone = document.getElementById("inputTelefone").value.trim();
+    if (nome.length < 2) { alert("Digita seu nome completo."); return; }
+    if (telefone.replace(/\D/g, "").length < 10) { alert("Telefone inválido — inclui o DDD."); return; }
+    state.nome = nome;
+    state.telefone = telefone;
+    renderResumo();
+    showStep(4);
+  });
+
+  function renderResumo() {
+    const s = state.servico;
+    document.getElementById("resumo").innerHTML = `
+      <div class="summary-row"><span>Profissional</span><span>${state.profissional.name}</span></div>
+      <div class="summary-row"><span>Serviço</span><span>${s.nome}</span></div>
+      <div class="summary-row"><span>Horário</span><span>${state.slotLabel}</span></div>
+      <div class="summary-row total"><span>Total (Pix)</span><span>${formatMoney(s.valor_centavos, s.moeda)}</span></div>
+    `;
+  }
+
+  document.getElementById("btnPagarPix").addEventListener("click", pagarComPix);
+
+  async function pagarComPix() {
+    const btn = document.getElementById("btnPagarPix");
+    btn.disabled = true;
+    btn.textContent = "Gerando cobrança…";
+    document.getElementById("pagamentoErro").classList.add("hidden");
+    try {
+      const res = await fetch(`${BACKEND_URL}/public/agendamentos/pix`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profissional_id: profissionalId,
+          servico_id: state.servico.servico_id,
+          horario_inicio: state.slotIso,
+          nome: state.nome,
+          telefone: state.telefone,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Não foi possível gerar a cobrança.");
+      state.agendamentoId = data.agendamento_id;
+      document.getElementById("pagamentoInicial").classList.add("hidden");
+      document.getElementById("pixBox").classList.remove("hidden");
+      document.getElementById("pixCode").value = data.qr_code_data || "";
+      if (data.qr_code_data && window.QRCode) {
+        new QRCode(document.getElementById("qrcode"), {
+          text: data.qr_code_data, width: 200, height: 200,
+        });
+      }
+      iniciarPolling();
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = "Pagar com Pix";
+      const el = document.getElementById("pagamentoErro");
+      el.textContent = e.message || "Algo deu errado. Tente de novo.";
+      el.classList.remove("hidden");
+    }
+  }
+
+  document.getElementById("btnCopiarPix").addEventListener("click", () => {
+    const input = document.getElementById("pixCode");
+    input.select();
+    navigator.clipboard?.writeText(input.value);
+    const btn = document.getElementById("btnCopiarPix");
+    const original = btn.textContent;
+    btn.textContent = "Copiado!";
+    setTimeout(() => { btn.textContent = original; }, 1500);
+  });
+
+  function iniciarPolling() {
+    state.pollTimer = setInterval(async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/public/agendamentos/${state.agendamentoId}/status`);
+        const data = await res.json();
+        if (data.hold_status === "pago_integral") {
+          clearInterval(state.pollTimer);
+          mostrarSucesso();
+        } else if (data.hold_status === "expirado") {
+          clearInterval(state.pollTimer);
+          const el = document.getElementById("pagamentoErro");
+          el.textContent = "O tempo pra pagar esse Pix expirou. Escolha o horário de novo.";
+          el.classList.remove("hidden");
+        }
+      } catch (e) { /* tenta de novo no próximo ciclo */ }
+    }, 3000);
+  }
+
+  function mostrarSucesso() {
+    [1, 2, 3, 4].forEach((i) => document.getElementById("step" + i).classList.add("hidden"));
+    document.querySelectorAll(".steps .dot").forEach((d) => d.classList.add("done"));
+    document.getElementById("sucessoDetalhe").textContent =
+      `${state.servico.nome} com ${state.profissional.name} — ${state.slotLabel}.`;
+    document.getElementById("stepSucesso").classList.remove("hidden");
+  }
+
+  document.querySelectorAll("[data-back]").forEach((btn) => {
+    btn.addEventListener("click", () => showStep(Number(btn.dataset.back)));
+  });
+
+  carregarProfissional();
+})();
+</script>
+</body>
+</html>
