@@ -1,9 +1,18 @@
-// AuthContext — login direto com o Google (SDK nativo), sem nenhum servidor
-// de terceiros no meio. O SDK devolve um ID token que o backend valida
-// direto com o Google; a partir daí a sessão é 100% nossa (session_token
-// próprio, salvo no SecureStore).
+// AuthContext — login com o Google via navegador. O navegador abre a URL
+// de autorização do Google, que redireciona pro NOSSO backend (HTTPS —
+// obrigatório, Client ID tipo "Web" não aceita esquema customizado como
+// redirect), o backend troca o código por um id_token, valida, monta a
+// sessão, e manda o navegador de volta pro app via showup://auth-callback
+// já com o nosso session_token pronto.
+//
+// Trocamos do SDK nativo (@react-native-google-signin) pra esse fluxo
+// porque o SDK nativo depende de casar exatamente o certificado que
+// assinou o APK com o que está cadastrado no Google Cloud — frágil (muda
+// entre build local, EAS, Play Store) e bateu num bug ativo da biblioteca
+// com a New Architecture do Expo SDK 57. Esse fluxo não depende de
+// certificado nenhum, só do Client ID Web (que nunca muda).
 
-import { GoogleSignin } from "@react-native-google-signin/google-signin";
+import * as WebBrowser from "expo-web-browser";
 import React, {
   createContext,
   useCallback,
@@ -51,29 +60,32 @@ const TOKEN_KEY = "hb_session_token";
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-let googleConfigured = false;
-function ensureGoogleConfigured() {
-  if (googleConfigured) return;
-  const webClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ?? "";
-  if (!webClientId) {
-    console.warn(
-      "[auth] EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID não configurado — login do Google não vai funcionar.",
-    );
-    return;
-  }
-  // webClientId aqui é o Client ID tipo "Web application" do Google Cloud
-  // Console (não o Android/iOS) — é o que o backend usa como "audience"
-  // pra validar o ID token, então tem que ser exatamente o mesmo dos dois
-  // lados.
-  GoogleSignin.configure({ webClientId, offlineAccess: false });
-  googleConfigured = true;
-}
+// webClientId aqui é o Client ID tipo "Web application" do Google Cloud
+// Console — é o que o backend usa tanto pra montar a URL de autorização
+// quanto pra validar o id_token depois (o "audience" tem que bater).
+const googleWebClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ?? "";
+// Mesma URL cadastrada no backend (GOOGLE_OAUTH_REDIRECT_URI) e nas "URIs
+// de redirecionamento autorizadas" do Client ID Web no Google Cloud
+// Console — as três têm que ser idênticas, char por char.
+const googleCallbackUrl = process.env.EXPO_PUBLIC_BACKEND_URL
+  ? `${process.env.EXPO_PUBLIC_BACKEND_URL}/api/auth/google/callback`
+  : "";
+// Depois que o backend termina de processar o login, ele redireciona o
+// navegador pra essa URL (nosso próprio scheme) — é o sinal que o
+// WebBrowser.openAuthSessionAsync fica esperando pra saber que acabou e
+// fechar a tela.
+const APP_AUTH_CALLBACK = "showup://auth-callback";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: "loading", user: null });
 
   useEffect(() => {
-    ensureGoogleConfigured();
+    if (!googleWebClientId || !googleCallbackUrl) {
+      console.warn(
+        "[auth] EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ou EXPO_PUBLIC_BACKEND_URL " +
+          "não configurado — login do Google não vai funcionar.",
+      );
+    }
   }, []);
 
   const applyAuth = useCallback((token: string | null, user: User | null) => {
@@ -85,9 +97,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Bootstrap: só carrega o token já salvo, se tiver. Não há mais deep
-  // link nenhum pra tratar no fluxo de login (o SDK nativo do Google
-  // devolve o resultado direto, sem sair do app).
+  // Bootstrap: só carrega o token já salvo, se tiver. O fluxo de login em
+  // si acontece só dentro de signIn() — não tem nada assíncrono rodando
+  // em segundo plano aqui.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -113,21 +125,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [applyAuth]);
 
   const signIn = useCallback(async () => {
-    ensureGoogleConfigured();
-    await GoogleSignin.hasPlayServices();
-    const response = await GoogleSignin.signIn();
-    if (response.type !== "success") return; // usuário cancelou o fluxo
-    const idToken = response.data.idToken;
-    if (!idToken) {
-      console.warn("[auth] Google não retornou idToken");
+    if (!googleWebClientId || !googleCallbackUrl) return;
+    const authUrl =
+      "https://accounts.google.com/o/oauth2/v2/auth?" +
+      new URLSearchParams({
+        client_id: googleWebClientId,
+        redirect_uri: googleCallbackUrl,
+        response_type: "code",
+        scope: "openid email profile",
+        // "select_account" força o Google a sempre mostrar a tela de
+        // escolher conta, em vez de logar direto na última usada — mais
+        // previsível pra quem tem várias contas Google no aparelho.
+        prompt: "select_account",
+      }).toString();
+
+    const result = await WebBrowser.openAuthSessionAsync(authUrl, APP_AUTH_CALLBACK);
+    if (result.type !== "success") return; // usuário cancelou/fechou o navegador
+
+    const returnedUrl = new URL(result.url);
+    const error = returnedUrl.searchParams.get("error");
+    if (error) {
+      console.warn("[auth] Login com Google falhou:", error);
       return;
     }
-    const res = await api<{ session_token: string; user: User }>("/api/auth/session", {
-      method: "POST",
-      body: JSON.stringify({ id_token: idToken }),
-    });
-    await storage.secureSet(TOKEN_KEY, res.session_token);
-    applyAuth(res.session_token, res.user);
+    const sessionToken = returnedUrl.searchParams.get("token");
+    if (!sessionToken) {
+      console.warn("[auth] Callback do Google voltou sem token");
+      return;
+    }
+
+    setAuthToken(sessionToken);
+    const me = await api<{ user: User }>("/api/auth/me");
+    await storage.secureSet(TOKEN_KEY, sessionToken);
+    applyAuth(sessionToken, me.user);
   }, [applyAuth]);
 
   const signOut = useCallback(async () => {
@@ -135,9 +165,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       await api("/api/auth/logout", { method: "POST" });
     } catch {}
-    try {
-      await GoogleSignin.signOut();
-    } catch {}
+    // Não há mais uma sessão do SDK nativo do Google pra encerrar — a
+    // sessão inteira agora é só a nossa (token no SecureStore, já removido
+    // abaixo). O navegador não guarda estado de sessão entre logins.
     await storage.secureRemove(TOKEN_KEY);
     applyAuth(null, null);
   }, [applyAuth]);

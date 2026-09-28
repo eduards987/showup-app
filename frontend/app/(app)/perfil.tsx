@@ -2,11 +2,14 @@
 
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import * as Clipboard from "expo-clipboard";
 import { useRouter } from "expo-router";
+import { useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
   ScrollView,
+  Share,
   Text,
   View,
 } from "react-native";
@@ -17,6 +20,10 @@ import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { CardInfo } from "@/src/lib/types";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
+
+// Página pública de agendamento (fora do app, funciona sem instalar nada) —
+// hospedada no Firebase, não no sistema de artefatos do Claude.
+const BOOKING_PAGE_BASE = "https://showup-509120.web.app/agendar";
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
@@ -104,6 +111,41 @@ const useStyles = makeStyles((c) => ({
     textAlign: "center",
     lineHeight: 16,
   },
+  note2: {
+    fontSize: 12,
+    color: c.muted,
+    lineHeight: 17,
+    marginBottom: spacing.sm,
+  },
+  linkText: {
+    fontSize: 12,
+    color: c.onSurfaceSecondary,
+    backgroundColor: c.surfaceSecondary,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    fontFamily: "monospace",
+  },
+  linkActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  linkActionBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    backgroundColor: c.brandTertiary,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+  },
+  linkActionText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: c.brandPrimary,
+  },
   errorText: {
     color: c.onError,
     fontSize: 12,
@@ -119,6 +161,7 @@ export default function Perfil() {
   const router = useRouter();
   const auth = useAuth();
   const qc = useQueryClient();
+  const [linkCopiado, setLinkCopiado] = useState(false);
 
   const isCliente = auth.status === "authenticated" && auth.user.role === "cliente";
 
@@ -131,6 +174,20 @@ export default function Perfil() {
   if (auth.status !== "authenticated") return null;
   const user = auth.user;
   const initials = user.name.split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
+  const bookingLink = `${BOOKING_PAGE_BASE}?prof=${user.user_id}`;
+
+  const copiarLink = async () => {
+    await Clipboard.setStringAsync(bookingLink);
+    setLinkCopiado(true);
+    setTimeout(() => setLinkCopiado(false), 2000);
+  };
+  const compartilharLink = () => {
+    // Share.share() abre o menu nativo do celular — WhatsApp aparece como
+    // uma das opções ali, sem precisar de nenhuma integração automática.
+    Share.share({
+      message: `Agende seu horário com ${user.name} pelo ShowUp: ${bookingLink}`,
+    });
+  };
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -215,6 +272,35 @@ export default function Perfil() {
                 <Ionicons name="chevron-forward" size={18} color={colors.muted} />
               </View>
             </Pressable>
+
+            <Text style={styles.sectionTitle}>SEU LINK DE AGENDAMENTO</Text>
+            <View style={styles.card}>
+              <View style={styles.cardRow}>
+                <Ionicons name="link-outline" size={20} color={colors.brandPrimary} />
+                <Text style={styles.cardLabel}>Compartilhe pra agendar sem app</Text>
+              </View>
+              <Text style={styles.note2}>
+                Envie esse link pro cliente pelo WhatsApp — ele agenda e paga (Pix) sem
+                precisar instalar nada.
+              </Text>
+              <Text style={styles.linkText} numberOfLines={1}>
+                {bookingLink}
+              </Text>
+              <View style={styles.linkActions}>
+                <Pressable testID="copiar-link" onPress={copiarLink} style={styles.linkActionBtn}>
+                  <Ionicons
+                    name={linkCopiado ? "checkmark" : "copy-outline"}
+                    size={16}
+                    color={colors.brandPrimary}
+                  />
+                  <Text style={styles.linkActionText}>{linkCopiado ? "Copiado!" : "Copiar"}</Text>
+                </Pressable>
+                <Pressable testID="compartilhar-link" onPress={compartilharLink} style={styles.linkActionBtn}>
+                  <Ionicons name="share-social-outline" size={16} color={colors.brandPrimary} />
+                  <Text style={styles.linkActionText}>Compartilhar</Text>
+                </Pressable>
+              </View>
+            </View>
           </>
         ) : null}
 

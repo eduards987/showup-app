@@ -321,6 +321,27 @@ class AgendamentoPublicoCartaoRequest(AgendamentoPublicoCreate):
     payment_method_id: str  # já coletado/confirmado via Stripe.js Elements na página web
 
 
+class CartaoSetupPublicoRequest(BaseModel):
+    """Primeiro passo do cartão no link público: a página precisa de um
+    SetupIntent do cliente (identificado pelo telefone) pra o Stripe.js
+    salvar o cartão nele — mesmo papel do /me/card/setup-intent do app,
+    só que sem sessão."""
+    nome: str = Field(min_length=2, max_length=120)
+    telefone: str
+
+    @field_validator("telefone")
+    @classmethod
+    def _valida_telefone(cls, v: str) -> str:
+        digitos = "".join(c for c in v if c.isdigit())
+        if len(digitos) not in (10, 11):
+            raise ValueError("Telefone inválido — use DDD + número (ex: 11987654321)")
+        return digitos
+
+
+class CartaoSetupPublicoResponse(BaseModel):
+    setup_intent_client_secret: str
+
+
 class AgendamentoPublicoPixResponse(BaseModel):
     agendamento_id: str
     payment_intent_client_secret: str
@@ -1363,6 +1384,25 @@ async def criar_agendamento(request: Request, payload: AgendamentoCreate, author
         "criado_em": _now(),
     })
     return await _hydrate(doc)
+
+
+@api_router.post("/public/cartao/setup-intent", response_model=CartaoSetupPublicoResponse)
+@limiter.limit("10/minute")
+async def cartao_setup_intent_publico(request: Request, payload: CartaoSetupPublicoRequest):
+    """Passo 1 do cartão no link público. Acha/cria o cliente pelo telefone,
+    garante o customer no Stripe e devolve o client_secret de um SetupIntent
+    (usage=off_session, o mesmo tipo que o authorize() exige depois). O
+    número do cartão vai direto da página pro Stripe (Stripe.js) — nunca
+    passa por aqui. Passo 2 é o /public/agendamentos/cartao, já com o
+    payment_method_id que o Stripe.js devolve."""
+    cliente = await _find_or_create_cliente_por_telefone(payload.nome, payload.telefone)
+    customer_id = await gateway.ensure_customer(cliente["user_id"], cliente["email"], cliente["name"])
+    try:
+        setup_intent = await gateway.create_setup_intent(customer_id)
+    except PaymentError:
+        logging.exception("create_setup_intent falhou (link público)")
+        raise HTTPException(503, "Não foi possível preparar o pagamento com cartão agora. Tente de novo.")
+    return CartaoSetupPublicoResponse(setup_intent_client_secret=setup_intent["client_secret"])
 
 
 @api_router.post("/public/agendamentos/cartao", response_model=Agendamento)

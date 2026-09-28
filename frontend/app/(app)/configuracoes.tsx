@@ -6,6 +6,7 @@ import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   Text,
@@ -140,6 +141,9 @@ const useStyles = makeStyles((c) => ({
   connectRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   connectTitle: { fontSize: 14, fontWeight: "700", color: c.onSurfaceSecondary },
   connectBody: { fontSize: 13, color: c.muted, lineHeight: 18 },
+  dangerRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm },
+  dangerText: { fontSize: 15, fontWeight: "600", color: c.error },
+  dangerNote: { fontSize: 12, color: c.muted, lineHeight: 17, marginTop: spacing.sm, textAlign: "center" },
   connectBtn: {
     marginTop: spacing.sm,
     height: 42,
@@ -160,6 +164,34 @@ export default function Configuracoes() {
   const router = useRouter();
   const auth = useAuth();
   const qc = useQueryClient();
+
+  const excluirContaM = useMutation({
+    mutationFn: () => api("/api/me", { method: "DELETE" }),
+    onSuccess: () => {
+      auth.signOut();
+    },
+  });
+
+  const confirmarExclusao = () => {
+    Alert.alert(
+      "Excluir sua conta",
+      "Isso é permanente — seus dados pessoais serão apagados e você não vai conseguir desfazer isso depois. Tem certeza?",
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Excluir conta",
+          style: "destructive",
+          onPress: () => {
+            excluirContaM.mutate(undefined, {
+              onError: (e: any) => {
+                Alert.alert("Não foi possível excluir", e?.message ?? "Tente novamente.");
+              },
+            });
+          },
+        },
+      ],
+    );
+  };
 
   const [selectedCats, setSelectedCats] = useState<string[]>(
     auth.status === "authenticated" ? (auth.user.categorias ?? []) : [],
@@ -504,6 +536,29 @@ export default function Configuracoes() {
               )}
             </Pressable>
           ) : null}
+        </View>
+
+        <Text style={styles.sectionTitle}>ZONA DE PERIGO</Text>
+        <View style={styles.connectCard}>
+          <Pressable
+            testID="excluir-conta"
+            onPress={confirmarExclusao}
+            disabled={excluirContaM.isPending}
+            style={styles.dangerRow}
+          >
+            {excluirContaM.isPending ? (
+              <ActivityIndicator color={colors.error} />
+            ) : (
+              <>
+                <Ionicons name="trash-outline" size={18} color={colors.error} />
+                <Text style={styles.dangerText}>Excluir minha conta</Text>
+              </>
+            )}
+          </Pressable>
+          <Text style={styles.dangerNote}>
+            Remove seus dados pessoais permanentemente. Agendamentos pendentes ou futuros
+            precisam ser resolvidos antes.
+          </Text>
         </View>
       </ScrollView>
     </View>

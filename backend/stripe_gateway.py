@@ -74,11 +74,15 @@ class StripeGateway:
         """SetupIntent em vez de attach direto: o cartão nunca passa pelo
         nosso backend (PCI compliance), só o client_secret viaja até o app,
         que usa o Payment Sheet do Stripe pra coletar o cartão diretamente."""
-        si = stripe.SetupIntent.create(
-            customer=customer_id,
-            payment_method_types=["card"],
-            usage="off_session",  # é exatamente o que authorize() faz depois
-        )
+        try:
+            si = stripe.SetupIntent.create(
+                customer=customer_id,
+                payment_method_types=["card"],
+                usage="off_session",  # é exatamente o que authorize() faz depois
+            )
+        except stripe.error.StripeError as e:
+            log.warning("create_setup_intent falhou (customer=%s): %s", customer_id, e)
+            raise _translate_stripe_error(e) from e
         return {"setup_intent_id": si.id, "client_secret": si.client_secret}
 
     async def create_ephemeral_key(self, customer_id: str) -> str:

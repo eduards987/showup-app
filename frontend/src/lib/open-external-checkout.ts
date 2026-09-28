@@ -6,6 +6,16 @@
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 
+// O AccountLink do Stripe (usado pro onboarding do Connect) só aceita
+// return_url/refresh_url http(s) de verdade — recusa esquemas customizados
+// tipo "showup://" com 400 "Not a valid URL" (confirmado testando; é uma
+// limitação documentada do Stripe, não um bug nosso). Por isso passamos
+// pro Stripe uma página-ponte hospedada (https), que só repassa de volta
+// pro nosso deep link de verdade assim que carrega no navegador do
+// celular — o expo-web-browser intercepta esse redirect final e fecha a
+// sessão sozinho, exatamente como faria com o deep link direto.
+const STRIPE_BOUNCE_URL = "https://showup-509120.web.app/stripe-bounce";
+
 /**
  * @param fetchUrl recebe (returnUrl, cancelUrl) já prontas pro deep link de
  *   volta, e deve retornar a URL do Stripe pra abrir (via chamada à API).
@@ -18,16 +28,14 @@ export async function openExternalCheckout(
   fetchUrl: (returnUrl: string, cancelUrl: string) => Promise<string>,
   onReturn?: () => void,
 ): Promise<void> {
-  const returnUrl = Linking.createURL(path);
-  const url = await fetchUrl(returnUrl, returnUrl);
+  const deepLink = Linking.createURL(path);
+  const bounceUrl = `${STRIPE_BOUNCE_URL}?next=${encodeURIComponent(deepLink)}`;
+  const url = await fetchUrl(bounceUrl, bounceUrl);
 
-  // openAuthSessionAsync abre um browser controlado (SFSafariViewController /
-  // Chrome Custom Tabs) e resolve sozinho quando o Stripe redireciona de
-  // volta pro nosso esquema de deep link. Capturamos o resultado — antes
-  // isso era ignorado, então uma falha ao abrir (ex: nenhum navegador
-  // compatível com Custom Tabs disponível) desaparecia silenciosamente,
-  // sem log nem erro nenhum pro usuário.
-  const result = await WebBrowser.openAuthSessionAsync(url, returnUrl);
+  // openAuthSessionAsync continua de olho no deep link DIRETO (não na
+  // página-ponte) — é ele que o SO intercepta de verdade quando a
+  // ponte redireciona no final.
+  const result = await WebBrowser.openAuthSessionAsync(url, deepLink);
   if (result.type !== "success" && result.type !== "dismiss") {
     console.warn("[openExternalCheckout] navegador não abriu como esperado:", result);
     throw new Error(

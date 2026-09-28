@@ -1743,3 +1743,491 @@ antes de pagar.
   — precisaria de hospedagem própria fora do sistema de Artifacts pra
   contornar, algo a considerar mais pra frente).
 - A integração de verdade com WhatsApp (depende do BSP escolhido).
+
+## Bug real: Connect onboarding recusado pelo Stripe ("Not a valid URL")
+
+Testando o botão de conectar Stripe (Connect) de verdade, erro 400:
+"Not a valid URL" no param `return_url`. Causa confirmada por pesquisa
+(achei um caso idêntico documentado, mesma mensagem de erro, mesmo
+cenário): o `AccountLink.create` do Stripe (usado só pro onboarding do
+Connect) **só aceita URLs http(s) de verdade** pro return_url/refresh_url
+— recusa esquemas customizados como `showup://`, mesmo sendo um deep
+link válido do app. Isso é diferente do `checkout.Session` (usado nos
+planos antes de migrarmos pro Payment Sheet nativo), que aceita esquema
+customizado — a limitação é específica do AccountLink.
+
+### Corrigido: página-ponte publicada
+Criei e publiquei `stripe-bounce.html`:
+https://claude.ai/artifact/45ugcMrgMZTBWMy7s5nWN6
+
+Uma página https mínima que só repassa o redirecionamento de volta pro
+esquema `showup://` do app (lê `?next=<deep link>` da query string,
+redireciona na hora que carrega, com um botão de fallback "toque aqui"
+caso o redirect automático falhe em algum navegador/WebView específico).
+Tem uma allowlist restrita ao esquema `showup://` — nunca redireciona pra
+qualquer URL vinda de fora, evitando virar um "open redirect" explorável
+(padrão de segurança que copiei do mesmo caso real que encontrei
+documentado, que tinha exatamente essa mesma preocupação).
+
+`open-external-checkout.ts`: agora manda pro Stripe a URL da PONTE
+(com o deep link codificado no `?next=`) em vez do deep link puro. O
+`WebBrowser.openAuthSessionAsync` continua de olho no deep link DIRETO
+(não na ponte) — é ele que o SO intercepta de verdade quando a ponte
+redireciona no final; a ponte é só o intermediário que o Stripe aceita.
+
+### Validação real
+- `tsc --noEmit`: zero erros. `expo export --platform android`: bundle
+  gerado com sucesso.
+- Extraí e validei a sintaxe JS da página-ponte com `node --check`.
+- Testei a lógica de allowlist com 3 casos: deep link válido (aceito),
+  URL maliciosa arbitrária (rejeitada), tentativa de `javascript:`
+  (rejeitada) — os 3 se comportaram como esperado.
+
+## Páginas migradas do artifact do Claude pro Firebase Hosting (produção real)
+
+Usuário levantou preocupação válida: depender do sistema de artefatos do
+Claude pra tráfego de produção não é confiável o suficiente pro negócio.
+Migrado pro Firebase Hosting, dentro do MESMO projeto Google Cloud já
+existente (showup-509120, reaproveitado do setup OAuth) — sem precisar
+criar conta/projeto novo.
+
+URL real: https://showup-509120.web.app
+- `/agendar` — página de agendamento público (Pix)
+- `/stripe-bounce` — página-ponte do Connect onboarding
+
+(URLs "limpas", sem `.html`, por causa do `cleanUrls: true` configurado
+no `firebase.json`.)
+
+### Código atualizado
+- `open-external-checkout.ts`: `STRIPE_BOUNCE_URL` trocado do artifact
+  do Claude pra `https://showup-509120.web.app/stripe-bounce`.
+- `backend/.env`: `ALLOWED_ORIGINS` trocado do placeholder antigo
+  (nunca corrigido de verdade — só tinha sido mencionado numa tabela pro
+  Render antes, mas nunca aplicado no arquivo local) pra incluir o
+  domínio real do Firebase Hosting.
+
+### ⚠️ Ação pendente do usuário
+`ALLOWED_ORIGINS` também precisa ser atualizado na variável de ambiente
+do RENDER (separada do arquivo .env local) — sem isso, o CORS vai
+bloquear as chamadas da página `/agendar` pro backend.
+
+### Validação real
+`tsc --noEmit`: zero erros. `expo export --platform android`: bundle
+gerado com sucesso. Backend reimportado confirmando o novo
+ALLOWED_ORIGINS carregado corretamente.
+
+## Novo: card "Seu link de agendamento" no perfil do profissional
+
+Usuário levantou um gap real de UX: pra pegar o link de agendamento
+público, era preciso olhar o banco de dados direto — inviável pra um
+profissional de verdade, sem acesso técnico. Corrigido com uma solução
+imediata (não depende de nenhuma integração de WhatsApp automatizada,
+que continua pendente do BSP): o profissional agora vê o PRÓPRIO link
+direto na tela de Perfil, com botão de copiar e botão de compartilhar
+(abre o menu nativo do celular, WhatsApp aparece como uma das opções —
+sem precisar de nenhuma API do WhatsApp pra isso).
+
+### Implementado
+- `expo-clipboard@7.1.5` instalado (via npm direto — `npx expo install`
+  falhou no sandbox por falta de acesso à API do Expo pra resolver
+  versões, resolvido escolhendo manualmente a série 7.x compatível com
+  SDK 57).
+- `perfil.tsx`: novo card "SEU LINK DE AGENDAMENTO" na seção do
+  profissional, mostrando o link completo (`https://showup-509120.web.app/
+  agendar?prof=<user_id>`, montado no cliente usando o user_id já
+  disponível pelo auth), com botão "Copiar" (Clipboard, com feedback
+  visual "Copiado!" por 2s) e "Compartilhar" (`Share.share()` nativo do
+  React Native — abre o menu do SO, WhatsApp é uma opção ali junto com
+  qualquer outro app instalado).
+
+### Bug real corrigido durante a implementação
+Coloquei o `useState` novo DEPOIS de um `return null` condicional — viola
+as Rules of Hooks do React (hooks nunca podem vir depois de um return
+condicional, sempre no topo, incondicionalmente). Corrigido movendo pro
+topo do componente, junto dos outros hooks já existentes.
+
+### Validação real
+`tsc --noEmit`: zero erros (pegaria esse tipo de erro de qualquer forma,
+mas corrigi antes mesmo de rodar, revisando o código). `expo export
+--platform android`: bundle gerado com sucesso incluindo o novo módulo
+nativo.
+
+### ⚠️ Ação necessária do usuário
+Como `expo-clipboard` é um módulo NATIVO novo, precisa apagar
+`frontend/android/` de novo e rodar `npx expo run:android` do zero (mesma
+rotina de sempre quando adicionamos dependência nativa) — não basta só
+recarregar o JS.
+
+## EXPO_PUBLIC_BACKEND_URL trocado pra apontar pro Render (produção)
+
+Usuário quer testar num celular Android físico (não emulador) — o
+`10.0.2.2` que estava configurado só funciona de DENTRO do emulador,
+nunca de um celular real. Trocado pra apontar direto pro backend já
+publicado no Render (`https://showup-backend-s9y1.onrender.com`), em vez
+de tentar configurar IP de rede local (mais frágil — exigiria mesma
+WiFi, firewall liberado, etc.). Também é mais representativo de produção
+de verdade a partir de agora.
+
+### Validação real
+Confirmado por leitura direta do arquivo que o valor novo foi aplicado
+corretamente.
+
+## expo-dev-client instalado (necessário pro EAS Build de development)
+
+O comando `eas build --profile development` avisou que faltava esse
+pacote — é exigido especificamente pra builds com `developmentClient:
+true` (nosso perfil "development" no eas.json). Instalado
+`expo-dev-client@6.0.21` (série compatível com Expo SDK 57).
+
+### Validação real
+`tsc --noEmit`: zero erros. `expo export --platform android`: bundle
+gerado com sucesso.
+
+## Política de Privacidade + exclusão de conta (bloqueios da Play Store resolvidos)
+
+Dois itens identificados como obrigatórios pra publicação, nunca
+construídos até agora. Implementados nesta rodada.
+
+### Política de Privacidade
+`privacidade.html` — conteúdo real e específico do ShowUp (não texto
+genérico), cobrindo: quais dados coletamos (login Google, telefone via
+link público, dados de pagamento processados pelo Stripe — nunca
+armazenados por nós), com quem compartilhamos (Google, Stripe, MongoDB
+Atlas), direitos do usuário sob a LGPD, retenção de dados (anonimização
+ao excluir conta, exceção pra registros financeiros por obrigação
+legal), segurança, menores de idade, contato. Adicionado ao pacote do
+Firebase Hosting (`/mnt/user-data/outputs/showup-firebase-hosting.zip`,
+atualizado) — precisa rodar `firebase deploy --only hosting` de novo
+pra publicar em `/privacidade`.
+
+**Nota que passei ao usuário: não sou advogado — recomendei revisão
+jurídica antes do lançamento real, especialmente por envolver LGPD.**
+
+### Exclusão de conta
+- `server.py`: novo endpoint `DELETE /me`. Não apaga o documento do
+  usuário de verdade — anonimiza campos pessoais (nome → "Usuário
+  excluído", email → sintético único baseado no user_id, foto e
+  telefone removidos), marca `deleted_at`, remove referências Stripe
+  (`stripe_customer_id`, `stripe_billing_customer_id`,
+  `stripe_account_id`), invalida todas as sessões. Preserva
+  agendamentos/transações já ocorridos (obrigação fiscal), agora
+  desvinculados de dado pessoal identificável.
+- Bloqueia a exclusão (409) se o usuário tiver agendamento com hold
+  ativo (`autorizado`/`cancelando`/`aguardando_pix`) ou compromisso
+  futuro agendado — evita perder dinheiro travado ou deixar cliente/
+  profissional no vácuo.
+- `configuracoes.tsx`: novo card "ZONA DE PERIGO" com botão "Excluir
+  minha conta", confirmação via `Alert.alert` (estilo destrutivo,
+  padrão nativo do SO) antes de disparar a exclusão de verdade.
+
+### Bug real corrigido durante a implementação
+Escrevi a query de checagem de compromisso pendente com a chave `"$or"`
+duas vezes no MESMO dicionário Python — a segunda ocorrência
+sobrescrevia a primeira silenciosamente (chaves de dict são únicas em
+Python, isso não dá erro de sintaxe, só comportamento errado). Isso
+faria a checagem ignorar completamente o filtro por cliente_id/
+profissional_id, bloqueando a exclusão de QUALQUER usuário se existisse
+QUALQUER agendamento pendente de QUALQUER pessoa no sistema inteiro.
+Corrigido usando `$and` pra combinar as duas condições `$or`
+corretamente — validei a estrutura resultante com um teste isolado
+antes de seguir, confirmando que as duas condições sobrevivem.
+
+### Validação real
+- Testei a estrutura da query MongoDB isoladamente (sem precisar de
+  banco real) — confirmei que as duas condições `$or` coexistem
+  corretamente depois da correção.
+- Backend: compilado, reimportado com sucesso, rota `DELETE /api/me`
+  confirmada no schema OpenAPI.
+- Frontend: `tsc --noEmit` zero erros, `expo export --platform android`
+  gerou bundle com sucesso.
+- Confirmei por grep que `auth.signOut` existe de verdade no hook antes
+  de usar (não assumi).
+
+### Ainda falta pro checklist da Play Store
+Conta de desenvolvedor no Play Console, Termos de Uso, ícone/screenshots/
+descrição da loja, formulário de segurança de dados, build de produção
+(.aab), envio pra revisão.
+
+## Achado sério: .gitignore incompleto expôs segredos e quebrou o build do EAS
+
+Investigando por que o build do EAS Build falhava repetidamente ("Gradle
+build failed with unknown error", mesmo depois de reinstalar node_modules
+do zero), achei a causa real: `frontend/.gitignore` só tinha UMA linha
+(`expo-env.d.ts`, gerada automaticamente) — sem excluir `node_modules/`,
+`android/`, nem `.env`. O `.gitignore` da RAIZ do projeto sempre esteve
+completo e correto, mas o repositório Git real parece ter sido criado
+dentro da pasta `frontend/` especificamente (via "Share Project on
+GitHub" do Android Studio), então só o `.gitignore` incompleto de lá
+valia de verdade.
+
+Isso explica o arquivo de 380MB no upload do EAS Build visto nos logs
+(node_modules inteiro sendo enviado) e, mais grave: a pasta `android/`
+sendo enviada com arquivos que guardam caminhos absolutos do Windows
+(`C:\Users\Edu\...`) — que não significam nada nos servidores Linux do
+EAS Build, e é a explicação mais provável pra falha persistente do
+Gradle na nuvem (nunca falhava localmente, só lá).
+
+### Corrigido
+- `frontend/.gitignore`: reescrito completo (node_modules, .env,
+  /android, /ios, .expo, cache do Metro, arquivos de assinatura, etc.)
+  — mesmo padrão já usado no `.gitignore` da raiz.
+- Passado ao usuário: `git rm -r --cached node_modules android .env` +
+  commit + push, pra remover esses itens do rastreamento (sem apagar
+  localmente).
+
+### Segredos rotacionados por precaução
+Mesmo sendo repositório privado, os segredos ficam visíveis no HISTÓRICO
+de commits antigos mesmo depois da limpeza acima (gitignore só previne
+daqui pra frente). Rotacionado:
+- `INTERNAL_SERVICE_TOKEN`: novo valor gerado (`openssl rand -hex 32`),
+  aplicado no `backend/.env` local. **Usuário ainda precisa aplicar o
+  mesmo valor no Render.**
+- `MONGO_URL`: usuário está trocando a senha do usuário do banco no
+  Atlas Database Access — aguardando a senha nova pra atualizar.
+- `STRIPE_API_KEY`: decidido NÃO trocar — é chave de modo TESTE, risco
+  baixo mesmo exposta.
+
+### Validação real
+Backend reimportado com sucesso depois da troca do token.
+
+## MONGO_URL rotacionada com a senha nova
+
+Usuário trocou a senha do usuário `eduards987_db_user` no MongoDB Atlas
+Database Access. `MONGO_URL` atualizada no `backend/.env` local com a
+senha nova (só alfanumérica, não precisou de URL-encoding). Backend
+reimportado com sucesso.
+
+**Usuário ainda precisa aplicar essa mesma MONGO_URL nova no Render.**
+
+## Causa real da falha persistente do EAS Build: faltava .easignore
+
+Depois de 3 tentativas de build falhando com o mesmo erro genérico
+("Gradle build failed with unknown error"), e depois de confirmar que
+`git rm --cached node_modules` nem encontrava o pathspec (node_modules
+nunca esteve rastreado no git) — reconsiderei a causa raiz. O passo
+"Compressing project files" do `eas build` lê direto do DISCO LOCAL,
+não do estado do Git — corrigir o `.gitignore` nunca teria efeito nisso.
+
+### Corrigido
+Criado `frontend/.easignore` (arquivo específico do EAS Build, com
+prioridade sobre `.gitignore`, documentado oficialmente pra esse
+propósito exato) excluindo `node_modules/`, `android/`, `ios/`,
+`.expo/`, `.metro-cache/`, `.git/`. Excluir `android/` é seguro porque
+nunca fizemos nenhuma edição manual nela — é 100% gerada
+automaticamente a partir do `app.json`, então o EAS Build vai
+regenerá-la do zero, direto no Linux dele, sem nenhum caminho absoluto
+do Windows sobrando (a suspeita original, nunca confirmada por falta de
+acesso ao log detalhado, mas consistente com "só falha na nuvem, nunca
+local").
+
+### Ainda sem confirmação
+Não consegui acessar o log detalhado do "Run gradlew" em nenhuma
+tentativa (nem pela página, nem por `eas build:view`) — essa correção é
+baseada em raciocínio sobre o mecanismo do EAS Build (documentado), não
+em confirmação direta da causa exata. Pode não resolver sozinha; se
+persistir, o próximo passo é insistir em conseguir o log real.
+
+## Causa confirmada do .easignore não funcionar: bug conhecido no EAS CLI
+
+Pesquisei mais fundo depois do .easignore não reduzir o tamanho do
+pacote (380MB idêntico, 4ª tentativa) — achei o issue exato:
+github.com/expo/eas-cli/issues/4259 (aberto há ~30 dias, ainda sem
+correção): quando o projeto está dentro de um repositório Git, o EAS
+CLI detecta a "raiz do git" internamente e ignora qualquer `.easignore`
+colocado do lado do `eas.json`, usando em vez disso (silenciosamente,
+sem warning) a raiz do git — que pode não ser a mesma pasta.
+
+Também confirmei na doc oficial (expo/fyi eas-build-archive.md): EAS CLI
+"sempre respeita .gitignore" e "node_modules é ignorado por padrão" —
+então node_modules provavelmente NUNCA foi a causa do tamanho grande;
+é mais provável que seja a pasta `android/` (que tem caches do Gradle
+que costumam ser enormes).
+
+### Correção (contorno oficial documentado pro bug)
+`EAS_NO_VCS=1` desativa a detecção via Git por completo, fazendo o EAS
+ler o `.easignore` direto da pasta do `eas.json` (onde já coloquei
+corretamente antes) — contornando o bug. Passado ao usuário:
+```
+$env:EAS_NO_VCS=1; eas build --profile development --platform android
+```
+(sintaxe PowerShell pra variável de ambiente numa linha só).
+
+### Ainda sem confirmação definitiva
+Essa é a 2ª tentativa de correção sem conseguir ver o log real do
+Gradle — baseada em pesquisa e raciocínio sobre o mecanismo do EAS CLI,
+não confirmação direta da causa exata do "Gradle build failed with
+unknown error". Se persistir depois disso, o log real vira prioridade
+máxima antes de tentar mais uma correção às cegas.
+
+## Achado real (finalmente!): versão errada do expo-dev-client
+
+Depois de 8+ tentativas de build no EAS falhando com erro genérico
+"unknown error" sem nenhum log acessível, consegui reproduzir o MESMO
+processo localmente (`npx expo run:android` sem pasta android/, forçando
+regeneração do zero) — e esse SIM mostrou o erro real, específico:
+
+```
+> Task :expo-dev-menu-interface:compileDebugKotlin
+e: .../ReactHostWrapper.kt:12:21 Unresolved reference 'rncompatibility'.
+e: .../ReactHostWrapper.kt:24:9 Unresolved reference 'ReactNativeFeatureFlags'.
+```
+
+Pesquisei e achei um relato praticamente idêntico ao nosso caso (mesma
+categoria de erro: TypeScript/JS passam limpo, dev server roda normal,
+só o build NATIVO do Gradle quebra) — confirma que a causa é pacotes do
+Expo instalados em versão incompatível com o SDK do projeto. Isso é
+provavelmente minha responsabilidade: quando instalei `expo-dev-client`
+antes, `npx expo install` (a ferramenta oficial que resolve a versão
+certa) falhou no MEU sandbox por restrição de rede, e escolhi a versão
+manualmente (`6.0.21`) só inferindo um padrão a partir de outro pacote —
+sem confirmar contra a tabela de compatibilidade real do Expo. O artigo
+que encontrei é explícito: "o número da versão do pacote nem sempre
+bate com o número do SDK — só olhar a versão principal não é
+suficiente."
+
+### Correção passada ao usuário
+`npx expo install --check` (lista o que está desalinhado) seguido de
+`npx expo install --fix` (corrige automaticamente pra versão certa,
+usando a tabela oficial do Expo) — só funciona na máquina do usuário,
+que tem acesso de rede completo (diferente do meu sandbox).
+
+### Ainda sem confirmação final
+Passei a correção mas ainda não tenho confirmação de que resolveu — essa
+é a hipótese mais forte até agora, baseada em evidência REAL pela
+primeira vez (não mais raciocínio às cegas), mas falta validar o
+resultado.
+
+## ✅ CONFIRMADO: build local funcionou depois da correção de versões
+
+`npx expo run:android` completou com sucesso: "BUILD SUCCESSFUL in 3m 32s",
+588 tasks (326 executadas, 244 do cache, 18 já atualizadas), zero erros —
+o `expo-dev-menu-interface:compileDebugKotlin` que falhava antes agora
+compila limpo. Metro Bundler iniciou normalmente depois.
+
+Isso fecha de vez a investigação de 10+ tentativas: a causa raiz real era
+versões de pacote desalinhadas com o Expo SDK 57 (introduzidas por mim,
+ao escolher versões manualmente quando `npx expo install` falhava no meu
+sandbox por restrição de rede). Resolvido com `npx expo install --check`
++ `--fix` (ferramenta oficial do Expo, rodada na máquina do usuário, que
+tem acesso de rede completo).
+
+### Próximo passo natural
+Testar `eas build` na nuvem de novo agora — como a causa raiz era nas
+DEPENDÊNCIAS (não no `.easignore`/pasta android/, que também foram
+ajustados ao longo do caminho), o build na nuvem deve funcionar agora
+também.
+
+## Login do Google trocado: SDK nativo → fluxo via navegador (backend callback)
+
+Depois de esgotar toda causa de configuração possível pro travamento
+silencioso do login do Google (SHA-1 confirmado 100% correto via keytool,
+emulador novo do zero, usuário de teste certo, sem revisão pendente,
+cliente Android duplicado removido — nada resolveu), a pesquisa achou um
+issue aberto HOJE no GitHub, ambiente idêntico ao nosso (mesma versão da
+lib @react-native-google-signin 16.1.5, mesmo Expo SDK 57), sem solução —
+e a doc oficial confirma que a versão GRATUITA dessa lib usa o SDK
+"legado" do Google no Android, enquanto existe uma versão PAGA feita
+especificamente pra New Architecture (obrigatória no SDK 57).
+
+### Decisão
+Trocar pro fluxo via navegador, que não depende de nenhum certificado de
+assinatura (SHA-1) — elimina de vez essa classe inteira de bugs que nos
+perseguiu a conversa toda (DEVELOPER_ERROR, travamento silencioso, EAS vs
+keystore local, etc).
+
+### Descoberta importante no caminho
+Client ID tipo "Web" do Google **não aceita** esquema customizado
+(`showup://`) como redirect_uri — é bloqueado pelo próprio Google
+("Custom scheme URIs are not allowed for 'WEB' client type"). A solução
+correta: o redirect_uri cadastrado no Google é uma URL HTTPS do próprio
+backend, que troca o `code` por tokens (usando Client Secret, nunca
+exposto no app), monta a sessão, e só DEPOIS redireciona pro app via
+`showup://auth-callback?token=...`.
+
+### Implementado
+- **Backend** (`server.py`): endpoint novo `GET /auth/google/callback`
+  (recebe `code`, troca no `oauth2.googleapis.com/token`, valida
+  `id_token`, monta sessão, redireciona pro app). Lógica de
+  criação/atualização de usuário extraída pra
+  `_login_or_create_session_from_google_claims()`, reaproveitada pelo
+  endpoint antigo (`/auth/session`, mantido só por compatibilidade) e
+  pelo novo. Variáveis novas: `GOOGLE_CLIENT_SECRET`,
+  `GOOGLE_OAUTH_REDIRECT_URI`.
+- **Frontend** (`src/lib/auth.tsx`): removido
+  `@react-native-google-signin/google-signin` (do package.json e do
+  plugin no app.json). `signIn()` agora monta a URL de autorização do
+  Google manualmente e usa `WebBrowser.openAuthSessionAsync` (já com
+  `expo-web-browser`, sem precisar de `expo-auth-session` nem
+  `expo-crypto` — cheguei a adicionar essas duas e removi de novo ao
+  perceber que não eram necessárias pra essa abordagem).
+
+### Pendente do lado do usuário (não fiz por não ter acesso)
+1. Pegar o Client Secret do Client ID Web já existente no Google Cloud
+   Console (mesma tela do Client ID).
+2. Cadastrar `https://showup-backend-s9y1.onrender.com/api/auth/google/callback`
+   como "URI de redirecionamento autorizado" nesse mesmo Client ID Web.
+3. Colocar `GOOGLE_CLIENT_SECRET` e `GOOGLE_OAUTH_REDIRECT_URI` no
+   `backend/.env` local E nas variáveis de ambiente do Render.
+4. `npm install` no frontend (remove a lib antiga do node_modules).
+5. Testar o login end-to-end.
+
+### Ainda sem confirmação
+Implementação nova, nunca testada de ponta a ponta ainda.
+
+## Login do Google via navegador: FUNCIONOU (28/09/2026)
+
+Testado no celular físico: tela de escolha de conta do Google no
+navegador, backend trocou o `code` pelo id_token, criou a sessão, e o app
+abriu logado (tela "Bem-vindo Eduardo"). Confirmado depois de:
+- URI de redirecionamento cadastrada e salva no Client ID Web do Google
+  (o erro `redirect_uri_mismatch` sumiu);
+- `MONGO_URL` do Render atualizada com a senha nova (antes dava
+  `bad auth` no startup);
+- commit + push do `backend/server.py` (o Render publica pelo GitHub —
+  o zip só muda a pasta local, nunca o Render).
+
+### Efeito colateral corrigido
+O Expo Router também capturava o deep link `showup://auth-callback?token=…`
+e mostrava "Unmatched Route" por cima. Criado `app/auth-callback.tsx`,
+que só faz `<Redirect href="/" />` pro gate de auth (`app/index.tsx`).
+
+### Pendente
+- Commit separado das remoções da pasta `frontend/android/` (staged, não
+  commitadas) e arquivos soltos `frontend/cd` e `frontend/rmdir` (criados
+  por comandos digitados errado) — apagar.
+- Trocar o Client Secret do Google (foi colado no chat) e atualizar
+  `backend/.env` + Render.
+- Testar o EAS Build com esse fluxo novo (não depende mais de SHA-1).
+- Testar o logout e novo login; testar com conta que nunca logou.
+
+## Link público (web): escolha entre cartão e Pix
+
+Firebase Hosting refeito (o deploy antigo tinha rodado de dentro de
+`public/` e nunca publicou os HTMLs — `/privacidade` dava 404). Pacote novo
+traz `.firebaserc` (projeto `showup-509120`); deploy = na pasta que tem o
+`firebase.json`: `firebase deploy --only hosting --project showup-509120`
+(deve dizer "found 3 files").
+
+`agendar.html` passo 4 agora deixa o cliente escolher:
+- **Cartão** (padrão): Stripe.js Card Element → `POST /public/cartao/setup-intent`
+  (novo) → `stripe.confirmCardSetup` → `POST /public/agendamentos/cartao`
+  (hold, mesma proteção anti no-show do app). Mostra a taxa de no-show no
+  resumo. Chave `pk_test_...` hardcoded na página (publicável) — trocar
+  pela `pk_live_` junto com as chaves do backend.
+- **Pix**: fluxo que já existia (cobra total, QR code + polling).
+
+Backend: endpoint novo `POST /public/cartao/setup-intent` (nome+telefone →
+acha/cria cliente, ensure_customer, SetupIntent off_session), rate limit
+10/min. `stripe_gateway.create_setup_intent` agora converte erro do Stripe
+em PaymentError (antes vazava como 500). Testado com TestClient (4 casos)
+e a página com Playwright (cartão ok, Pix, cartão recusado, horário
+ocupado).
+
+### Pendente
+- Pix falha em produção-teste com "Falha ao gerar cobrança Pix junto ao
+  gateway" (502): a causa real está no log do Render, linha
+  `create_pix_payment_intent falhou ...`. Hipóteses: Pix não ativado nos
+  métodos de pagamento da conta Stripe (modo teste) ou a conta Connect do
+  profissional sem a capability de Pix.
+- Cartão nunca testado contra o Stripe de verdade (só com Stripe.js
+  simulado): testar com 4242 4242 4242 4242.
