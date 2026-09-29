@@ -2374,3 +2374,64 @@ Testado com objeto que reproduz o comportamento exato do `Account` real
 (rejeita `.get()`, aceita atributos): perfil `None` (caso da conta
 recém-criada, que foi o que quebrou), perfil existente vazio, e perfil já
 preenchido (não sobrescreve). Os três passam.
+
+## Onboarding do Connect trava no Android (Custom Tab) mas funciona no desktop (29/09/2026)
+
+Vídeos confirmaram: no navegador embutido do Android (Custom Tab, via
+`WebBrowser.openAuthSessionAsync`), a etapa de "Date of birth" do
+onboarding hospedado do Stripe trava com "Sorry, something went wrong" —
+às vezes depois de preencher a data (mesmo em ordem), às vezes a página
+nem termina de carregar. MESMA conta, MESMO link, aberto no Chrome do
+computador: completa sem erro nenhum, chega até "Verify your identity".
+Isolado: não é nosso código, não é a conta, não é o Stripe em geral — é
+específico do Custom Tab no Android nesse ambiente.
+
+### Corrigido
+Só o onboarding do Connect (não o checkout de planos, que nunca teve
+esse problema) passa a abrir no **navegador do sistema**
+(`WebBrowser.openBrowserAsync`, sai do app de verdade) em vez do Custom
+Tab embutido — mesmo motor que funcionou no desktop.
+`openExternalCheckout` ganhou um 4º parâmetro `useSystemBrowser`
+(default `false`, só o Connect passa `true`).
+
+Detalhe que quase passou batido: a doc oficial do Expo confirma que no
+Android `openBrowserAsync` sozinho resolve a Promise assim que o
+navegador ABRE, não quando o usuário volta (diferente de
+`openAuthSessionAsync`). Isso significa que `onReturn` nesse caminho
+dispara cedo demais pra servir de sinal de "terminou". Resolvido com um
+listener de `AppState` em `configuracoes.tsx`: toda vez que o app volta
+ao primeiro plano, revalida a query `connect-status` — cobre o caso real
+(usuário completa no navegador externo, volta pro app depois).
+
+### Ainda não confirmado end-to-end
+Não testei essa troca de navegador de verdade ainda (só a lógica e a
+doc). Próximo passo do usuário: tentar "Conectar Stripe" de novo no
+celular e ver se completa sem travar.
+
+## Correção da correção: openBrowserAsync também usa Custom Tab no Android
+
+A tentativa anterior (trocar pra `WebBrowser.openBrowserAsync`) estava
+errada — não resolveu nada porque, no Android, essa função SEMPRE abre
+via "custom Chrome tabs" por baixo (confirmado na doc oficial do Expo:
+"Opens the url with... Chrome in a new custom tab on Android" e "This
+will be done using a 'custom Chrome tabs' browser"). É literalmente o
+mesmo mecanismo de `openAuthSessionAsync`, só com outro nome de função —
+por isso "não usou o Chrome" (visualmente continuou sendo o navegador
+embutido, com o mesmo bug esperado).
+
+### Corrigido de verdade
+Trocado pra `Linking.openURL(url)` — essa sim sai do app de verdade,
+abrindo o navegador PADRÃO do sistema (como se o usuário tivesse tocado
+num link fora do app), sem passar pelo mecanismo de Custom Tabs. É o
+único caminho documentado do Expo pra isso ("The expo-linking API allows
+you to open a URL using the operating system's default web browser
+app").
+
+Mesma estrutura de antes (parâmetro `useSystemBrowser`, listener de
+`AppState` em `configuracoes.tsx` pra revalidar o status ao voltar) —
+só a chamada interna mudou.
+
+### Ainda não confirmado end-to-end
+Como da vez passada: a lógica está certa, mas não testei contra o app de
+verdade ainda. Próximo passo do usuário: tentar "Conectar Stripe" de novo
+e confirmar que agora sim abre o Chrome/navegador padrão separado do app.

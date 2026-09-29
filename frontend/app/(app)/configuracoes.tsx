@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   Pressable,
   ScrollView,
   Text,
@@ -165,6 +166,22 @@ export default function Configuracoes() {
   const auth = useAuth();
   const qc = useQueryClient();
 
+  // O onboarding do Connect abre no navegador do SISTEMA (fora do app —
+  // ver o comentário em openExternalCheckout sobre por quê), então não
+  // tem como saber exatamente quando o usuário termina lá. O jeito que
+  // sobra: toda vez que o app volta pro primeiro plano, revalida o status
+  // — se o profissional realmente completou o cadastro, a tela atualiza
+  // sozinha na próxima vez que ele olhar pra ela, sem precisar puxar pra
+  // atualizar manualmente.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        qc.invalidateQueries({ queryKey: ["connect-status"] });
+      }
+    });
+    return () => sub.remove();
+  }, [qc]);
+
   const excluirContaM = useMutation({
     mutationFn: () => api("/api/me", { method: "DELETE" }),
     onSuccess: () => {
@@ -299,11 +316,15 @@ export default function Configuracoes() {
 
   const connectM = useMutation({
     mutationFn: () =>
-      openExternalCheckout("/(app)/perfil", (returnUrl, refreshUrl) =>
-        api<{ url: string }>(
-          `/api/me/connect/onboarding?return_url=${encodeURIComponent(returnUrl)}&refresh_url=${encodeURIComponent(refreshUrl)}`,
-          { method: "POST" },
-        ).then((r) => r.url),
+      openExternalCheckout(
+        "/(app)/perfil",
+        (returnUrl, refreshUrl) =>
+          api<{ url: string }>(
+            `/api/me/connect/onboarding?return_url=${encodeURIComponent(returnUrl)}&refresh_url=${encodeURIComponent(refreshUrl)}`,
+            { method: "POST" },
+          ).then((r) => r.url),
+        undefined,
+        true, // navegador do sistema — ver o comentário em openExternalCheckout
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["connect-status"] }),
     onError: (err: unknown) => {
