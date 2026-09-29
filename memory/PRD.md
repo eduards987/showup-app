@@ -2256,3 +2256,31 @@ modo teste (email de teste do Stripe simula pago/expirado) e só então
 `PIX_DISPONIVEL = true`. Se usar conta Connect com cobrança direta ou
 `on_behalf_of`, a conta conectada também precisa da capability
 `pix_payments`.
+
+## Onboarding do Stripe Connect simplificado (28/09/2026)
+
+Reclamação: o cadastro do profissional pedia coisa demais (tipo de conta,
+"Business information"/site, etc).
+
+Feito (backend, `stripe_gateway.create_connect_account` +
+`server._connect_prefill`): a conta Express agora nasce pré-preenchida —
+`business_type=individual` (some a pergunta pessoa física/empresa), nome
+e e-mail do Google em `individual`, e o perfil público: `business_profile.url`
+= página de agendamento do próprio profissional
+(`{PUBLIC_WEB_BASE_URL}/agendar?prof=<id>`, é o que a doc do Stripe manda
+usar pra autônomo sem site) + `product_description` (com as categorias).
+O hospedado do Stripe não pergunta o pré-preenchido, só pede confirmação.
+Contas já existentes: `prefill_connect_profile` completa url/descrição SÓ
+se estiverem vazios (nunca sobrescreve o que o profissional digitou),
+best-effort — falha vira log, não bloqueia. Env nova opcional:
+`PUBLIC_WEB_BASE_URL` (default `https://showup-509120.web.app`).
+
+NÃO removível (exigência do Stripe/KYC de pessoa física no Brasil): data de
+nascimento, CPF, endereço, telefone e conta bancária pra repasse. Ocultar
+campo não remove a exigência; e não coletamos esses dados no app (LGPD).
+Não mexi nas `capabilities` (transfers + card_payments): não consegui
+confirmar que dá pra reduzir sem quebrar os repasses.
+
+Pra testar do zero: apagar a conta conectada de teste no Dashboard
+(Connect > Accounts) — o backend recria sozinho no próximo "configurar
+recebimentos" (recuperação de conta órfã "No such account").

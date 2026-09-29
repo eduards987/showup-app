@@ -1103,6 +1103,26 @@ async def connect_status(authorization: Optional[str] = Header(default=None)):
         return ConnectStatus(account_id=acct_id)
 
 
+# Página web pública (Firebase Hosting) onde o cliente agenda pelo link do
+# profissional — é a mesma base que o app mostra em "Seu link de agendamento".
+PUBLIC_WEB_BASE_URL = os.environ.get("PUBLIC_WEB_BASE_URL", "https://showup-509120.web.app").rstrip("/")
+
+
+def _connect_prefill(doc: dict) -> dict:
+    """O que a gente já sabe do profissional e pode entregar pro Stripe
+    pré-preenchido, pra ele não precisar digitar site nem ramo de atividade
+    no onboarding. O "site" é a própria página de agendamento dele no
+    ShowUp (é o que a doc do Stripe orienta pra autônomo sem site)."""
+    categorias = [c for c in (doc.get("categorias") or []) if c]
+    descricao = "Profissional autônomo que atende clientes com hora marcada e recebe os pagamentos pelo ShowUp"
+    if categorias:
+        descricao += f" (categorias: {', '.join(categorias)})"
+    return {
+        "profile_url": f"{PUBLIC_WEB_BASE_URL}/agendar?prof={doc['user_id']}",
+        "product_description": descricao + ".",
+    }
+
+
 @api_router.post("/me/connect/onboarding", response_model=ConnectLink)
 @limiter.limit("10/minute")
 async def connect_onboarding(
@@ -1118,11 +1138,16 @@ async def connect_onboarding(
     acct_id = doc.get("stripe_account_id")
     if not acct_id:
         acct_id = await gateway.create_connect_account(
-            doc["email"], doc["name"], country=MOEDA_PAIS_CONNECT.get(doc.get("moeda") or DEFAULT_MOEDA, "BR")
+            doc["email"], doc["name"], country=MOEDA_PAIS_CONNECT.get(doc.get("moeda") or DEFAULT_MOEDA, "BR"),
+            **_connect_prefill(doc),
         )
         if not acct_id:
             raise HTTPException(400, "Connect não habilitado na conta Stripe da plataforma. Ative em https://dashboard.stripe.com/connect")
         await db.users.update_one({"user_id": doc["user_id"]}, {"$set": {"stripe_account_id": acct_id}})
+    else:
+        # Conta criada antes desse pré-preenchimento existir: completa o
+        # perfil público se ainda estiver vazio (best-effort, não bloqueia).
+        await gateway.prefill_connect_profile(acct_id, **_connect_prefill(doc))
 
     try:
         url = await gateway.create_onboarding_link(acct_id, return_url=return_url, refresh_url=refresh_url)
@@ -1134,7 +1159,8 @@ async def connect_onboarding(
         # live, depois trocamos pra chave de teste) — recria e tenta de novo.
         logging.warning("stripe_account_id %s não existe na conta/modo atual — recriando", acct_id)
         acct_id = await gateway.create_connect_account(
-            doc["email"], doc["name"], country=MOEDA_PAIS_CONNECT.get(doc.get("moeda") or DEFAULT_MOEDA, "BR")
+            doc["email"], doc["name"], country=MOEDA_PAIS_CONNECT.get(doc.get("moeda") or DEFAULT_MOEDA, "BR"),
+            **_connect_prefill(doc),
         )
         if not acct_id:
             raise HTTPException(400, "Connect não habilitado na conta Stripe da plataforma. Ative em https://dashboard.stripe.com/connect")

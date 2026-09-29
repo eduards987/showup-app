@@ -270,18 +270,50 @@ class StripeGateway:
     # ------------------------------------------------------------------
     # Connect
     # ------------------------------------------------------------------
-    async def create_connect_account(self, email: str, name: str, country: str = "BR") -> Optional[str]:
+    async def create_connect_account(
+        self,
+        email: str,
+        name: str,
+        country: str = "BR",
+        profile_url: Optional[str] = None,
+        product_description: Optional[str] = None,
+    ) -> Optional[str]:
+        """Cria a conta Express do profissional já com TUDO que a gente sabe
+        pré-preenchido — o onboarding hospedado do Stripe não pergunta de
+        novo o que já veio aqui (só pede uma confirmação no final). Isso
+        tira do caminho: escolha do tipo de conta (fixamos pessoa física),
+        nome, e-mail e o passo "Business information" (ramo/site).
+
+        NÃO dá pra pré-preencher (e nem pedir pro profissional pular): data
+        de nascimento, CPF, endereço, telefone e conta bancária. São a
+        verificação de identidade que o Stripe exige de toda pessoa física
+        pra liberar repasses — a gente não coleta nem guarda esses dados."""
+        kwargs: dict[str, Any] = dict(
+            type="express",
+            country=country,
+            email=email,
+            business_type="individual",
+            business_profile={"name": name, "mcc": "7299"},
+            capabilities={
+                "transfers": {"requested": True},
+                "card_payments": {"requested": True},
+            },
+        )
+        # Autônomo sem site próprio: a doc do Stripe manda usar a página
+        # pública dele na plataforma como URL; sem URL, a descrição.
+        if profile_url:
+            kwargs["business_profile"]["url"] = profile_url
+        if product_description:
+            kwargs["business_profile"]["product_description"] = product_description
+        partes = (name or "").split()
+        individual: dict[str, Any] = {"email": email}
+        if partes:
+            individual["first_name"] = partes[0]
+        if len(partes) > 1:
+            individual["last_name"] = " ".join(partes[1:])
+        kwargs["individual"] = individual
         try:
-            acct = stripe.Account.create(
-                type="express",
-                country=country,
-                email=email,
-                business_profile={"name": name, "mcc": "7299"},
-                capabilities={
-                    "transfers": {"requested": True},
-                    "card_payments": {"requested": True},
-                },
-            )
+            acct = stripe.Account.create(**kwargs)
             return acct.id
         except stripe.error.InvalidRequestError as e:
             if "Connect" in str(e):
@@ -290,6 +322,30 @@ class StripeGateway:
             raise _translate_stripe_error(e) from e
         except stripe.error.StripeError as e:
             raise _translate_stripe_error(e) from e
+
+    async def prefill_connect_profile(
+        self,
+        account_id: str,
+        profile_url: Optional[str],
+        product_description: Optional[str],
+    ) -> None:
+        """Contas criadas ANTES desse pré-preenchimento existir (ou que o
+        profissional deixou pela metade) ganham o perfil público aqui, na
+        hora de gerar o link de onboarding. Só preenche o que ainda está
+        vazio — nunca sobrescreve o que o profissional já digitou — e é
+        best-effort: qualquer falha só vira log, nunca bloqueia o cadastro."""
+        try:
+            acct = stripe.Account.retrieve(account_id)
+            bp = acct.get("business_profile") or {}
+            novo: dict[str, Any] = {}
+            if profile_url and not bp.get("url") and not bp.get("product_description"):
+                novo["url"] = profile_url
+            if product_description and not bp.get("product_description") and not bp.get("url"):
+                novo["product_description"] = product_description
+            if novo:
+                stripe.Account.modify(account_id, business_profile=novo)
+        except stripe.error.StripeError as e:
+            log.warning("prefill_connect_profile falhou (acct=%s): %s", account_id, e)
 
     async def create_onboarding_link(
         self, account_id: str, return_url: str, refresh_url: str
