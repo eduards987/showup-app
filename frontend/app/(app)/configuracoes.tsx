@@ -15,7 +15,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api } from "@/src/lib/api";
+import { api, ApiError } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { TIMEZONE_LABELS } from "@/src/lib/format";
 import { openExternalCheckout } from "@/src/lib/open-external-checkout";
@@ -306,6 +306,13 @@ export default function Configuracoes() {
         ).then((r) => r.url),
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["connect-status"] }),
+    onError: (err: unknown) => {
+      // Antes essa falha ficava muda — o botão só voltava ao normal sem
+      // dizer por quê. Mostra a mensagem real (do backend, se veio uma;
+      // senão a mensagem genérica do erro), pra dar pra diagnosticar.
+      const msg = err instanceof ApiError ? err.message : "Não foi possível abrir o Stripe. Tente de novo.";
+      Alert.alert("Não foi possível conectar", msg);
+    },
   });
 
   const cats = catsQ.data?.categorias ?? [];

@@ -336,15 +336,20 @@ class StripeGateway:
         best-effort: qualquer falha só vira log, nunca bloqueia o cadastro."""
         try:
             acct = stripe.Account.retrieve(account_id)
-            bp = acct.get("business_profile") or {}
+            # Nessa versão do stripe-python, Account NÃO é mais dict-like —
+            # .get() quebra com AttributeError. business_profile é acessado
+            # por atributo (pode vir None se a conta não tiver perfil ainda).
+            bp = acct.business_profile
+            bp_url = getattr(bp, "url", None) if bp else None
+            bp_desc = getattr(bp, "product_description", None) if bp else None
             novo: dict[str, Any] = {}
-            if profile_url and not bp.get("url") and not bp.get("product_description"):
+            if profile_url and not bp_url and not bp_desc:
                 novo["url"] = profile_url
-            if product_description and not bp.get("product_description") and not bp.get("url"):
+            if product_description and not bp_desc and not bp_url:
                 novo["product_description"] = product_description
             if novo:
                 stripe.Account.modify(account_id, business_profile=novo)
-        except stripe.error.StripeError as e:
+        except (stripe.error.StripeError, AttributeError) as e:
             log.warning("prefill_connect_profile falhou (acct=%s): %s", account_id, e)
 
     async def create_onboarding_link(

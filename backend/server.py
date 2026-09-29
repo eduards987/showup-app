@@ -1135,40 +1135,47 @@ async def connect_onboarding(
     await _require_role(doc, "profissional")
     if GATEWAY_KIND != "stripe":
         raise HTTPException(400, "Connect requer gateway Stripe real")
-    acct_id = doc.get("stripe_account_id")
-    if not acct_id:
-        acct_id = await gateway.create_connect_account(
-            doc["email"], doc["name"], country=MOEDA_PAIS_CONNECT.get(doc.get("moeda") or DEFAULT_MOEDA, "BR"),
-            **_connect_prefill(doc),
-        )
-        if not acct_id:
-            raise HTTPException(400, "Connect não habilitado na conta Stripe da plataforma. Ative em https://dashboard.stripe.com/connect")
-        await db.users.update_one({"user_id": doc["user_id"]}, {"$set": {"stripe_account_id": acct_id}})
-    else:
-        # Conta criada antes desse pré-preenchimento existir: completa o
-        # perfil público se ainda estiver vazio (best-effort, não bloqueia).
-        await gateway.prefill_connect_profile(acct_id, **_connect_prefill(doc))
 
+    acct_id = doc.get("stripe_account_id")
     try:
-        url = await gateway.create_onboarding_link(acct_id, return_url=return_url, refresh_url=refresh_url)
-    except InvalidPaymentRequestError as e:
-        if "No such" not in str(e):
-            raise HTTPException(400, str(e))
-        # Mesmo cenário do customer_id órfão nos planos: a conta conectada
-        # salva é de outro modo/conta do Stripe (ex: foi criada em modo
-        # live, depois trocamos pra chave de teste) — recria e tenta de novo.
-        logging.warning("stripe_account_id %s não existe na conta/modo atual — recriando", acct_id)
-        acct_id = await gateway.create_connect_account(
-            doc["email"], doc["name"], country=MOEDA_PAIS_CONNECT.get(doc.get("moeda") or DEFAULT_MOEDA, "BR"),
-            **_connect_prefill(doc),
-        )
         if not acct_id:
-            raise HTTPException(400, "Connect não habilitado na conta Stripe da plataforma. Ative em https://dashboard.stripe.com/connect")
-        await db.users.update_one({"user_id": doc["user_id"]}, {"$set": {"stripe_account_id": acct_id}})
+            acct_id = await gateway.create_connect_account(
+                doc["email"], doc["name"], country=MOEDA_PAIS_CONNECT.get(doc.get("moeda") or DEFAULT_MOEDA, "BR"),
+                **_connect_prefill(doc),
+            )
+            if not acct_id:
+                raise HTTPException(400, "Connect não habilitado na conta Stripe da plataforma. Ative em https://dashboard.stripe.com/connect")
+            await db.users.update_one({"user_id": doc["user_id"]}, {"$set": {"stripe_account_id": acct_id}})
+        else:
+            # Conta criada antes desse pré-preenchimento existir: completa o
+            # perfil público se ainda estiver vazio (best-effort, não bloqueia).
+            await gateway.prefill_connect_profile(acct_id, **_connect_prefill(doc))
+
         try:
             url = await gateway.create_onboarding_link(acct_id, return_url=return_url, refresh_url=refresh_url)
-        except InvalidPaymentRequestError as e2:
-            raise HTTPException(400, str(e2))
+        except InvalidPaymentRequestError as e:
+            if "No such" not in str(e):
+                raise HTTPException(400, str(e))
+            # Mesmo cenário do customer_id órfão nos planos: a conta conectada
+            # salva é de outro modo/conta do Stripe (ex: foi criada em modo
+            # live, depois trocamos pra chave de teste) — recria e tenta de novo.
+            logging.warning("stripe_account_id %s não existe na conta/modo atual — recriando", acct_id)
+            acct_id = await gateway.create_connect_account(
+                doc["email"], doc["name"], country=MOEDA_PAIS_CONNECT.get(doc.get("moeda") or DEFAULT_MOEDA, "BR"),
+                **_connect_prefill(doc),
+            )
+            if not acct_id:
+                raise HTTPException(400, "Connect não habilitado na conta Stripe da plataforma. Ative em https://dashboard.stripe.com/connect")
+            await db.users.update_one({"user_id": doc["user_id"]}, {"$set": {"stripe_account_id": acct_id}})
+            try:
+                url = await gateway.create_onboarding_link(acct_id, return_url=return_url, refresh_url=refresh_url)
+            except InvalidPaymentRequestError as e2:
+                raise HTTPException(400, str(e2))
+    except InvalidPaymentRequestError as e:
+        # É informação nossa (campo que mandamos errado), não um segredo —
+        # mostra a mensagem real em vez de esconder atrás de "gateway falhou".
+        logging.exception("connect_onboarding falhou")
+        raise HTTPException(400, str(e))
     except PaymentError:
         logging.exception("connect_onboarding falhou")
         raise HTTPException(502, "Falha ao gerar link de onboarding junto ao gateway")

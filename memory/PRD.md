@@ -2284,3 +2284,93 @@ confirmar que dá pra reduzir sem quebrar os repasses.
 Pra testar do zero: apagar a conta conectada de teste no Dashboard
 (Connect > Accounts) — o backend recria sozinho no próximo "configurar
 recebimentos" (recuperação de conta órfã "No such account").
+
+## Onboarding do Connect: erro silencioso ao tentar conectar (29/09/2026)
+
+Depois de aplicar o pré-preenchimento e apagar a conta Connect de teste
+antiga, o botão "Conectar Stripe" parou de abrir o navegador — sem erro
+visível, botão só volta ao normal. Achada a causa: `connectM` (a mutation
+do botão, em `configuracoes.tsx`) não tinha `onError` nenhum — qualquer
+falha (da chamada à API ou do `openExternalCheckout`) era engolida em
+silêncio pelo react-query.
+
+Corrigido: `onError` agora mostra `Alert.alert` com a mensagem real (o
+`detail` que o backend manda via `ApiError`, confirmado que `api.ts`
+propaga certinho). Isso não conserta a causa raiz (ainda não sabemos qual
+é — pode ser algo no meu `create_connect_account` novo, ou outra coisa),
+só torna o erro visível pra diagnosticar na próxima tentativa.
+
+Separado disso: no vídeo anterior, a tela de "Date of birth" do
+onboarding hospedado do Stripe travava com "Sorry, something went wrong"
+mesmo preenchendo mês → dia → ano em ordem — mas isso era com a conta
+ANTIGA (antes do pré-preenchimento). Ainda não sabemos se esse travamento
+específico também acontece com a conta nova, porque a criação da conta
+está falhando antes de chegar lá.
+
+### Pendente
+Usuário vai tentar de novo com o Alert novo e mandar a mensagem exata.
+
+## Causa real do "Internal Server Error" no Connect (29/09/2026)
+
+Confirmado: `await gateway.create_connect_account(...)` (as duas
+ocorrências) e `await gateway.prefill_connect_profile(...)` estavam FORA
+de qualquer try/except no endpoint `connect_onboarding` — só a chamada
+seguinte (`create_onboarding_link`) tinha proteção. Antes do
+pré-preenchimento isso nunca importava (a chamada quase nunca falhava);
+com os campos novos (`individual`, `business_profile.url`,
+`product_description`), uma recusa do Stripe nesses campos virava
+exceção crua até o FastAPI → 500 "Internal Server Error" sem mensagem
+nenhuma — e como o onError do app também não existia (corrigido
+antes), ficava tudo mudo dos dois lados.
+
+### Corrigido
+Todo o corpo do endpoint (criação/reaproveitamento da conta +
+prefill + link) agora está dentro de um único try, com:
+- `except InvalidPaymentRequestError` → 400 com a mensagem REAL do Stripe
+  (é informação nossa, sobre o que mandamos errado — segura de mostrar,
+  diferente de expor detalhe de erro genérico de servidor);
+- `except PaymentError` → 502 genérico (falha transitória/rede).
+`prefill_connect_profile` do gateway real já era best-effort de verdade
+(nunca propaga), confirmado lendo o código-fonte no teste.
+
+Testado (TestClient): campo recusado → 400 com mensagem real; erro
+transitório → 502; fluxo normal sem account_id → 200. Nenhum caminho
+mais vira 500 cru.
+
+### Ainda não sabemos
+Qual campo exatamente o Stripe está recusando na conta do usuário — o
+teste é com erro simulado. Próxima tentativa real do usuário, com essa
+correção aplicada, deve finalmente mostrar a mensagem verdadeira no
+Alert do app.
+
+## Causa real, confirmada pelo log (29/09/2026): AttributeError no prefill
+
+Log do Render deu a resposta exata:
+```
+AttributeError: 'get' is a dict method, but a Account is not a dict.
+Use .to_dict() to convert it.
+  File ".../stripe_gateway.py", line 339, in prefill_connect_profile
+    bp = acct.get("business_profile") or {}
+```
+
+Causa: a versão do `stripe-python` instalada (mais nova) não deixa mais
+tratar `stripe.Account` como dict — `.get()` quebra com AttributeError.
+Meu `prefill_connect_profile` usava `acct.get(...)` e `bp.get(...)`,
+copiando um padrão antigo da lib. `account_status` (método já existente
+antes) já usava atributos corretamente (`acct.details_submitted` etc.),
+por isso nunca deu esse erro antes — só o método NOVO tinha o padrão
+errado.
+
+### Corrigido
+`prefill_connect_profile` agora acessa `acct.business_profile` por
+atributo (pode vir `None` numa conta recém-criada — tratado), e
+`getattr(bp, "url", None)` / `getattr(bp, "product_description", None)`
+em vez de `.get(...)`. Except amplia pra `(StripeError, AttributeError)`
+por segurança, mas a causa raiz (não o sintoma) é o que foi corrigido.
+Conferido que não há mais nenhum outro `.get()` em objeto Stripe no
+arquivo (só em dict nosso do Mongo e em `os.environ`).
+
+Testado com objeto que reproduz o comportamento exato do `Account` real
+(rejeita `.get()`, aceita atributos): perfil `None` (caso da conta
+recém-criada, que foi o que quebrou), perfil existente vazio, e perfil já
+preenchido (não sobrescreve). Os três passam.
