@@ -1,0 +1,32 @@
+name: Keep backend awake
+
+# O Render (plano gratuito) coloca o backend pra dormir depois de ~15min
+# sem receber nenhuma requisição. Esse workflow só bate na raiz da API de
+# tempos em tempos — bem mais frequente que os 15min — pra ele nunca
+# chegar a dormir. Cabe folgado no uso gratuito do GitHub Actions (cada
+# execução leva poucos segundos) e nas 750h/mês grátis do Render (ficar
+# ligado o mês inteiro são ~744h).
+#
+# Cron do GitHub Actions não tem garantia de pontualidade exata (a
+# documentação deles avisa que, em períodos de carga alta, execuções
+# agendadas podem atrasar ou até ser puladas) — por isso 5 minutos aqui,
+# bem abaixo do limite de 15min do Render, pra sobrar margem mesmo se
+# alguma execução atrasar ou falhar.
+
+"on":
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {} # também dá pra rodar manualmente, na aba Actions do GitHub
+
+concurrency:
+  group: keep-backend-awake
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pinga a API
+        run: |
+          curl --fail --silent --show-error --max-time 30 \
+            "https://showup-backend-s9y1.onrender.com/api/"
