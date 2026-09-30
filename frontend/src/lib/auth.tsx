@@ -76,6 +76,15 @@ const googleCallbackUrl = process.env.EXPO_PUBLIC_BACKEND_URL
 // fechar a tela.
 const APP_AUTH_CALLBACK = "showup://auth-callback";
 
+// Guarda a Promise do "acorda o backend" (ver o useEffect abaixo) fora do
+// componente, pra signIn() poder esperar por ela mesmo que tenha sido
+// disparada em uma montagem anterior do AuthProvider.
+let backendWakeUpPromise: Promise<unknown> | null = null;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: "loading", user: null });
 
@@ -85,6 +94,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         "[auth] EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ou EXPO_PUBLIC_BACKEND_URL " +
           "não configurado — login do Google não vai funcionar.",
       );
+    }
+    // "Acorda" o backend (plano gratuito do Render dorme depois de ~15min
+    // sem uso) assim que o app abre, bem antes do usuário eventualmente
+    // tocar em "Entrar com Google". Sem isso, se o backend estiver
+    // dormindo justo na hora do login, é o PRÓPRIO GOOGLE que redireciona
+    // o navegador do usuário pro nosso /auth/google/callback como parte
+    // do fluxo OAuth — diferente de toda chamada de API do app (que usa
+    // fetch(), nunca navega o navegador pra lugar nenhum), esse redirect
+    // É uma navegação de verdade, então o usuário veria a tela genérica
+    // de "acordando" do Render bem no meio do login. signIn() abaixo dá
+    // uma folga curta pra essa chamada terminar antes de abrir o
+    // navegador — não elimina o risco por completo (se o usuário for
+    // rápido demais), mas cobre a maioria dos casos sem atrasar quem
+    // chegou depois do backend já ter acordado.
+    if (process.env.EXPO_PUBLIC_BACKEND_URL && !backendWakeUpPromise) {
+      backendWakeUpPromise = fetch(`${process.env.EXPO_PUBLIC_BACKEND_URL}/api/`).catch(() => {});
     }
   }, []);
 
@@ -126,6 +151,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = useCallback(async () => {
     if (!googleWebClientId || !googleCallbackUrl) return;
+    // Dá até 3s pro "acorda o backend" do useEffect terminar antes de abrir
+    // o navegador — não trava o login por muito tempo se o backend estiver
+    // realmente dormindo (nesse caso, o usuário ainda pode ver a tela do
+    // Render por alguns segundos, mas bem mais raro do que sem isso).
+    if (backendWakeUpPromise) {
+      await Promise.race([backendWakeUpPromise, sleep(3000)]);
+    }
     const authUrl =
       "https://accounts.google.com/o/oauth2/v2/auth?" +
       new URLSearchParams({

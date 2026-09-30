@@ -2435,3 +2435,62 @@ só a chamada interna mudou.
 Como da vez passada: a lógica está certa, mas não testei contra o app de
 verdade ainda. Próximo passo do usuário: tentar "Conectar Stripe" de novo
 e confirmar que agora sim abre o Chrome/navegador padrão separado do app.
+
+## Busca por risco de expor a URL do Render em produção (30/09/2026)
+
+Usuário levantou preocupação: a tela genérica "APPLICATION LOADING" do
+Render (que aparece quando o backend dorme e alguém navega o navegador
+pra URL dele) não pode aparecer pra cliente/profissional de verdade.
+
+### Busca no código inteiro
+Toda referência à URL do backend (`onrender.com`,
+`EXPO_PUBLIC_BACKEND_URL`, `BACKEND_URL` no agendar.html) usa
+exclusivamente `fetch()` — chamada de dados, nunca abre a URL numa aba do
+navegador. Isso cobre: app mobile (api.ts), página pública de agendamento
+(agendar.html). Confirmado também que `Linking.openURL` em
+`open-external-checkout.ts` abre a URL que a API DEVOLVE (sempre
+connect.stripe.com, nunca nosso backend) — seguro.
+
+### Achado real: fluxo de login com Google
+`redirect_uri` do OAuth aponta pro nosso `/api/auth/google/callback` — é
+o próprio GOOGLE quem redireciona o navegador do usuário pra lá no fim do
+login (não é uma chamada nossa). Diferente de toda chamada via fetch(),
+essa É uma navegação de verdade — se o backend estiver dormindo bem
+nesse momento, o usuário veria a tela do Render no meio do login.
+
+### Mitigado (não eliminado 100%)
+`AuthProvider` agora dispara um fetch "silencioso" pro backend
+(`fire-and-forget`) assim que o app abre, bem antes do usuário chegar a
+tocar em "Entrar com Google". `signIn()` dá até 3s de folga (Promise.race
+com essa chamada) antes de abrir o navegador do Google. Reduz bastante a
+chance na prática (a maioria dos usuários leva mais que alguns segundos
+entre abrir o app e tocar em login), mas não elimina 100% — quem for
+rápido demais, ou abrir o app depois de muito tempo com o backend já
+dormindo de novo, ainda pode ver a tela por alguns segundos.
+
+### Solução definitiva, não implementada (decisão do usuário)
+Um "keep-alive" de verdade (pingar o backend a cada ~10min pra nunca
+deixar dormir) elimina o problema por completo — cabe dentro das 750h
+grátis do Render (ligado o mês inteiro = ~744h). Não implementado ainda;
+precisa de um cron/scheduler externo (o Render free tier não tem cron
+job embutido gratuito) ou upgrade de plano.
+
+## Keep-alive do backend via GitHub Actions (30/09/2026)
+
+Criado `.github/workflows/keepalive.yml`: pinga `GET /api/` a cada 5
+minutos (bem abaixo dos ~15min que o Render leva pra dormir, com folga
+pra atrasos do agendador do GitHub, que não garante pontualidade exata).
+`workflow_dispatch` habilitado pra rodar manualmente também. Conta de
+uso: a cada 5min = ~288 execuções/dia, poucos segundos cada, soma uns
+~1440 min/mês — dentro do limite gratuito de 2000 min/mês do GitHub
+Actions pra repositório privado.
+
+Isso resolve de vez o risco de o navegador do usuário ver a tela de
+"acordando" do Render no meio do login com Google (mitigado antes com o
+"wake up" no app, mas não eliminado 100%) — com o backend sempre
+acordado, esse cenário deixa de acontecer.
+
+### Nota de manutenção
+GitHub desativa workflows agendados automaticamente se o repositório
+ficar 60 dias sem nenhum push. Se isso acontecer, precisa reativar
+manualmente na aba Actions do GitHub (Enable workflow).
