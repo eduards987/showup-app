@@ -12,6 +12,14 @@ name: Keep backend awake
 # agendadas podem atrasar ou até ser puladas) — por isso 5 minutos aqui,
 # bem abaixo do limite de 15min do Render, pra sobrar margem mesmo se
 # alguma execução atrasar ou falhar.
+#
+# max-time 90 + um retry: a PRIMEIRA vez que o backend está dormindo de
+# verdade (ex: antes desse workflow ter rodado por um tempo, ou depois
+# de alguma pausa), ele pode legitimamente levar uns 50-60s pra acordar
+# — 30s (o valor original) não bastava e fazia o curl estourar por
+# timeout (exit code 28). Depois de acordado uma vez, os pings
+# seguintes respondem rápido; esse timeout maior só importa pro
+# primeiro "chute" de partida.
 
 "on":
   schedule:
@@ -28,5 +36,5 @@ jobs:
     steps:
       - name: Pinga a API
         run: |
-          curl --fail --silent --show-error --max-time 30 \
+          curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 10 \
             "https://showup-backend-s9y1.onrender.com/api/"
