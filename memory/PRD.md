@@ -2535,3 +2535,32 @@ PRD mais acima) — o comentário no código já explica o problema certinho.
 A causa provável é essa correção nunca ter sido publicada (commit+push)
 pro Render depois de feita. Reforçado ao usuário: confirmar que o
 `server.py` atual (com essa correção) está realmente no ar.
+
+## Pagamento com cartão quebrado: API do Stripe mudou (04/10/2026)
+
+Log do Render deu a causa exata: `stripe._error.InvalidRequestError: The
+`payment_method_types` parameter is no longer supported. Payment methods
+are now managed from your Dashboard settings`. Confirmado na doc oficial
+do Stripe (changelog da API `2026-08-26.preview`): esse parâmetro virou
+somente-leitura em PaymentIntent/SetupIntent — passar ele na criação
+agora dá 400. Não é um bug nosso, é uma mudança da própria API do Stripe
+que passou a valer pra essa conta.
+
+Afetava TRÊS chamadas em `stripe_gateway.py`:
+- `create_setup_intent` (passo 1 do cartão no link público) — trocado
+  por `automatic_payment_methods={"enabled": True, "allow_redirects":
+  "never"}` (o substituto oficial; `never` restringe a métodos sem
+  redirect, equivalente ao que `["card"]` garantia).
+- `authorize` (hold do cartão, usado em TODO agendamento com cartão —
+  app e link público) — só removido, sem substituto: já passamos
+  `payment_method` específico + `confirm=True`, o Stripe usa esse método
+  direto sem precisar de parâmetro adicional.
+- `create_pix_payment_intent` — só removido também, mesmo motivo
+  (`payment_method_data={"type": "pix"}` já especifica o método). Não
+  resolve o Pix (que já sabemos que falha por outro motivo — não
+  habilitado na conta), só evita um erro A MAIS em cima disso.
+
+### Pendente
+Usuário vai publicar (commit+push) e testar o cartão de ponta a ponta de
+novo — essa correção nunca foi testada contra o Stripe real ainda, só
+validei a sintaxe Python.

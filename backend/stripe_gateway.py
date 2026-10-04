@@ -77,7 +77,15 @@ class StripeGateway:
         try:
             si = stripe.SetupIntent.create(
                 customer=customer_id,
-                payment_method_types=["card"],
+                # `payment_method_types` virou somente-leitura nas versões
+                # recentes da API do Stripe (passar isso na criação dá 400
+                # "no longer supported" — confirmado no log do Render,
+                # 04/10/2026). `automatic_payment_methods` é o jeito atual:
+                # `allow_redirects: never` restringe aos métodos que não
+                # precisam de redirecionamento (cartão entre eles), igual
+                # ao que `["card"]` garantia antes — compatível com o
+                # `confirmCardSetup` que o frontend já usa.
+                automatic_payment_methods={"enabled": True, "allow_redirects": "never"},
                 usage="off_session",  # é exatamente o que authorize() faz depois
             )
         except stripe.error.StripeError as e:
@@ -139,7 +147,12 @@ class StripeGateway:
             capture_method="manual",
             confirm=True,
             off_session=True,
-            payment_method_types=["card"],
+            # `payment_method_types` virou somente-leitura nas versões
+            # recentes da API (ver create_setup_intent, mesmo motivo) — e
+            # aqui nem precisa de substituto: como já passamos um
+            # `payment_method` específico (coletado antes via SetupIntent)
+            # junto com `confirm=True`, o Stripe usa esse método direto,
+            # sem precisar de nenhum parâmetro adicional pra "escolher".
             metadata=metadata or {},
         )
         # Connect: if the pro is onboarded, split at capture time; passing
@@ -228,7 +241,10 @@ class StripeGateway:
         kwargs: dict[str, Any] = dict(
             amount=amount_centavos,
             currency=moeda.lower(),
-            payment_method_types=["pix"],
+            # mesmo motivo do authorize() acima: `payment_method_types`
+            # virou somente-leitura. Aqui também não precisa de
+            # substituto — `payment_method_data={"type": "pix"}" já diz
+            # pro Stripe qual método usar.
             payment_method_data={"type": "pix"},
             confirm=True,
             metadata=metadata or {},
