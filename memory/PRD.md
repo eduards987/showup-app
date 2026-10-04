@@ -2494,3 +2494,44 @@ acordado, esse cenário deixa de acontecer.
 GitHub desativa workflows agendados automaticamente se o repositório
 ficar 60 dias sem nenhum push. Se isso acontecer, precisa reativar
 manualmente na aba Actions do GitHub (Enable workflow).
+
+## Dois bugs reais confirmados por teste (01/10/2026)
+
+### Bug 1: horário errado no app (3h de diferença)
+Prints comparados: página web mostrava "05:30" (consistente, confirmação e
+pagamento), app mostrava "08:30" — diferença de exatamente 3h (offset de
+Brasília). Confirmado NÃO ser o fuso do celular (estava automático e
+correto). Testei a serialização do backend (Pydantic + `_aware()`) e
+confirmei que o JSON já vem certo, com "Z" explícito de UTC.
+
+Causa real: `formatDateTime`/`formatDateOnly`/`formatTimeOnly`
+(`src/lib/format.ts`) usavam `toLocaleString`/`toLocaleDateString` do
+`Intl`, sem fuso explícito — dependendo do motor JS do React Native
+(Hermes) converter certo pro fuso do dispositivo. Hermes tem histórico
+de bugs reais com `Intl`/timezone (ex: facebook/hermes#431, entre
+outros) — comportamento inconsistente dependendo da versão/build.
+
+Corrigido: as três funções agora calculam data/hora manualmente a partir
+de um offset FIXO em minutos por fuso (`OFFSET_MINUTOS`, um por entrada
+de `TIMEZONE_LABELS` — todos sem horário de verão atualmente no Brasil),
+sem depender do Intl pra conversão de fuso. Aceitam um `timezone?: string`
+opcional (IANA, ex: "America/Sao_Paulo"); sem fuso informado cai no
+default (São Paulo). As 4 chamadas no app (home.tsx ×2, agendamentos.tsx,
+agendamento/[id].tsx ×2) agora passam `auth.user?.timezone` — o fuso do
+PRÓPRIO profissional logado (backend sempre preenche esse campo, com
+fallback pro default, nunca undefined). Testado isoladamente com Node:
+caso exato do bug, os 4 fusos suportados, e virada de dia — todos corretos.
+
+⚠️ Se o Brasil voltar a adotar horário de verão no futuro, os offsets
+fixos em `OFFSET_MINUTOS` ficam desatualizados parte do ano — precisa
+revisar nessa hipótese (improvável hoje, mas registrando a premissa).
+
+### Bug 2: horários "picados" (slot de 30 em 30 mesmo com serviço de 60min)
+Confirmado pela evidência: um slot de "05:30" apareceu com disponibilidade
+começando às 05:00 e serviço de 60min — só é possível com step fixo de
+30min (não a duração do serviço). O CÓDIGO que tenho aqui (`server.py`,
+`slots_disponiveis`) já usa `step = duracao` (corrigido antes, ver
+PRD mais acima) — o comentário no código já explica o problema certinho.
+A causa provável é essa correção nunca ter sido publicada (commit+push)
+pro Render depois de feita. Reforçado ao usuário: confirmar que o
+`server.py` atual (com essa correção) está realmente no ar.

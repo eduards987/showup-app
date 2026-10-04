@@ -231,7 +231,7 @@ export default function Home() {
                   <View style={{ flex: 1 }}>
                     <Text style={styles.cardTitle}>{a.cliente_nome}</Text>
                     <Text style={styles.cardMeta}>
-                      {a.servico_nome} · {formatDateTime(a.horario_inicio)}
+                      {a.servico_nome} · {formatDateTime(a.horario_inicio, auth.user?.timezone)}
                     </Text>
                   </View>
                   <Text style={styles.cardValue}>{formatMoney(a.valor_total_centavos, a.moeda)}</Text>
@@ -286,7 +286,7 @@ export default function Home() {
                       {isCliente ? a.profissional_nome : a.cliente_nome}
                     </Text>
                     <Text style={styles.cardMeta}>
-                      {a.servico_nome} · {formatDateTime(a.horario_inicio)}
+                      {a.servico_nome} · {formatDateTime(a.horario_inicio, auth.user?.timezone)}
                     </Text>
                   </View>
                   <Text style={styles.cardValue}>{formatMoney(a.valor_total_centavos, a.moeda)}</Text>

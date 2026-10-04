@@ -108,7 +108,7 @@ export default function Agendamentos() {
                       {isCliente ? item.profissional_nome : item.cliente_nome}
                     </Text>
                     <Text style={styles.cardMeta}>
-                      {item.servico_nome} · {formatDateTime(item.horario_inicio)}
+                      {item.servico_nome} · {formatDateTime(item.horario_inicio, auth.user?.timezone)}
                     </Text>
                   </View>
                   <Text style={styles.cardValue}>{formatMoney(item.valor_total_centavos, item.moeda)}</Text>

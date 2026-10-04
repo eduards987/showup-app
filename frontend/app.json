@@ -17,7 +17,8 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#EDEBEC"
       },
-      "package": "com.educerqueira.showup"
+      "package": "com.educerqueira.showup",
+      "googleServicesFile": "./google-services.json"
     },
     "plugins": [
       "expo-router",

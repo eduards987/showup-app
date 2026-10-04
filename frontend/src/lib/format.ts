@@ -22,28 +22,61 @@ export function formatBRL(centavos: number): string {
   return formatMoney(centavos, "BRL");
 }
 
-export function formatDateTime(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleString("pt-BR", {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+// O motor JS do React Native (Hermes) tem um histórico conhecido de bugs
+// com `Intl`/`toLocaleString` e fuso horário — passar `timeZone` explícito
+// nem sempre funciona (ex: facebook/hermes#431), e em algumas versões ele
+// ignora completamente a conversão e mostra tudo no fuso "errado". Por
+// isso as três funções abaixo NÃO dependem do Intl pra converter fuso —
+// calculam a hora/data manualmente a partir do offset fixo (em minutos)
+// de cada fuso que o app suporta. Todos são fusos SEM horário de verão
+// atualmente (o Brasil não observa DST desde 2019), então um offset fixo
+// é seguro — se isso mudar no futuro, precisa revisar.
+const OFFSET_MINUTOS: Record<string, number> = {
+  "America/Sao_Paulo": -180,
+  "America/Manaus": -240,
+  "America/Rio_Branco": -300,
+  "America/Noronha": -120,
+};
+
+const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+const DIAS_SEMANA = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
 }
 
-export function formatDateOnly(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString("pt-BR", {
-    weekday: "short",
-    day: "2-digit",
-    month: "short",
-  });
+/** Componentes de data/hora no fuso dado, sem passar pelo Intl — soma o
+ * offset fixo em minutos sobre o instante UTC e lê os componentes com os
+ * métodos `getUTC*` (que são aritmética pura, não dependem de locale/Intl
+ * nem do fuso do dispositivo). `timezone` sem correspondência conhecida
+ * cai no fuso do profissional ainda não ter sido carregado — usa
+ * America/Sao_Paulo como piso razoável (é o default do backend também). */
+function partesNoFuso(iso: string, timezone?: string) {
+  const offset = OFFSET_MINUTOS[timezone ?? ""] ?? OFFSET_MINUTOS["America/Sao_Paulo"];
+  const comOffset = new Date(new Date(iso).getTime() + offset * 60_000);
+  return {
+    ano: comOffset.getUTCFullYear(),
+    mes: comOffset.getUTCMonth(),
+    dia: comOffset.getUTCDate(),
+    diaSemana: comOffset.getUTCDay(),
+    hora: comOffset.getUTCHours(),
+    minuto: comOffset.getUTCMinutes(),
+  };
 }
 
-export function formatTimeOnly(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+export function formatDateTime(iso: string, timezone?: string): string {
+  const p = partesNoFuso(iso, timezone);
+  return `${pad2(p.dia)} de ${MESES[p.mes]}, ${pad2(p.hora)}:${pad2(p.minuto)}`;
+}
+
+export function formatDateOnly(iso: string, timezone?: string): string {
+  const p = partesNoFuso(iso, timezone);
+  return `${DIAS_SEMANA[p.diaSemana]}, ${pad2(p.dia)} de ${MESES[p.mes]}`;
+}
+
+export function formatTimeOnly(iso: string, timezone?: string): string {
+  const p = partesNoFuso(iso, timezone);
+  return `${pad2(p.hora)}:${pad2(p.minuto)}`;
 }
 
 export const HOLD_STATUS_LABELS: Record<string, { label: string; kind: "info" | "success" | "warning" | "error" }> = {

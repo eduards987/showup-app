@@ -194,7 +194,7 @@ export default function AgendamentoDetalhe() {
       <ScrollView contentContainerStyle={{ paddingBottom: spacing.xxl }}>
         <View style={styles.card}>
           <Text style={styles.label}>Horário</Text>
-          <Text style={styles.value}>{formatDateTime(a.horario_inicio)}</Text>
+          <Text style={styles.value}>{formatDateTime(a.horario_inicio, auth.user?.timezone)}</Text>
         </View>
 
         <View style={styles.card}>
@@ -226,7 +226,7 @@ export default function AgendamentoDetalhe() {
           <Text style={styles.label}>Confirmação</Text>
           <Text style={styles.value}>{CONFIRMACAO_LABELS[a.status_confirmacao]}</Text>
           <Text style={[styles.label, { fontSize: 12, marginTop: spacing.sm }]}>
-            Janela até {formatDateTime(a.janela_confirmacao_expira_em)}
+            Janela até {formatDateTime(a.janela_confirmacao_expira_em, auth.user?.timezone)}
           </Text>
         </View>
       </ScrollView>

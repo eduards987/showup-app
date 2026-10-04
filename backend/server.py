@@ -934,7 +934,7 @@ async def listar_meus_servicos(authorization: Optional[str] = Header(default=Non
     doc = await _current_user(authorization)
     await _require_role(doc, "profissional")
     items = await db.servicos.find({"profissional_id": doc["user_id"], "ativo": True}, {"_id": 0}).to_list(200)
-    return [Servico(**it) for it in items]
+    return [Servico(**{**it, "criado_em": _aware(it["criado_em"])}) for it in items]
 
 
 @api_router.delete("/servicos/{servico_id}")
@@ -986,7 +986,7 @@ async def detalhe_profissional(user_id: str):
         user_id=u["user_id"], name=u["name"], picture=u.get("picture"),
         categorias=u.get("categorias", []),
         timezone=u.get("timezone") or DEFAULT_TIMEZONE,
-        servicos=[Servico(**s) for s in servicos],
+        servicos=[Servico(**{**s, "criado_em": _aware(s["criado_em"])}) for s in servicos],
     )
 
 
@@ -1048,7 +1048,15 @@ async def slots_disponiveis(user_id: str, servico_id: str = Query(...)):
     ).to_list(500)
 
     duracao = timedelta(minutes=svc["duracao_min"])
-    step = timedelta(minutes=30)
+    # Os slots pulam de tanto em tanto quanto o SERVIÇO dura — um serviço de
+    # 60min gera 11:00, 12:00, 13:00…, nunca 11:00 e 11:30 juntos (que
+    # deixaria o profissional ocupado até as 12:00 mas ainda oferecendo
+    # 11:30 como opção). Antes disso era sempre 30min fixo, pulado disso
+    # (= menos que a duração para qualquer serviço >30min) e dependendo só
+    # da checagem de overlap pra não sobrepor — o que funciona depois de um
+    # agendamento já confirmado, mas gera uma grade de horários errada
+    # mesmo sem nenhum conflito real ainda.
+    step = duracao
     result: list[SlotDisponivel] = []
     now = _now()
     # "Hoje" no calendário LOCAL do profissional — um profissional em
@@ -1307,6 +1315,19 @@ async def _hydrate(doc: dict) -> Agendamento:
     svc = await db.servicos.find_one({"servico_id": doc["servico_id"]}, {"_id": 0, "nome": 1})
     return Agendamento(
         **{k: v for k, v in doc.items() if k != "_id"},
+        # O Mongo devolve datetime "naive" (sem tzinfo), mas o valor salvo é
+        # sempre UTC — sem marcar isso explicitamente, o JSON final sai sem
+        # o sufixo "Z"/offset (ex: "2026-10-01T14:00:00" em vez de
+        # "...+00:00"), e o celular do cliente interpreta isso como se
+        # fosse HORA LOCAL DELE, não UTC — um agendamento às 11:00 (BRT,
+        # salvo como 14:00 UTC) reaparecia como "14:00" no app, 3h adiantado.
+        horario_inicio=_aware(doc["horario_inicio"]),
+        horario_fim=_aware(doc["horario_fim"]),
+        hold_expira_em=_aware(doc["hold_expira_em"]),
+        janela_confirmacao_expira_em=_aware(doc["janela_confirmacao_expira_em"]),
+        criado_em=_aware(doc["criado_em"]),
+        push_pergunta_enviada_em=_aware(doc["push_pergunta_enviada_em"]) if doc.get("push_pergunta_enviada_em") else None,
+        push_urgencia_enviada_em=_aware(doc["push_urgencia_enviada_em"]) if doc.get("push_urgencia_enviada_em") else None,
         profissional_nome=prof["name"] if prof else "—",
         cliente_nome=cli["name"] if cli else "—",
         servico_nome=svc["nome"] if svc else "—",

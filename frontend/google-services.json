@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "63469089229",
+    "project_id": "showup-509120",
+    "storage_bucket": "showup-509120.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:63469089229:android:0dbf7df5db295ecff71484",
+        "android_client_info": {
+          "package_name": "com.educerqueira.showup"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "63469089229-q8l0k5cs40ia3ri753erg77j101o1l18.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAgMGdA9_LLWmJ5vYGqXBIopmfb6vETBn8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "63469089229-q8l0k5cs40ia3ri753erg77j101o1l18.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "63469089229-95am3nd80ldk99ga9s930kos3272773q.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.educerqueira.showup"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
