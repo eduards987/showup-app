@@ -2564,3 +2564,22 @@ Afetava TRÊS chamadas em `stripe_gateway.py`:
 Usuário vai publicar (commit+push) e testar o cartão de ponta a ponta de
 novo — essa correção nunca foi testada contra o Stripe real ainda, só
 validei a sintaxe Python.
+
+## Confirmado: _hydrate() já está correto no código local (04/10/2026)
+
+O `TypeError: Agendamento() got multiple values for keyword argument
+'horario_inicio'` que apareceu no log do Render é de uma versão ANTIGA
+do `server.py` — o código local já tem a correção (campos convertidos
+excluídos do spread via `_campos_convertidos`, comentário já documentando
+esse exato erro). Provavelmente nunca foi publicada antes porque esse
+caminho de código (listar agendamentos de cartão reais) nunca tinha sido
+exercitado em produção até esse primeiro agendamento de teste bem-sucedido.
+
+Testado isoladamente (simulando doc do Mongo com datetime naive, como
+realmente vem) — sem erro, `horario_inicio` sai serializado com "+00:00"
+explícito.
+
+### Resumo do que está pendente de publicação nesse momento
+Backend (`server.py` + `stripe_gateway.py`): step de slots por duração,
+`payment_method_types` removido (3 chamadas), `_hydrate` sem duplicação.
+Tudo no mesmo arquivo/commit — um push só resolve os três de uma vez.

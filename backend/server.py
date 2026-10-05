@@ -1313,8 +1313,18 @@ async def _hydrate(doc: dict) -> Agendamento:
     prof = await db.users.find_one({"user_id": doc["profissional_id"]}, {"_id": 0, "name": 1})
     cli = await db.users.find_one({"user_id": doc["cliente_id"]}, {"_id": 0, "name": 1})
     svc = await db.servicos.find_one({"servico_id": doc["servico_id"]}, {"_id": 0, "nome": 1})
+    # Esses 7 campos são sobrescritos explicitamente abaixo (precisam
+    # passar por _aware() antes de virar JSON — ver o comentário logo
+    # adiante) — por isso ficam de fora do spread: passar a MESMA chave
+    # duas vezes pro construtor (uma crua via spread, outra convertida via
+    # argumento nomeado) é um TypeError em Python, não uma sobrescrita.
+    _campos_convertidos = {
+        "horario_inicio", "horario_fim", "hold_expira_em",
+        "janela_confirmacao_expira_em", "criado_em",
+        "push_pergunta_enviada_em", "push_urgencia_enviada_em",
+    }
     return Agendamento(
-        **{k: v for k, v in doc.items() if k != "_id"},
+        **{k: v for k, v in doc.items() if k != "_id" and k not in _campos_convertidos},
         # O Mongo devolve datetime "naive" (sem tzinfo), mas o valor salvo é
         # sempre UTC — sem marcar isso explicitamente, o JSON final sai sem
         # o sufixo "Z"/offset (ex: "2026-10-01T14:00:00" em vez de
