@@ -93,16 +93,16 @@
   .option .opt-sub { display: block; font-size: 13px; color: var(--ink-soft); margin-top: 2px; }
   .option .opt-price { font-weight: 600; color: var(--brand-dark); white-space: nowrap; }
 
-  .day-group { margin-bottom: 14px; }
-  .day-group:last-child { margin-bottom: 0; }
-  .day-label { font-size: 13px; color: var(--ink-soft); margin: 0 0 8px; font-weight: 500; }
-  .slot-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-  .slot-btn {
-    border: 1px solid var(--line); background: none; border-radius: 10px; padding: 10px 6px;
-    font-family: inherit; font-size: 14px; color: var(--ink); cursor: pointer;
+  /* Dropdowns de data e horário (passo 2). Nativos de propósito: no celular
+     abrem o seletor do próprio sistema, que é o mais confortável de usar. */
+  select.slot-select {
+    width: 100%; padding: 13px 14px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink); font-family: inherit; font-size: 16px;
+    cursor: pointer;
   }
-  .slot-btn:hover { border-color: var(--brand); }
-  .slot-btn.selected { border-color: var(--brand); background: var(--brand-tint); color: var(--brand-dark); font-weight: 600; }
+  select.slot-select:focus { outline: 2px solid var(--brand); outline-offset: 1px; }
+  select.slot-select:disabled { opacity: 0.5; cursor: not-allowed; }
+  select.slot-select option { background: var(--surface); color: var(--ink); }
 
   label.field { display: block; margin-bottom: 14px; }
   label.field:last-child { margin-bottom: 0; }
@@ -192,7 +192,7 @@
     <!-- Step 2: horário -->
     <section id="step2" class="card hidden">
       <button class="back-link" data-back="1">‹ Trocar serviço</button>
-      <p class="card-label">2 · Escolha o horário</p>
+      <p class="card-label">2 · Escolha a data e o horário</p>
       <div id="slotsList"></div>
     </section>
 
@@ -381,42 +381,104 @@
     }
   }
 
+  // ---- Passo 2: data -> horário (dois dropdowns encadeados) ----
+  const DIAS_SEMANA_PT = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+
+  // O `iso` de cada slot vem do backend já no fuso do PROFISSIONAL
+  // (ex: "2026-10-05T09:00:00-03:00"), então os 10 primeiros caracteres são a
+  // data local dele. Ler daí (e não via `new Date(iso)`) evita depender do
+  // fuso do navegador do cliente — quem agenda de outro fuso continua vendo o
+  // dia certo do atendimento.
+  function dataDoSlot(iso) {
+    return iso.slice(0, 10);
+  }
+
+  // "2026-10-05" -> "seg, 05/10/2026". O dia da semana sai de aritmética UTC
+  // pura (Date.UTC + getUTCDay), sem Intl e sem fuso envolvido.
+  function rotuloData(ymd) {
+    const [y, m, d] = ymd.split("-").map(Number);
+    const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    const dd = String(d).padStart(2, "0");
+    const mm = String(m).padStart(2, "0");
+    return `${DIAS_SEMANA_PT[dow]}, ${dd}/${mm}/${y}`;
+  }
+
   function renderSlots(slots) {
     const list = document.getElementById("slotsList");
     list.innerHTML = "";
+    state.slotIso = null;
+    state.slotLabel = null;
     if (!slots.length) {
       list.innerHTML = "<p style='color:var(--ink-soft); font-size:14px;'>Sem horários livres nos próximos dias.</p>";
       return;
     }
-    const byDay = {};
-    slots.forEach((s) => {
-      byDay[s.day_label] = byDay[s.day_label] || [];
-      byDay[s.day_label].push(s);
+
+    // Só entram na lista de datas os dias que TÊM horário livre — dia lotado
+    // nem aparece, então o cliente não escolhe uma data pra descobrir depois
+    // que não tem vaga.
+    const porDia = new Map();
+    slots.forEach((slot) => {
+      const ymd = dataDoSlot(slot.iso);
+      if (!porDia.has(ymd)) porDia.set(ymd, []);
+      porDia.get(ymd).push(slot);
     });
-    Object.entries(byDay).forEach(([day, items]) => {
-      const group = document.createElement("div");
-      group.className = "day-group";
-      const label = document.createElement("p");
-      label.className = "day-label";
-      label.textContent = day;
-      group.appendChild(label);
-      const grid = document.createElement("div");
-      grid.className = "slot-grid";
-      items.forEach((slot) => {
-        const btn = document.createElement("button");
-        btn.className = "slot-btn";
-        btn.textContent = slot.time_label;
-        btn.addEventListener("click", () => {
-          document.querySelectorAll(".slot-btn").forEach((b) => b.classList.remove("selected"));
-          btn.classList.add("selected");
-          state.slotIso = slot.iso;
-          state.slotLabel = `${day}, ${slot.time_label}`;
-          showStep(3);
-        });
-        grid.appendChild(btn);
-      });
-      group.appendChild(grid);
-      list.appendChild(group);
+    const datas = [...porDia.keys()].sort();
+
+    list.innerHTML = `
+      <label class="field" for="selectData">
+        <span>Data</span>
+        <select id="selectData" class="slot-select">
+          <option value="">Selecione a data</option>
+          ${datas.map((ymd) => `<option value="${ymd}">${rotuloData(ymd)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="field" for="selectHora">
+        <span>Horário</span>
+        <select id="selectHora" class="slot-select" disabled>
+          <option value="">Escolha a data primeiro</option>
+        </select>
+      </label>
+      <button class="btn-primary" id="btnContinuarHorario" disabled>Continuar</button>
+    `;
+
+    const selData = document.getElementById("selectData");
+    const selHora = document.getElementById("selectHora");
+    const btn = document.getElementById("btnContinuarHorario");
+
+    // Trocar a data sempre zera o horário (o horário anterior pode nem existir
+    // no dia novo) e trava o Continuar até escolher de novo.
+    selData.addEventListener("change", () => {
+      state.slotIso = null;
+      state.slotLabel = null;
+      btn.disabled = true;
+      const ymd = selData.value;
+      if (!ymd) {
+        selHora.innerHTML = '<option value="">Escolha a data primeiro</option>';
+        selHora.disabled = true;
+        return;
+      }
+      selHora.innerHTML =
+        '<option value="">Selecione o horário</option>' +
+        porDia.get(ymd).map((slot) => `<option value="${slot.iso}">${slot.time_label}</option>`).join("");
+      selHora.disabled = false;
+    });
+
+    selHora.addEventListener("change", () => {
+      const iso = selHora.value;
+      if (!iso) {
+        state.slotIso = null;
+        state.slotLabel = null;
+        btn.disabled = true;
+        return;
+      }
+      const slot = porDia.get(selData.value).find((x) => x.iso === iso);
+      state.slotIso = slot.iso;
+      state.slotLabel = `${rotuloData(selData.value)} às ${slot.time_label}`;
+      btn.disabled = false;
+    });
+
+    btn.addEventListener("click", () => {
+      if (state.slotIso) showStep(3);
     });
   }
 

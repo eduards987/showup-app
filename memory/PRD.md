@@ -2583,3 +2583,30 @@ explícito.
 Backend (`server.py` + `stripe_gateway.py`): step de slots por duração,
 `payment_method_types` removido (3 chamadas), `_hydrate` sem duplicação.
 Tudo no mesmo arquivo/commit — um push só resolve os três de uma vez.
+
+## Link público: data e horário em dropdowns encadeados (05/10/2026)
+
+Passo 2 do `agendar.html` deixou de ser uma grade de botões com todos os
+dias/horários e virou dois `<select>` nativos: **Data** (dia/mês/ano, ex:
+"seg, 05/10/2026") e **Horário**, que fica desabilitado ("Escolha a data
+primeiro") até a data ser escolhida. Botão "Continuar" só habilita com
+data + horário. Trocar a data zera o horário e trava o Continuar; voltar
+pro placeholder de data trava o horário de novo. "Trocar horário" no passo
+3 mantém as escolhas.
+
+- Só aparecem datas que têm horário livre (dia lotado não entra na lista).
+- A data é lida dos 10 primeiros caracteres do `iso` do slot (o backend
+  manda no fuso do PROFISSIONAL, ex "2026-10-05T09:00:00-03:00"), e o dia
+  da semana sai de aritmética UTC pura — nada depende do fuso do navegador
+  de quem agenda. Testado com navegador em UTC+14 (slot 23:30 -03:00
+  continua em 05/10).
+- Resumo e tela de sucesso agora mostram "seg, 05/10/2026 às 06:00" em
+  português (antes vinha o `day_label` do backend, em inglês: "Mon, 05 Oct").
+- Removido o CSS da grade antiga (`.slot-btn`, `.slot-grid`, `.day-*`).
+- Testes (Playwright, backend e Stripe simulados): estado inicial,
+  encadeamento, reset ao trocar data, fluxo completo com cartão (confere o
+  `horario_inicio` enviado), voltar mantendo escolhas, fuso diferente, sem
+  horários.
+- Interpretação: "dia, mês e ano" = UM dropdown de datas disponíveis
+  mostrando dd/mm/aaaa, não três dropdowns separados (três permitiriam
+  combinar datas sem horário livre).
