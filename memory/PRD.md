@@ -2610,3 +2610,60 @@ pro placeholder de data trava o horário de novo. "Trocar horário" no passo
 - Interpretação: "dia, mês e ano" = UM dropdown de datas disponíveis
   mostrando dd/mm/aaaa, não três dropdowns separados (três permitiriam
   combinar datas sem horário livre).
+
+## Planos: conta com os números do profissional + teste grátis (12/10/2026)
+
+Motivo: os 3 planos só diferiam na % de taxa (Free 10% / Profissional 5% por
+R$ 19,90 / Ultra 2% por R$ 59,90) — pouco atrativo. Primeira rodada do plano
+de valor (ordem: 1) conta personalizada + teste grátis; 2) relatórios e link
+personalizado; 3) lista de espera / recorrência / lembrete ao cliente).
+
+### Backend (`server.py`, `stripe_gateway.py`)
+- `GET /me/plano/resumo`: últimos 30 dias (`RESUMO_JANELA_DIAS`), agendamentos
+  JÁ COBRADOS (`capturado_total` = compareceu, `capturado_taxa` = falta), só da
+  moeda do profissional. Devolve atendimentos/valor, faltas cobradas/valor,
+  custo (taxa + mensalidade) em cada plano, economia vs plano atual, plano
+  recomendado (só se ECONOMIZA e está disponível — nunca recomenda upgrade que
+  sai mais caro) e pontos de equilíbrio (Profissional R$ 398,00/mês; Ultra
+  R$ 748,75 vs Free e R$ 1.333,34 vs Profissional). Taxa estimada = % do
+  `valor_total_centavos` de CADA agendamento, arredondando por agendamento
+  (igual à cobrança). Comparação só em BRL (preços dos planos são BRL).
+- Teste grátis de 14 dias (`TRIAL_DIAS`), 1 por profissional: só quem está no
+  Free, nunca testou (`plano_trial_usado`) nem pagou (`plano_ja_pago`).
+  `subscription-intent` aceita `usar_trial`; com trial o Stripe devolve
+  `pending_setup_intent` (Payment Sheet só salva o cartão) e
+  `trial_settings.end_behavior.missing_payment_method=cancel`. Cancelar no
+  teste volta pro Free sem cobrar e NÃO devolve novo teste.
+- Hardening do `/me/plano/confirm` (necessário pro teste grátis): a assinatura
+  com trial já nasce `trialing` ANTES do cartão ser salvo (stripe-react-native
+  #1509), então status sozinho não prova nada. Agora o servidor grava
+  `plano_pendente` no subscription-intent e o confirm: exige a mesma
+  subscription_id, usa o plano GRAVADO (não o do app — antes dava pra
+  confirmar um plano mais caro pagando o mais barato), exige `trialing` +
+  SetupIntent `succeeded` no trial, `active` no pago, dono da assinatura =
+  usuário, e é idempotente. Assinatura pendente anterior (sheet fechado sem
+  salvar) é cancelada ao tentar de novo.
+
+### Frontend (`app/(app)/planos.tsx`, só JS)
+Card "Seus últimos 30 dias" (atendimentos, faltas recuperadas, tabela do que
+pagaria em cada plano, veredito), selo "MELHOR PRA VOCÊ", descrição de cada
+plano com o ponto de equilíbrio real (some a promessa fixa "~4-5 agendamentos"),
+botão "Testar 14 dias grátis" (Payment Sheet em modo SetupIntent) e aviso
+"Teste grátis até <data>" no plano atual.
+
+### Testes
+`tests/test_planos_resumo.py` + `tests/test_plano_gateway.py`: 34 testes OFFLINE
+(banco e gateway falsos; objetos reais da lib do Stripe no gateway). Rodar:
+`cd backend && python -m pytest tests/test_planos_resumo.py tests/test_plano_gateway.py`.
+Mutação conferida: remover cada proteção do confirm derruba o teste certo.
+Tela: type-check estrito do TS com stubs dos módulos nativos (0 erros).
+NÃO testado ainda: fluxo real do trial contra o Stripe e a tela no aparelho.
+
+### Em aberto (decisão do dono)
+Taxa na FALTA: `authorize()` fixa `application_fee_amount` = % do valor TOTAL
+do serviço, e `capture()` parcial não passa `application_fee_amount`. Pela
+doc do Stripe a taxa só muda se for informada na captura — ou seja, numa
+falta de R$ 30 em serviço de R$ 120, a plataforma provavelmente fica com R$ 12
+(Free) em vez de R$ 3. Confirmar no Dashboard (Application fee da cobrança) e
+decidir se a taxa da falta deve ser % do valor capturado. A conta do resumo
+usa a regra ATUAL; se mudar, ajustar `base_taxa` em `plano_resumo`.

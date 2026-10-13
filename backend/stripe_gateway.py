@@ -402,7 +402,7 @@ class StripeGateway:
         return c.id
 
     async def create_plano_subscription(
-        self, billing_customer_id: str, price_id: str, user_id: str
+        self, billing_customer_id: str, price_id: str, user_id: str, trial_days: int = 0
     ) -> dict:
         """Cria a assinatura DIRETO via API (sem Checkout hospedado) — o
         pagamento em si é coletado pelo Payment Sheet nativo do app, igual
@@ -419,20 +419,43 @@ class StripeGateway:
         fatura). confirmation_secret.client_secret é o substituto oficial,
         e a própria doc da Stripe pro SDK React Native usa exatamente esse
         client_secret com initPaymentSheet — funciona igual."""
+        kwargs: dict[str, Any] = dict(
+            customer=billing_customer_id,
+            items=[{"price": price_id}],
+            payment_behavior="default_incomplete",
+            payment_settings={"save_default_payment_method": "on_subscription"},
+            expand=["latest_invoice.confirmation_secret", "pending_setup_intent"],
+            metadata={"user_id": user_id},
+        )
+        if trial_days > 0:
+            # Teste grátis COM cartão coletado na hora: nada a cobrar agora,
+            # então o Stripe não cria PaymentIntent — devolve um
+            # `pending_setup_intent` pro Payment Sheet salvar o cartão (doc
+            # "Collect payment details before creating an Intent").
+            # `missing_payment_method=cancel` garante que, se o cartão nunca
+            # for salvo, a assinatura morre no fim do teste em vez de
+            # virar uma fatura em aberto.
+            kwargs["trial_period_days"] = trial_days
+            kwargs["trial_settings"] = {"end_behavior": {"missing_payment_method": "cancel"}}
         try:
-            subscription = stripe.Subscription.create(
-                customer=billing_customer_id,
-                items=[{"price": price_id}],
-                payment_behavior="default_incomplete",
-                payment_settings={"save_default_payment_method": "on_subscription"},
-                expand=["latest_invoice.confirmation_secret"],
-                metadata={"user_id": user_id},
-            )
+            subscription = stripe.Subscription.create(**kwargs)
         except stripe.error.StripeError as e:
             # Cobre "No such price" (Price ID de outro modo/apagado), entre
             # outros — sem isso, isso derrubava a requisição com um 500 e
             # traceback cru em vez de uma mensagem clara pro cliente.
             raise _translate_stripe_error(e) from e
+        if trial_days > 0:
+            # ATENÇÃO: com teste grátis a assinatura já nasce `trialing`, ANTES
+            # de o cartão ser salvo (relato no stripe-react-native #1509) —
+            # status sozinho não prova nada. Quem confirma precisa checar o
+            # SetupIntent (get_setup_intent_status).
+            si = getattr(subscription, "pending_setup_intent", None)
+            return {
+                "subscription_id": subscription.id,
+                "payment_intent_client_secret": None,
+                "setup_intent_client_secret": getattr(si, "client_secret", None) if si else None,
+                "setup_intent_id": getattr(si, "id", None) if si else None,
+            }
         client_secret = subscription.latest_invoice.confirmation_secret.client_secret
         # Mantemos a chave "payment_intent_client_secret" no dict de retorno
         # (mesmo o valor agora vindo de confirmation_secret, não mais de um
@@ -442,11 +465,35 @@ class StripeGateway:
         return {
             "subscription_id": subscription.id,
             "payment_intent_client_secret": client_secret,
+            "setup_intent_client_secret": None,
+            "setup_intent_id": None,
         }
 
     async def get_subscription_status(self, subscription_id: str) -> str:
         sub = stripe.Subscription.retrieve(subscription_id)
         return sub.status
+
+    async def get_subscription_details(self, subscription_id: str) -> dict:
+        """Status + fim do teste (epoch, None se não houver) + a quem pertence
+        (metadata.user_id gravado na criação)."""
+        try:
+            sub = stripe.Subscription.retrieve(subscription_id)
+        except stripe.error.StripeError as e:
+            raise _translate_stripe_error(e) from e
+        meta = getattr(sub, "metadata", None)
+        return {
+            "status": sub.status,
+            "trial_end": getattr(sub, "trial_end", None),
+            "user_id": getattr(meta, "user_id", None) if meta else None,
+        }
+
+    async def get_setup_intent_status(self, setup_intent_id: str) -> str:
+        """`succeeded` = o cartão foi mesmo salvo. É a prova que o teste grátis
+        exige (a assinatura em si já nasce `trialing`)."""
+        try:
+            return stripe.SetupIntent.retrieve(setup_intent_id).status
+        except stripe.error.StripeError as e:
+            raise _translate_stripe_error(e) from e
 
     async def cancel_subscription(self, subscription_id: str) -> None:
         try:

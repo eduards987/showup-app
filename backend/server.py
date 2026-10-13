@@ -158,6 +158,8 @@ PLANOS = {
     "ultra":        {"nome": "Ultra",        "fee_bps": 200,  "preco_centavos": 5990, "price_env": "STRIPE_PRICE_ID_ULTRA"},
 }
 DEFAULT_PLANO = "free"
+TRIAL_DIAS = 14  # teste grátis do plano pago — uma vez por profissional
+RESUMO_JANELA_DIAS = 30  # janela da conta "quanto você pagaria em cada plano"
 PIX_RESERVA_MINUTOS = 20  # tempo que um agendamento via Pix fica reservado esperando pagamento antes de liberar o horário sozinho
 
 
@@ -167,6 +169,66 @@ def _fee_bps_for(profissional_doc: Optional[dict]) -> int:
     o comportamento seguro do ponto de vista da plataforma)."""
     plano = (profissional_doc or {}).get("plano") or DEFAULT_PLANO
     return PLANOS.get(plano, PLANOS[DEFAULT_PLANO])["fee_bps"]
+
+
+def _plano_disponivel(p: dict) -> bool:
+    """Só é "comprável" de verdade se o Price ID real já foi configurado no
+    .env — evita o app oferecer um plano que quebraria no clique."""
+    return p["price_env"] is None or bool(os.environ.get(p["price_env"]))
+
+
+def _teto_div(a: int, b: int) -> int:
+    return -(-a // b)
+
+
+def _equilibrios() -> dict[str, dict[str, int]]:
+    """Volume (em centavos de serviços cobrados por mês) a partir do qual cada
+    plano pago sai mais barato que o Free e que o plano imediatamente abaixo.
+    mensalidade extra / pontos-base economizados * 10_000."""
+    ordem = list(PLANOS.items())
+    free = ordem[0][1]
+    out: dict[str, dict[str, int]] = {}
+    for i in range(1, len(ordem)):
+        pid, p = ordem[i]
+        ant = ordem[i - 1][1]
+        out[pid] = {
+            "vs_free": _teto_div((p["preco_centavos"] - free["preco_centavos"]) * 10_000, free["fee_bps"] - p["fee_bps"]),
+            "vs_anterior": _teto_div((p["preco_centavos"] - ant["preco_centavos"]) * 10_000, ant["fee_bps"] - p["fee_bps"]),
+        }
+    return out
+
+
+def calcular_comparacao_planos(valores_centavos: list[int], plano_atual: str) -> list[dict]:
+    """Quanto o profissional pagaria em cada plano com o MESMO movimento.
+    `valores_centavos` = valor do serviço de cada agendamento cobrado — a taxa
+    é calculada por agendamento, com a mesma conta da cobrança real
+    (valor * bps // 10_000, arredondando pra baixo cada um)."""
+    atual_id = plano_atual if plano_atual in PLANOS else DEFAULT_PLANO
+    linhas = []
+    for pid, p in PLANOS.items():
+        taxa = sum((v * p["fee_bps"]) // 10_000 for v in valores_centavos)
+        linhas.append({
+            "id": pid, "nome": p["nome"], "fee_percent": p["fee_bps"] / 100,
+            "preco_centavos": p["preco_centavos"], "disponivel": _plano_disponivel(p),
+            "taxa_estimada_centavos": taxa, "custo_total_centavos": taxa + p["preco_centavos"],
+        })
+    custo_atual = next(l for l in linhas if l["id"] == atual_id)["custo_total_centavos"]
+    eq = _equilibrios()
+    for l in linhas:
+        l["economia_vs_atual_centavos"] = custo_atual - l["custo_total_centavos"]
+        l["equilibrio_vs_free_centavos"] = eq.get(l["id"], {}).get("vs_free")
+        l["equilibrio_vs_anterior_centavos"] = eq.get(l["id"], {}).get("vs_anterior")
+    return linhas
+
+
+def _trial_disponivel(doc: dict) -> bool:
+    """Teste grátis: só quem está no Free, nunca fez teste e nunca pagou um plano
+    (senão daria pra emendar testes sem fim)."""
+    return (
+        (doc.get("plano") or DEFAULT_PLANO) == DEFAULT_PLANO
+        and not doc.get("plano_trial_usado")
+        and not doc.get("plano_ja_pago")
+    )
 
 
 def _tz_for(profissional_doc: Optional[dict]) -> ZoneInfo:
@@ -432,6 +494,7 @@ class ConnectLink(BaseModel):
 
 class PlanoCheckoutRequest(BaseModel):
     plano: str
+    usar_trial: bool = False
 
     @field_validator("plano")
     @classmethod
@@ -444,8 +507,43 @@ class PlanoCheckoutRequest(BaseModel):
 class PlanoSubscriptionIntentResponse(BaseModel):
     customer_id: str
     ephemeral_key_secret: str
-    payment_intent_client_secret: str
+    # Assinatura paga: payment_intent_client_secret. Teste grátis (nada a
+    # cobrar agora): setup_intent_client_secret, pro Payment Sheet só salvar o cartão.
+    payment_intent_client_secret: Optional[str] = None
+    setup_intent_client_secret: Optional[str] = None
+    trial_dias: int = 0
     subscription_id: str
+
+
+class PlanoComparacao(BaseModel):
+    id: str
+    nome: str
+    fee_percent: float
+    preco_centavos: int
+    disponivel: bool
+    taxa_estimada_centavos: int
+    custo_total_centavos: int
+    economia_vs_atual_centavos: int
+    equilibrio_vs_free_centavos: Optional[int] = None
+    equilibrio_vs_anterior_centavos: Optional[int] = None
+
+
+class PlanoResumoResponse(BaseModel):
+    plano_atual: str
+    moeda: str
+    janela_dias: int
+    atendimentos_cobrados: int
+    servicos_cobrados_centavos: int
+    base_taxa_centavos: int
+    faltas_cobradas_qtd: int
+    faltas_cobradas_centavos: int
+    # Os preços dos planos são em BRL: pra outra moeda não dá pra comparar.
+    comparacao_disponivel: bool
+    comparacao: list[PlanoComparacao]
+    recomendado: Optional[str] = None
+    trial_disponivel: bool
+    trial_dias: int
+    trial_termina_em: Optional[datetime] = None
 
 
 class ConfirmPlanoRequest(BaseModel):
@@ -1202,14 +1300,70 @@ async def listar_planos():
                 "nome": p["nome"],
                 "fee_percent": p["fee_bps"] / 100,
                 "preco_centavos": p["preco_centavos"],
-                # Só é "comprável" de verdade se o Price ID real já foi
-                # configurado no .env — evita o app oferecer um plano que
-                # quebraria no clique por falta de configuração no Stripe.
-                "disponivel": p["price_env"] is None or bool(os.environ.get(p["price_env"])),
+                "disponivel": _plano_disponivel(p),
             }
             for pid, p in PLANOS.items()
-        ]
+        ],
+        "trial_dias": TRIAL_DIAS,
     }
+
+
+@api_router.get("/me/plano/resumo", response_model=PlanoResumoResponse)
+async def plano_resumo(authorization: Optional[str] = Header(default=None)):
+    """A conta que o profissional quer ver antes de assinar: o que ele
+    movimentou pelo app nos últimos 30 dias e quanto pagaria em cada plano com
+    esse mesmo movimento — mais o que o app recuperou em faltas.
+
+    Base de cálculo = agendamentos já COBRADOS (compareceu → capturado_total,
+    falta → capturado_taxa). A taxa de cada um incide sobre o valor do
+    serviço (`valor_total_centavos`), que é como ela é calculada na cobrança
+    (ver authorize em stripe_gateway.py)."""
+    doc = await _current_user(authorization)
+    await _require_role(doc, "profissional")
+    moeda = doc.get("moeda") or DEFAULT_MOEDA
+    plano_atual = doc.get("plano") or DEFAULT_PLANO
+    if plano_atual not in PLANOS:
+        plano_atual = DEFAULT_PLANO
+
+    desde = _now() - timedelta(days=RESUMO_JANELA_DIAS)
+    itens = await db.agendamentos.find(
+        {
+            "profissional_id": doc["user_id"],
+            "hold_status": {"$in": ["capturado_total", "capturado_taxa"]},
+            "horario_inicio": {"$gte": desde},
+            "moeda": moeda,
+        },
+        {"_id": 0, "valor_total_centavos": 1, "valor_capturado_centavos": 1, "hold_status": 1},
+    ).to_list(5000)
+
+    atendimentos = [i for i in itens if i.get("hold_status") == "capturado_total"]
+    faltas = [i for i in itens if i.get("hold_status") == "capturado_taxa"]
+    valores = [int(i.get("valor_total_centavos") or 0) for i in itens]
+
+    comparacao_ok = moeda == "BRL"
+    linhas = calcular_comparacao_planos(valores, plano_atual) if comparacao_ok else []
+    melhores = [l for l in linhas if l["disponivel"] and l["economia_vs_atual_centavos"] > 0]
+    recomendado = (
+        max(melhores, key=lambda l: l["economia_vs_atual_centavos"])["id"] if melhores and valores else None
+    )
+
+    termina_em = doc.get("plano_trial_termina_em")
+    return PlanoResumoResponse(
+        plano_atual=plano_atual,
+        moeda=moeda,
+        janela_dias=RESUMO_JANELA_DIAS,
+        atendimentos_cobrados=len(atendimentos),
+        servicos_cobrados_centavos=sum(int(i.get("valor_capturado_centavos") or 0) for i in atendimentos),
+        base_taxa_centavos=sum(valores),
+        faltas_cobradas_qtd=len(faltas),
+        faltas_cobradas_centavos=sum(int(i.get("valor_capturado_centavos") or 0) for i in faltas),
+        comparacao_disponivel=comparacao_ok,
+        comparacao=[PlanoComparacao(**l) for l in linhas],
+        recomendado=recomendado,
+        trial_disponivel=_trial_disponivel(doc) and comparacao_ok,
+        trial_dias=TRIAL_DIAS,
+        trial_termina_em=_aware(termina_em) if (termina_em and plano_atual != DEFAULT_PLANO) else None,
+    )
 
 
 @api_router.post("/me/plano/subscription-intent", response_model=PlanoSubscriptionIntentResponse)
@@ -1231,11 +1385,17 @@ async def plano_subscription_intent(request: Request, payload: PlanoCheckoutRequ
     if not price_id:
         raise HTTPException(400, f"Plano {payload.plano} ainda não tem Price ID configurado no servidor")
 
+    if payload.usar_trial and not _trial_disponivel(doc):
+        raise HTTPException(400, "Teste grátis indisponível: ele só vale uma vez, pra quem ainda não assinou nenhum plano")
+    trial_dias = TRIAL_DIAS if payload.usar_trial else 0
+
     billing_customer_id = doc.get("stripe_billing_customer_id")
 
     async def _prepare_payment_sheet(customer_id: str):
         ephemeral_key = await gateway.create_ephemeral_key(customer_id)
-        sub = await gateway.create_plano_subscription(customer_id, price_id, user_id=doc["user_id"])
+        sub = await gateway.create_plano_subscription(
+            customer_id, price_id, user_id=doc["user_id"], trial_days=trial_dias,
+        )
         return ephemeral_key, sub
 
     if not billing_customer_id:
@@ -1261,10 +1421,40 @@ async def plano_subscription_intent(request: Request, payload: PlanoCheckoutRequ
     except PaymentError:
         logging.exception("plano_subscription_intent falhou")
         raise HTTPException(502, "Falha ao criar assinatura junto ao gateway")
+    if trial_dias and not (sub.get("setup_intent_client_secret") and sub.get("setup_intent_id")):
+        # O Stripe não devolveu o SetupIntent do teste: sem ele não tem como
+        # salvar o cartão, e deixar a assinatura criada daria teste sem cartão.
+        logging.error("teste grátis sem pending_setup_intent (sub=%s)", sub.get("subscription_id"))
+        await gateway.cancel_subscription(sub["subscription_id"])
+        raise HTTPException(502, "Não foi possível preparar o teste grátis agora. Tente de novo.")
+
+    # Quem abriu o Payment Sheet, fechou sem salvar o cartão e tentou de novo
+    # deixaria a assinatura anterior órfã no Stripe (no teste grátis ela
+    # nasce `trialing`). Cancela a anterior agora que a nova já existe.
+    anterior = (doc.get("plano_pendente") or {}).get("subscription_id")
+    if anterior and anterior != sub["subscription_id"]:
+        try:
+            await gateway.cancel_subscription(anterior)
+        except PaymentError:
+            logging.warning("não consegui cancelar a assinatura pendente anterior %s", anterior)
+
+    # O servidor guarda O QUE foi criado pra esse profissional. É isso — não o
+    # que o app disser depois — que decide o plano em /me/plano/confirm.
+    await db.users.update_one(
+        {"user_id": doc["user_id"]},
+        {"$set": {"plano_pendente": {
+            "subscription_id": sub["subscription_id"],
+            "plano": payload.plano,
+            "trial": bool(trial_dias),
+            "setup_intent_id": sub.get("setup_intent_id"),
+        }}},
+    )
     return PlanoSubscriptionIntentResponse(
         customer_id=billing_customer_id,
         ephemeral_key_secret=ephemeral_key,
-        payment_intent_client_secret=sub["payment_intent_client_secret"],
+        payment_intent_client_secret=sub.get("payment_intent_client_secret"),
+        setup_intent_client_secret=sub.get("setup_intent_client_secret"),
+        trial_dias=trial_dias,
         subscription_id=sub["subscription_id"],
     )
 
@@ -1273,16 +1463,50 @@ async def plano_subscription_intent(request: Request, payload: PlanoCheckoutRequ
 @limiter.limit("10/minute")
 async def plano_confirm(request: Request, payload: ConfirmPlanoRequest, authorization: Optional[str] = Header(default=None)):
     """Segundo passo: depois que o Payment Sheet fecha com sucesso, confirma
-    DE VERDADE com o Stripe que a assinatura ficou ativa (nunca confia só no
-    "sucesso" que o SDK do app reporta) antes de liberar a taxa reduzida."""
+    DE VERDADE com o Stripe antes de liberar a taxa reduzida — nunca confia
+    no "sucesso" que o SDK do app reporta, nem no plano que o app manda.
+
+    - O plano vem do registro `plano_pendente` que o servidor gravou em
+      /subscription-intent; o que o app envia só é conferido contra ele.
+    - Assinatura paga: precisa estar `active`.
+    - Teste grátis: a assinatura já nasce `trialing` ANTES do cartão ser salvo
+      (por isso status sozinho não vale) — exige o SetupIntent `succeeded`."""
     doc = await _current_user(authorization)
     await _require_role(doc, "profissional")
-    status = await gateway.get_subscription_status(payload.subscription_id)
-    if status not in ("active", "trialing"):
-        raise HTTPException(402, f"Pagamento não confirmado (status da assinatura: {status})")
+
+    # Idempotente: duplo toque / retry de rede depois de já confirmado.
+    if doc.get("stripe_subscription_id") == payload.subscription_id and doc.get("plano") == payload.plano:
+        return MeResponse(user=await _serialize_user(doc))
+
+    pend = doc.get("plano_pendente")
+    if not pend or pend.get("subscription_id") != payload.subscription_id:
+        raise HTTPException(400, "Nenhuma assinatura pendente pra confirmar")
+    if pend.get("plano") != payload.plano:
+        raise HTTPException(400, "Plano diferente do que foi preparado")
+
+    info = await gateway.get_subscription_details(payload.subscription_id)
+    if info.get("user_id") not in (None, doc["user_id"]):
+        raise HTTPException(403, "Assinatura de outro usuário")
+
+    update: dict = {"plano": pend["plano"], "stripe_subscription_id": payload.subscription_id}
+    if pend.get("trial"):
+        if info["status"] != "trialing":
+            raise HTTPException(402, f"Teste grátis não confirmado (status da assinatura: {info['status']})")
+        si_id = pend.get("setup_intent_id")
+        si_status = await gateway.get_setup_intent_status(si_id) if si_id else None
+        if si_status != "succeeded":
+            raise HTTPException(402, f"Cartão do teste grátis não confirmado (status: {si_status})")
+        update["plano_trial_usado"] = True
+        if info.get("trial_end"):
+            update["plano_trial_termina_em"] = datetime.fromtimestamp(info["trial_end"], tz=timezone.utc)
+    else:
+        if info["status"] != "active":
+            raise HTTPException(402, f"Pagamento não confirmado (status da assinatura: {info['status']})")
+        update["plano_ja_pago"] = True
+
     await db.users.update_one(
         {"user_id": doc["user_id"]},
-        {"$set": {"plano": payload.plano, "stripe_subscription_id": payload.subscription_id}},
+        {"$set": update, "$unset": {"plano_pendente": ""}},
     )
     doc = await db.users.find_one({"user_id": doc["user_id"]}, {"_id": 0})
     return MeResponse(user=await _serialize_user(doc))
@@ -1300,7 +1524,10 @@ async def plano_cancelar(authorization: Optional[str] = Header(default=None)):
         await gateway.cancel_subscription(sub_id)
     await db.users.update_one(
         {"user_id": doc["user_id"]},
-        {"$set": {"plano": DEFAULT_PLANO}, "$unset": {"stripe_subscription_id": ""}},
+        # plano_trial_usado/plano_ja_pago ficam de propósito: cancelar não
+        # devolve o direito a um novo teste grátis.
+        {"$set": {"plano": DEFAULT_PLANO},
+         "$unset": {"stripe_subscription_id": "", "plano_pendente": "", "plano_trial_termina_em": ""}},
     )
     doc = await db.users.find_one({"user_id": doc["user_id"]}, {"_id": 0})
     return MeResponse(user=await _serialize_user(doc))

@@ -1,7 +1,9 @@
 // Planos: mostra Free/Profissional/Ultra com a taxa por agendamento de cada
-// um, e deixa o profissional assinar (checkout hospedado no Stripe) ou
-// cancelar (volta pro Free). Só faz sentido pra profissional — a rota é
-// alcançável só pelo card em perfil.tsx, que já esconde isso de clientes.
+// um, a CONTA do próprio profissional (quanto ele pagaria em cada plano com o
+// movimento dos últimos 30 dias, e quanto o app recuperou em faltas), e deixa
+// ele assinar (Payment Sheet nativo), testar o plano pago de graça ou cancelar
+// (volta pro Free). Só faz sentido pra profissional — a rota é alcançável só
+// pelo card em perfil.tsx, que já esconde isso de clientes.
 
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -12,7 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
-import { formatMoney } from "@/src/lib/format";
+import { formatDateOnly, formatMoney } from "@/src/lib/format";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 type Plano = {
@@ -23,11 +25,68 @@ type Plano = {
   disponivel: boolean;
 };
 
-const DESCRICOES: Record<string, string> = {
-  free: "Comece sem custo fixo. Ideal pra testar o app.",
-  profissional: "Taxa reduzida — compensa a partir de ~4-5 agendamentos por mês.",
-  ultra: "Taxa mínima — pra quem já tem volume alto de atendimentos.",
+type Comparacao = {
+  id: string;
+  nome: string;
+  fee_percent: number;
+  preco_centavos: number;
+  disponivel: boolean;
+  taxa_estimada_centavos: number;
+  custo_total_centavos: number;
+  economia_vs_atual_centavos: number;
+  equilibrio_vs_free_centavos: number | null;
+  equilibrio_vs_anterior_centavos: number | null;
 };
+
+type Resumo = {
+  plano_atual: string;
+  moeda: string;
+  janela_dias: number;
+  atendimentos_cobrados: number;
+  servicos_cobrados_centavos: number;
+  base_taxa_centavos: number;
+  faltas_cobradas_qtd: number;
+  faltas_cobradas_centavos: number;
+  comparacao_disponivel: boolean;
+  comparacao: Comparacao[];
+  recomendado: string | null;
+  trial_disponivel: boolean;
+  trial_dias: number;
+  trial_termina_em: string | null;
+};
+
+type SubscriptionIntent = {
+  customer_id: string;
+  ephemeral_key_secret: string;
+  // Assinatura paga usa o PaymentIntent; teste grátis (nada a cobrar agora)
+  // usa o SetupIntent, só pra salvar o cartão.
+  payment_intent_client_secret: string | null;
+  setup_intent_client_secret: string | null;
+  trial_dias: number;
+  subscription_id: string;
+};
+
+// Texto de cada plano. Sem a conta do backend (carregando, ou outra moeda) cai
+// numa frase que não promete número nenhum; com ela, o ponto de equilíbrio real.
+function descricaoPlano(p: Plano, comp: Comparacao | undefined, moeda: string): string {
+  if (p.id === "free") return "Sem mensalidade. Você paga só a taxa por agendamento.";
+  const vsFree = comp?.equilibrio_vs_free_centavos;
+  if (!vsFree) {
+    return p.id === "ultra"
+      ? "Taxa mínima — pra quem tem volume alto de atendimentos."
+      : "Taxa reduzida — pra quem já atende com frequência.";
+  }
+  let txt = `Compensa a partir de ${formatMoney(vsFree, moeda)}/mês em atendimentos, comparado ao Free.`;
+  const vsAnterior = comp?.equilibrio_vs_anterior_centavos;
+  if (vsAnterior && vsAnterior !== vsFree) {
+    txt += ` Sobre o plano anterior, a partir de ${formatMoney(vsAnterior, moeda)}/mês.`;
+  }
+  return txt;
+}
+
+function plural(n: number, um: string, varios: string): string {
+  return `${n} ${n === 1 ? um : varios}`;
+}
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
@@ -70,6 +129,33 @@ const useStyles = makeStyles((c) => ({
   ctaDisabled: { opacity: 0.5 },
   ctaText: { color: c.onBrandPrimary, fontSize: 14, fontWeight: "700" },
   ctaTextSecundario: { color: c.onSurface },
+  badgeRecomendado: {
+    backgroundColor: c.surfaceTertiary ?? c.border,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+  },
+  badgeRecomendadoText: { color: c.brandPrimary, fontSize: 11, fontWeight: "700" },
+  resumoCard: {
+    borderWidth: 1,
+    borderColor: c.border,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    backgroundColor: c.surfaceSecondary,
+    gap: spacing.xs,
+  },
+  resumoTitulo: { fontSize: 16, fontWeight: "700", color: c.onSurface },
+  resumoLinha: { fontSize: 14, color: c.onSurface },
+  resumoSub: { fontSize: 13, color: c.muted, marginTop: spacing.sm },
+  tabelaLinha: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline", paddingVertical: 4 },
+  tabelaNome: { fontSize: 14, color: c.onSurface, fontWeight: "600" },
+  tabelaValor: { fontSize: 14, color: c.onSurface, fontWeight: "700" },
+  tabelaDelta: { fontSize: 12, color: c.muted },
+  tabelaDeltaBom: { fontSize: 12, color: c.brandPrimary, fontWeight: "700" },
+  veredito: { fontSize: 14, color: c.brandPrimary, fontWeight: "700", marginTop: spacing.sm },
+  nota: { fontSize: 12, color: c.muted, marginTop: spacing.sm },
+  trialInfo: { fontSize: 12, color: c.muted, marginTop: spacing.xs, textAlign: "center" },
+  trialAtivo: { fontSize: 13, color: c.brandPrimary, fontWeight: "700", marginTop: spacing.xs },
   emBreve: { fontSize: 12, color: c.muted, fontStyle: "italic", marginTop: spacing.sm, textAlign: "center" },
   errorText: { color: c.onError, fontSize: 13, marginTop: spacing.sm },
 }));
@@ -88,30 +174,50 @@ export default function Planos() {
     queryFn: () => api<{ planos: Plano[] }>("/api/planos"),
   });
 
+  const resumoQ = useQuery({
+    queryKey: ["plano-resumo"],
+    queryFn: () => api<Resumo>("/api/me/plano/resumo"),
+    enabled: auth.status === "authenticated",
+  });
+  const resumo = resumoQ.data;
+
   const planoAtual = auth.status === "authenticated" ? (auth.user.plano ?? "free") : "free";
   const moeda = auth.status === "authenticated" ? (auth.user.moeda ?? "BRL") : "BRL";
+  const timezone = auth.status === "authenticated" ? auth.user.timezone : undefined;
+  const trialDisponivel = resumo?.trial_disponivel === true;
+  const comparacaoDe = (id: string) => resumo?.comparacao.find((c) => c.id === id);
+  const recarregar = () => {
+    auth.refresh();
+    qc.invalidateQueries({ queryKey: ["planos-list"] });
+    qc.invalidateQueries({ queryKey: ["plano-resumo"] });
+  };
 
   const checkoutM = useMutation({
-    mutationFn: async (planoId: string) => {
-      // Passo 1: prepara a assinatura no Stripe (ainda pendente de
-      // pagamento) e pega tudo que o Payment Sheet nativo precisa —
-      // mesmo padrão já usado pro cartão de no-show, sem abrir navegador.
-      const intent = await api<{
-        customer_id: string;
-        ephemeral_key_secret: string;
-        payment_intent_client_secret: string;
-        subscription_id: string;
-      }>("/api/me/plano/subscription-intent", {
+    mutationFn: async ({ planoId, trial }: { planoId: string; trial: boolean }) => {
+      // Passo 1: prepara a assinatura no Stripe (ainda pendente) e pega tudo
+      // que o Payment Sheet nativo precisa — mesmo padrão já usado pro cartão
+      // de no-show, sem abrir navegador. No teste grátis não há nada a cobrar
+      // agora: o sheet só salva o cartão (SetupIntent).
+      const intent = await api<SubscriptionIntent>("/api/me/plano/subscription-intent", {
         method: "POST",
-        body: JSON.stringify({ plano: planoId }),
+        body: JSON.stringify({ plano: planoId, usar_trial: trial }),
       });
 
-      const { error: initError } = await initPaymentSheet({
+      const base = {
         merchantDisplayName: "ShowUp",
         customerId: intent.customer_id,
         customerEphemeralKeySecret: intent.ephemeral_key_secret,
-        paymentIntentClientSecret: intent.payment_intent_client_secret,
-      });
+      };
+      const { error: initError } = intent.setup_intent_client_secret
+        ? await initPaymentSheet({
+            ...base,
+            setupIntentClientSecret: intent.setup_intent_client_secret,
+            primaryButtonLabel: "Começar teste grátis",
+          })
+        : await initPaymentSheet({
+            ...base,
+            paymentIntentClientSecret: intent.payment_intent_client_secret ?? "",
+          });
       if (initError) throw new Error(initError.message);
 
       const { error: presentError } = await presentPaymentSheet();
@@ -128,18 +234,12 @@ export default function Planos() {
         body: JSON.stringify({ subscription_id: intent.subscription_id, plano: planoId }),
       });
     },
-    onSuccess: () => {
-      auth.refresh();
-      qc.invalidateQueries({ queryKey: ["planos-list"] });
-    },
+    onSuccess: recarregar,
   });
 
   const cancelarM = useMutation({
     mutationFn: () => api("/api/me/plano/cancelar", { method: "POST" }),
-    onSuccess: () => {
-      auth.refresh();
-      qc.invalidateQueries({ queryKey: ["planos-list"] });
-    },
+    onSuccess: recarregar,
   });
 
   const erro = (checkoutM.error as any)?.message || (cancelarM.error as any)?.message;
@@ -162,9 +262,79 @@ export default function Planos() {
             agendamentos já criados, só os próximos.
           </Text>
 
+          {resumo ? (
+            <View style={styles.resumoCard} testID="plano-resumo">
+              <Text style={styles.resumoTitulo}>Seus últimos {resumo.janela_dias} dias</Text>
+
+              {resumo.atendimentos_cobrados === 0 && resumo.faltas_cobradas_qtd === 0 ? (
+                <Text style={styles.resumoLinha}>
+                  Ainda não há atendimentos cobrados pelo app nesse período.
+                  {resumo.comparacao_disponivel
+                    ? " Quando houver, mostramos aqui quanto você pagaria em cada plano."
+                    : ""}
+                </Text>
+              ) : (
+                <>
+                  <Text style={styles.resumoLinha}>
+                    {plural(resumo.atendimentos_cobrados, "atendimento cobrado", "atendimentos cobrados")} pelo
+                    app · {formatMoney(resumo.servicos_cobrados_centavos, resumo.moeda)}
+                  </Text>
+                  {resumo.faltas_cobradas_qtd > 0 ? (
+                    <Text style={styles.resumoLinha}>
+                      {plural(resumo.faltas_cobradas_qtd, "falta cobrada", "faltas cobradas")} ·{" "}
+                      {formatMoney(resumo.faltas_cobradas_centavos, resumo.moeda)} que você teria perdido
+                    </Text>
+                  ) : null}
+                </>
+              )}
+
+              {resumo.comparacao_disponivel && resumo.base_taxa_centavos > 0 ? (
+                <>
+                  <Text style={styles.resumoSub}>Quanto você pagaria (taxa + mensalidade)</Text>
+                  {resumo.comparacao.map((c) => (
+                    <View key={c.id} style={styles.tabelaLinha}>
+                      <Text style={styles.tabelaNome}>
+                        {c.nome}
+                        {c.id === resumo.plano_atual ? " (atual)" : ""}
+                      </Text>
+                      <Text style={styles.tabelaValor}>
+                        {formatMoney(c.custo_total_centavos, resumo.moeda)}{" "}
+                        {c.id !== resumo.plano_atual && c.economia_vs_atual_centavos !== 0 ? (
+                          <Text
+                            style={c.economia_vs_atual_centavos > 0 ? styles.tabelaDeltaBom : styles.tabelaDelta}
+                          >
+                            {c.economia_vs_atual_centavos > 0
+                              ? `economiza ${formatMoney(c.economia_vs_atual_centavos, resumo.moeda)}`
+                              : `+${formatMoney(-c.economia_vs_atual_centavos, resumo.moeda)}`}
+                          </Text>
+                        ) : null}
+                      </Text>
+                    </View>
+                  ))}
+                  {resumo.recomendado ? (
+                    <Text style={styles.veredito}>
+                      Com esse movimento, o {comparacaoDe(resumo.recomendado)?.nome} teria custado{" "}
+                      {formatMoney(comparacaoDe(resumo.recomendado)?.economia_vs_atual_centavos ?? 0, resumo.moeda)} a
+                      menos.
+                    </Text>
+                  ) : (
+                    <Text style={styles.veredito}>
+                      Pro seu movimento, o plano atual já é o mais barato.
+                    </Text>
+                  )}
+                  <Text style={styles.nota}>
+                    Estimativa com base nos últimos {resumo.janela_dias} dias — não garante o mesmo valor
+                    nos próximos. A taxa incide sobre o valor de cada serviço cobrado.
+                  </Text>
+                </>
+              ) : null}
+            </View>
+          ) : null}
+
           {(planosQ.data?.planos ?? []).map((p) => {
             const isAtual = p.id === planoAtual;
             const isFree = p.id === "free";
+            const emTeste = isAtual && !isFree && !!resumo?.trial_termina_em;
             return (
               <View key={p.id} style={[styles.card, isAtual && styles.cardActive]}>
                 <View style={styles.cardHeaderRow}>
@@ -172,6 +342,10 @@ export default function Planos() {
                   {isAtual ? (
                     <View style={styles.badge}>
                       <Text style={styles.badgeText}>PLANO ATUAL</Text>
+                    </View>
+                  ) : p.id === resumo?.recomendado ? (
+                    <View style={styles.badgeRecomendado}>
+                      <Text style={styles.badgeRecomendadoText}>MELHOR PRA VOCÊ</Text>
                     </View>
                   ) : null}
                 </View>
@@ -181,21 +355,38 @@ export default function Planos() {
                   {p.preco_centavos > 0 ? <Text style={styles.precoSufixo}> /mês</Text> : null}
                 </Text>
                 <Text style={styles.taxa}>{p.fee_percent}% por agendamento</Text>
-                <Text style={styles.descricao}>{DESCRICOES[p.id] ?? ""}</Text>
+                <Text style={styles.descricao}>{descricaoPlano(p, comparacaoDe(p.id), moeda)}</Text>
+
+                {emTeste && resumo?.trial_termina_em ? (
+                  <Text style={styles.trialAtivo} testID="trial-ativo">
+                    Teste grátis até {formatDateOnly(resumo.trial_termina_em, timezone)}. Depois, {formatMoney(p.preco_centavos, moeda)}/mês —
+                    cancele antes disso se não quiser continuar.
+                  </Text>
+                ) : null}
 
                 {!isAtual && !isFree && p.disponivel ? (
-                  <Pressable
-                    testID={`assinar-${p.id}`}
-                    disabled={checkoutM.isPending}
-                    onPress={() => checkoutM.mutate(p.id)}
-                    style={[styles.cta, checkoutM.isPending && styles.ctaDisabled]}
-                  >
-                    {checkoutM.isPending ? (
-                      <ActivityIndicator color={colors.onBrandPrimary} />
-                    ) : (
-                      <Text style={styles.ctaText}>Assinar {p.nome}</Text>
-                    )}
-                  </Pressable>
+                  <>
+                    <Pressable
+                      testID={`assinar-${p.id}`}
+                      disabled={checkoutM.isPending}
+                      onPress={() => checkoutM.mutate({ planoId: p.id, trial: trialDisponivel })}
+                      style={[styles.cta, checkoutM.isPending && styles.ctaDisabled]}
+                    >
+                      {checkoutM.isPending ? (
+                        <ActivityIndicator color={colors.onBrandPrimary} />
+                      ) : (
+                        <Text style={styles.ctaText}>
+                          {trialDisponivel ? `Testar ${resumo?.trial_dias} dias grátis` : `Assinar ${p.nome}`}
+                        </Text>
+                      )}
+                    </Pressable>
+                    {trialDisponivel ? (
+                      <Text style={styles.trialInfo}>
+                        Sem cobrança por {resumo?.trial_dias} dias; depois {formatMoney(p.preco_centavos, moeda)}/mês. Cancele
+                        antes e você não paga nada.
+                      </Text>
+                    ) : null}
+                  </>
                 ) : null}
 
                 {!isAtual && !isFree && !p.disponivel ? (
