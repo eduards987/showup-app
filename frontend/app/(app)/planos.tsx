@@ -324,7 +324,7 @@ export default function Planos() {
                   )}
                   <Text style={styles.nota}>
                     Estimativa com base nos últimos {resumo.janela_dias} dias — não garante o mesmo valor
-                    nos próximos. A taxa incide sobre o valor de cada serviço cobrado.
+                    nos próximos. A taxa incide sobre o valor efetivamente cobrado em cada atendimento ou falta.
                   </Text>
                 </>
               ) : null}

@@ -200,12 +200,50 @@ class StripeGateway:
             "hold_expira_em": hold_expira,
         }
 
+    async def _taxa_na_captura(
+        self, payment_intent_id: str, amount_to_capture: int, fee_bps: Optional[int]
+    ) -> Optional[int]:
+        """Taxa da plataforma a mandar numa captura PARCIAL (falta do cliente).
+
+        O `application_fee_amount` é fixado no authorize sobre o valor TOTAL do
+        serviço, e o Stripe não o recalcula sozinho numa captura parcial (só
+        muda se ele for informado na captura). Sem isso, numa falta de R$ 30
+        em um serviço de R$ 120 a plataforma ficaria com 10% de R$ 120
+        (R$ 12), não com 10% do que foi de fato cobrado (R$ 3).
+
+        Devolve None quando não há o que ajustar: cobrança sem repasse (sem taxa
+        — mandar o parâmetro daria erro) ou captura do valor inteiro (mantém a
+        taxa do authorize, que já é a certa).
+
+        `fee_bps` é o percentual GRAVADO na reserva (a taxa do plano da época —
+        mudar de plano nunca afeta reservas já feitas). Reserva antiga, sem esse
+        dado, usa a mesma proporção da taxa já fixada no PaymentIntent."""
+        try:
+            pi = stripe.PaymentIntent.retrieve(payment_intent_id)
+        except stripe.error.StripeError as e:
+            log.warning("capture: não consegui ler o PI %s: %s", payment_intent_id, e)
+            raise _translate_stripe_error(e) from e
+        taxa_total = getattr(pi, "application_fee_amount", None)
+        valor_total = getattr(pi, "amount", None)
+        if taxa_total is None or not valor_total or amount_to_capture >= valor_total:
+            return None
+        if fee_bps is not None:
+            return (amount_to_capture * fee_bps) // 10_000
+        return (taxa_total * amount_to_capture) // valor_total
+
     async def capture(
-        self, payment_intent_id: str, amount_to_capture: Optional[int], idempotency_key: str
+        self,
+        payment_intent_id: str,
+        amount_to_capture: Optional[int],
+        idempotency_key: str,
+        fee_bps: Optional[int] = None,
     ) -> dict:
         params: dict[str, Any] = {}
         if amount_to_capture is not None:
             params["amount_to_capture"] = amount_to_capture
+            taxa = await self._taxa_na_captura(payment_intent_id, amount_to_capture, fee_bps)
+            if taxa is not None:
+                params["application_fee_amount"] = taxa
         try:
             pi = stripe.PaymentIntent.capture(payment_intent_id, **params, idempotency_key=idempotency_key)
         except stripe.error.StripeError as e:

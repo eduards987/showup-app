@@ -98,7 +98,11 @@ class MockGateway:
         return result
 
     async def capture(
-        self, payment_intent_id: str, amount_to_capture: Optional[int], idempotency_key: str
+        self,
+        payment_intent_id: str,
+        amount_to_capture: Optional[int],
+        idempotency_key: str,
+        fee_bps: Optional[int] = None,  # o simulado não calcula taxa; só mantém a assinatura igual à do real
     ) -> dict:
         if idempotency_key in self._seen_idempotency_keys:
             return self._seen_idempotency_keys[idempotency_key]

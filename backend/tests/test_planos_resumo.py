@@ -213,7 +213,8 @@ def test_resumo_filtra_janela_profissional_moeda_e_status(ctx):
     assert r["servicos_cobrados_centavos"] == 24000
     assert r["faltas_cobradas_qtd"] == 1
     assert r["faltas_cobradas_centavos"] == 3000
-    assert r["base_taxa_centavos"] == 36000
+    # base da taxa = o que foi de fato cobrado: 2 serviços inteiros + a taxa da falta
+    assert r["base_taxa_centavos"] == 12000 + 12000 + 3000
 
 
 def test_resumo_nao_recomenda_upgrade_que_sai_mais_caro(ctx):
@@ -412,3 +413,11 @@ def test_tentar_de_novo_cancela_a_assinatura_pendente_anterior(ctx):
     # a confirmação agora só vale pra assinatura nova
     assert _confirmar(client, sub="sub_1").status_code == 400
     assert _confirmar(client, sub="sub_2").status_code == 200
+
+
+def test_falta_entra_na_conta_pelo_valor_cobrado_e_nao_pelo_valor_do_servico(ctx):
+    # uma falta: serviço de R$ 120, cobrados R$ 30 -> taxa do Free = 10% de R$ 30
+    client, db, gw = ctx(agendamentos=[_agendamento(hold="capturado_taxa", valor=12000, capturado=3000)])
+    r = client.get("/api/me/plano/resumo").json()
+    free = next(l for l in r["comparacao"] if l["id"] == "free")
+    assert r["base_taxa_centavos"] == 3000 and free["taxa_estimada_centavos"] == 300

@@ -2659,11 +2659,23 @@ Mutação conferida: remover cada proteção do confirm derruba o teste certo.
 Tela: type-check estrito do TS com stubs dos módulos nativos (0 erros).
 NÃO testado ainda: fluxo real do trial contra o Stripe e a tela no aparelho.
 
-### Em aberto (decisão do dono)
-Taxa na FALTA: `authorize()` fixa `application_fee_amount` = % do valor TOTAL
-do serviço, e `capture()` parcial não passa `application_fee_amount`. Pela
-doc do Stripe a taxa só muda se for informada na captura — ou seja, numa
-falta de R$ 30 em serviço de R$ 120, a plataforma provavelmente fica com R$ 12
-(Free) em vez de R$ 3. Confirmar no Dashboard (Application fee da cobrança) e
-decidir se a taxa da falta deve ser % do valor capturado. A conta do resumo
-usa a regra ATUAL; se mudar, ajustar `base_taxa` em `plano_resumo`.
+### Resolvido (12/10/2026): taxa na FALTA proporcional ao valor cobrado
+O `application_fee_amount` é fixado no authorize sobre o valor TOTAL do
+serviço e o Stripe não o recalcula numa captura parcial (só muda se for
+informado na captura). Numa falta de R$ 30 em serviço de R$ 120 a plataforma
+ficaria com R$ 12 (Free) em vez de R$ 3.
+- `StripeGateway.capture(..., fee_bps=None)`: em captura PARCIAL lê o
+  PaymentIntent e manda `application_fee_amount = valor_capturado * fee_bps //
+  10_000`. Captura total não muda (mantém a taxa do authorize). Cobrança SEM
+  repasse (sem `application_fee_amount` no PI) não manda nada (daria erro).
+- O percentual vem de `fee_bps`, gravado em TODA reserva no momento da criação
+  (plano da época — mudar de plano nunca afeta reservas feitas). Reserva antiga,
+  sem esse campo, usa a proporção da taxa já fixada no PI.
+- `plano_resumo`: base da taxa = valor EFETIVAMENTE cobrado (serviço inteiro no
+  atendimento, só a taxa de falta na falta).
+- Testes: `tests/test_taxa_falta.py` (+ ajustes em test_planos_resumo.py) — 45
+  testes offline no total; mutação conferida (desligar cada parte derruba o
+  teste certo).
+- ⚠️ Só dá pra VER isso no Dashboard do Stripe quando a conta conectada do
+  profissional estiver liberada (`connect_ready`): enquanto ela estiver
+  restrita as reservas nascem sem repasse e, portanto, sem taxa nenhuma.

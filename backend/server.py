@@ -1315,9 +1315,10 @@ async def plano_resumo(authorization: Optional[str] = Header(default=None)):
     esse mesmo movimento — mais o que o app recuperou em faltas.
 
     Base de cálculo = agendamentos já COBRADOS (compareceu → capturado_total,
-    falta → capturado_taxa). A taxa de cada um incide sobre o valor do
-    serviço (`valor_total_centavos`), que é como ela é calculada na cobrança
-    (ver authorize em stripe_gateway.py)."""
+    falta → capturado_taxa). A taxa de cada um incide sobre o valor
+    EFETIVAMENTE cobrado (`valor_capturado_centavos`): o serviço inteiro no
+    atendimento, só a taxa de falta na falta — ver
+    StripeGateway._taxa_na_captura."""
     doc = await _current_user(authorization)
     await _require_role(doc, "profissional")
     moeda = doc.get("moeda") or DEFAULT_MOEDA
@@ -1338,7 +1339,10 @@ async def plano_resumo(authorization: Optional[str] = Header(default=None)):
 
     atendimentos = [i for i in itens if i.get("hold_status") == "capturado_total"]
     faltas = [i for i in itens if i.get("hold_status") == "capturado_taxa"]
-    valores = [int(i.get("valor_total_centavos") or 0) for i in itens]
+    # A taxa incide sobre o valor REALMENTE cobrado: o serviço inteiro no
+    # atendimento, só a taxa de falta na falta (ver StripeGateway._taxa_na_captura).
+    valores = [int(i.get("valor_capturado_centavos") or i.get("valor_total_centavos") or 0) for i in atendimentos]
+    valores += [int(i.get("valor_capturado_centavos") or 0) for i in faltas]
 
     comparacao_ok = moeda == "BRL"
     linhas = calcular_comparacao_planos(valores, plano_atual) if comparacao_ok else []
@@ -1650,6 +1654,10 @@ async def criar_agendamento(request: Request, payload: AgendamentoCreate, author
         "janela_confirmacao_expira_em": horario_fim + timedelta(hours=24),
         "valor_capturado_centavos": 0,
         "connect_destination": destination,
+        # Percentual de taxa vigente NA ÉPOCA da reserva (plano de então). A
+        # captura da falta usa este valor — mudar de plano depois não altera
+        # reservas já feitas.
+        "fee_bps": _fee_bps_for(prof),
         "criado_em": _now(),
         "push_pergunta_enviada_em": None,
         "push_urgencia_enviada_em": None,
@@ -1752,6 +1760,10 @@ async def criar_agendamento_publico_cartao(request: Request, payload: Agendament
         "janela_confirmacao_expira_em": horario_fim + timedelta(hours=24),
         "valor_capturado_centavos": 0,
         "connect_destination": destination,
+        # Percentual de taxa vigente NA ÉPOCA da reserva (plano de então). A
+        # captura da falta usa este valor — mudar de plano depois não altera
+        # reservas já feitas.
+        "fee_bps": _fee_bps_for(prof),
         "origem": "link_publico",
         "criado_em": _now(),
         "push_pergunta_enviada_em": None,
@@ -1835,6 +1847,10 @@ async def criar_agendamento_publico_pix(request: Request, payload: AgendamentoPu
         "janela_confirmacao_expira_em": horario_fim + timedelta(hours=24),
         "valor_capturado_centavos": 0,
         "connect_destination": destination,
+        # Percentual de taxa vigente NA ÉPOCA da reserva (plano de então). A
+        # captura da falta usa este valor — mudar de plano depois não altera
+        # reservas já feitas.
+        "fee_bps": _fee_bps_for(prof),
         "metodo_pagamento": "pix",
         "origem": "link_publico",
         "criado_em": _now(),
@@ -1942,6 +1958,9 @@ async def confirmar(
             cap = await gateway.capture(
                 ag["payment_intent_id"], amount_to_capture=ag["valor_no_show_centavos"],
                 idempotency_key=f"capture_{agendamento_id}_noshow",
+                # Taxa proporcional ao que foi de fato cobrado (ver
+                # StripeGateway._taxa_na_captura), não ao valor total do serviço.
+                fee_bps=ag.get("fee_bps"),
             )
             update = {"status_confirmacao": "nao_compareceu", "hold_status": "capturado_taxa",
                       "valor_capturado_centavos": cap["amount_received"]}
