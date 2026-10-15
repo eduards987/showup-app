@@ -61,3 +61,21 @@ def is_device_not_registered(ticket: dict) -> bool:
     delete it so we stop wasting sends on it."""
     details = ticket.get("details") or {}
     return ticket.get("status") == "error" and details.get("error") == "DeviceNotRegistered"
+
+
+async def push_para_usuario(db, user_id: str, title: str, body: str, data: dict) -> None:
+    """Envia push pro dispositivo registrado do usuário (nada a fazer se não há
+    token). Token morto (app desinstalado, permissão revogada) é apagado pra não
+    continuar gastando chamadas à Expo. Nunca levanta: push é "melhor esforço"."""
+    import logging
+
+    token_doc = await db.device_tokens.find_one({"user_id": user_id}, {"_id": 0})
+    if not token_doc:
+        return
+    try:
+        ticket = await send_push(token_doc["expo_push_token"], title, body, data)
+    except Exception:
+        logging.getLogger(__name__).exception("Falha de rede ao enviar push p/ %s", user_id)
+        return
+    if is_device_not_registered(ticket):
+        await db.device_tokens.delete_one({"user_id": user_id})

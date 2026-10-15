@@ -421,12 +421,37 @@ class StripeGateway:
         return link.url
 
     async def account_status(self, account_id: str) -> dict:
+        """Estado da conta conectada + o que o Stripe está pedindo. Os campos de
+        `requirements` explicam POR QUE uma conta está restrita — sem isso o app
+        só consegue dizer "não conectada"."""
         acct = stripe.Account.retrieve(account_id)
+        req = getattr(acct, "requirements", None)
         return {
             "details_submitted": acct.details_submitted,
             "charges_enabled": acct.charges_enabled,
             "payouts_enabled": acct.payouts_enabled,
+            "pendencias": list(getattr(req, "currently_due", None) or []) if req else [],
+            "vencidas": list(getattr(req, "past_due", None) or []) if req else [],
+            "em_verificacao": list(getattr(req, "pending_verification", None) or []) if req else [],
+            "motivo_bloqueio": getattr(req, "disabled_reason", None) if req else None,
         }
+
+    async def create_login_link(self, account_id: str) -> str:
+        """Link de uso único pro painel Express do Stripe — é lá que aparecem as
+        "Tasks" (informações adicionais, revisão de risco) que o onboarding
+        não cobre. Só funciona depois que a conta concluiu o cadastro."""
+        try:
+            return stripe.Account.create_login_link(account_id).url
+        except stripe.error.StripeError as e:
+            raise _translate_stripe_error(e) from e
+
+    async def delete_customer(self, customer_id: str) -> None:
+        """Apaga o Customer no Stripe (exclusão de conta/LGPD). Também cancela as
+        assinaturas dele. Já apagado/inexistente não é erro."""
+        try:
+            stripe.Customer.delete(customer_id)
+        except stripe.error.InvalidRequestError as e:
+            log.warning("delete_customer: já apagado/inexistente (%s): %s", customer_id, e)
 
     # ------------------------------------------------------------------
     # Assinatura de plano (o profissional paga A PLATAFORMA, ao contrário

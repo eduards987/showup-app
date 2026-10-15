@@ -2679,3 +2679,37 @@ ficaria com R$ 12 (Free) em vez de R$ 3.
 - ⚠️ Só dá pra VER isso no Dashboard do Stripe quando a conta conectada do
   profissional estiver liberada (`connect_ready`): enquanto ela estiver
   restrita as reservas nascem sem repasse e, portanto, sem taxa nenhuma.
+
+## Preparação para o lançamento (13–15/10/2026)
+
+Guias em `lancamento/`: `LANCAMENTO.md` (checklist em ordem, com quem faz), `PLAY-STORE.md` (ficha, respostas
+de segurança de dados, acesso do revisor), `CHAVES-PRODUCAO.md` (troca teste→produção, webhooks),
+`TESTADORES.md` (teste fechado de 12 pessoas × 14 dias) e `preencher-site.py`.
+
+### Código novo
+- **Connect**: `GET /me/connect` devolve `estado` (nao_conectada | pendente_informacoes | em_analise | restrita |
+  recusada | ativa | indisponivel) + `pendencias` + `motivo_bloqueio`; `POST /me/connect/painel` abre o painel
+  Express (onde ficam as "Tasks" do Stripe). App: `src/lib/connect-estado.ts` (lógica pura, testada em node) +
+  `src/components/connect-card.tsx`. Job de 10 min reconsulta contas pendentes.
+- **`EXIGIR_RECEBIMENTO_ATIVO`** (default 0; ligar em produção): sem conta do Stripe liberada não dá pra agendar
+  (3 rotas de reserva) e `GET /profissionais/{id}` devolve `aceita_agendamentos=false` (página pública e app avisam).
+- **`PLANOS_COMPRA_HABILITADA`** (default 1; **0 pro 1º lançamento no Play**): planos pagos viram "em breve",
+  assinatura/teste grátis recusados (403), quem já assina continua e pode cancelar. Motivo: o Play costuma exigir
+  a cobrança dele pra vender acesso a funções do app; não consegui confirmar a regra vigente no Brasil.
+- **Cobrança do plano**: webhook `past_due` marca `plano_cobranca_pendente` + push (uma vez); `trial_will_end`
+  avisa por push; banner na tela de planos.
+- **Exclusão de conta**: cancela assinatura ANTES (503 se falhar, não exclui), apaga device_tokens, customer_cards e
+  os Customers do Stripe. Botão movido para o **Perfil** (todos os papéis) — antes só o profissional tinha.
+- **Bug de produção corrigido no webhook**: o evento do Stripe não é dict (stripe-python novo) e os tratadores
+  usam `.get()` → AttributeError. `_como_dict()` converte na entrada. Webhook agora aceita 2 segredos
+  (`STRIPE_WEBHOOK_SECRET` + `STRIPE_CONNECT_WEBHOOK_SECRET`).
+- **Site**: `termos.html`, `excluir-conta.html`, `privacidade.html` atualizada, rodapé legal e aviso de
+  "não aceita agendamentos" no `agendar.html`. Campos `{{RESPONSAVEL}}`, `{{DOCUMENTO}}`, `{{EMAIL_CONTATO}}`
+  ficam em branco até `preencher-site.py`, que também bloqueia publicar com campo vazio ou link quebrado.
+- **Testes**: `backend/tests/offline_env.py` dá variáveis FALSAS (sem isso o server não importa sem `.env`).
+  CI em `.github/workflows/tests.yml` (97 testes offline; simulado com `env -i` numa cópia sem `.env`).
+
+### Lições
+- Pacotes antigos levavam `backend/.env` e `frontend/.env` — `empacotar` agora exclui `.env`, `*.pem`, `*.key`.
+- Testes que chamam tratadores com dict comum escondem bugs de objeto do Stripe: passar pelo caminho real
+  (assinatura → `construct_event`).

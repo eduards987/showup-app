@@ -6,6 +6,7 @@ import { Redirect } from "expo-router";
 import { useState } from "react";
 import {
   ActivityIndicator,
+  Linking,
   Pressable,
   StyleSheet,
   Text,
@@ -14,6 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/src/lib/auth";
+import { URL_PRIVACIDADE, URL_TERMOS } from "@/src/lib/legal";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 const WELCOME_BG =
@@ -91,6 +93,7 @@ const useStyles = makeStyles((colors) => ({
     textAlign: "center",
     lineHeight: 18,
   },
+  legalLink: { textDecorationLine: "underline", color: colors.onSurface },
 }));
 
 export default function Welcome() {
@@ -156,8 +159,15 @@ export default function Welcome() {
           )}
         </Pressable>
         <Text style={styles.legal}>
-          Ao continuar você concorda com os termos de uso e política de
-          privacidade.
+          Ao continuar você concorda com os{" "}
+          <Text testID="link-termos" style={styles.legalLink} onPress={() => Linking.openURL(URL_TERMOS)}>
+            termos de uso
+          </Text>{" "}
+          e a{" "}
+          <Text testID="link-privacidade" style={styles.legalLink} onPress={() => Linking.openURL(URL_PRIVACIDADE)}>
+            política de privacidade
+          </Text>
+          .
         </Text>
       </View>
     </View>

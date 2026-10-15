@@ -7,6 +7,7 @@ import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
   ActivityIndicator,
+  Linking,
   Pressable,
   ScrollView,
   Share,
@@ -16,8 +17,10 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { CardSetupButton } from "@/src/components/card-setup-button";
+import { ExcluirContaCard } from "@/src/components/excluir-conta";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
+import { URL_PRIVACIDADE, URL_TERMOS } from "@/src/lib/legal";
 import { CardInfo } from "@/src/lib/types";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
@@ -304,6 +307,22 @@ export default function Perfil() {
           </>
         ) : null}
 
+        <Text style={styles.sectionTitle}>SOBRE</Text>
+        <Pressable testID="abrir-termos" onPress={() => Linking.openURL(URL_TERMOS)} style={styles.card}>
+          <View style={styles.cardRow}>
+            <Ionicons name="document-text-outline" size={20} color={colors.brandPrimary} />
+            <Text style={styles.cardLabel}>Termos de uso</Text>
+            <Ionicons name="open-outline" size={18} color={colors.muted} />
+          </View>
+        </Pressable>
+        <Pressable testID="abrir-privacidade" onPress={() => Linking.openURL(URL_PRIVACIDADE)} style={styles.card}>
+          <View style={styles.cardRow}>
+            <Ionicons name="shield-checkmark-outline" size={20} color={colors.brandPrimary} />
+            <Text style={styles.cardLabel}>Política de privacidade</Text>
+            <Ionicons name="open-outline" size={18} color={colors.muted} />
+          </View>
+        </Pressable>
+
         <Pressable
           testID="logout-button"
           onPress={auth.signOut}
@@ -311,6 +330,9 @@ export default function Perfil() {
         >
           <Text style={styles.logoutText}>Sair</Text>
         </Pressable>
+
+        <Text style={styles.sectionTitle}>ZONA DE PERIGO</Text>
+        <ExcluirContaCard />
       </ScrollView>
     </View>
   );

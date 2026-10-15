@@ -158,6 +158,8 @@
   .summary-row.note { font-size: 13px; color: var(--ink-soft); }
   .error-note { color: var(--error); font-size: 14px; margin-top: 10px; }
   .hidden { display: none !important; }
+  .legal { font-size: 12px; color: var(--ink-soft); text-align: center; margin: 22px 0 0; line-height: 1.5; }
+  .legal a { color: inherit; }
   .back-link { background: none; border: none; color: var(--ink-soft); font-family: inherit; font-size: 14px; cursor: pointer; padding: 0 0 14px; }
 </style>
 </head>
@@ -184,6 +186,13 @@
     </div>
 
     <!-- Step 1: serviço -->
+    <!-- Profissional que ainda não habilitou os recebimentos (o servidor recusaria
+         a reserva só no fim): avisa já na entrada, antes de o cliente escolher
+         horário e digitar o cartão. -->
+    <section id="stepIndisponivel" class="card hidden">
+      <p style="margin:0; font-size:15px;">Este profissional ainda não está recebendo agendamentos pelo ShowUp. Tente de novo mais tarde.</p>
+    </section>
+
     <section id="step1" class="card">
       <p class="card-label">1 · Escolha o serviço</p>
       <div id="servicosList"></div>
@@ -267,6 +276,9 @@
   </div>
 
   <div id="erroGeral" class="error-note hidden"></div>
+
+  <p class="legal">Ao agendar, você concorda com os <a href="/termos">Termos de Uso</a> e a
+  <a href="/privacidade">Política de Privacidade</a>.</p>
 </div>
 
 <script>
@@ -341,6 +353,12 @@
       renderServicos(data.servicos.filter((s) => s.ativo));
       document.getElementById("loadingProf").classList.add("hidden");
       document.getElementById("app").classList.remove("hidden");
+      if (data.aceita_agendamentos === false) {
+        [1, 2, 3, 4].forEach((i) => document.getElementById("step" + i).classList.add("hidden"));
+        document.querySelector(".steps").classList.add("hidden");
+        document.getElementById("stepIndisponivel").classList.remove("hidden");
+        return;
+      }
       showStep(1);
     } catch (e) {
       document.getElementById("loadingProf").classList.add("hidden");

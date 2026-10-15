@@ -18,10 +18,16 @@ import os
 import stripe
 from fastapi import APIRouter, Request, Response
 
+from expo_push import push_para_usuario
+
 log = logging.getLogger("webhooks")
 router = APIRouter(prefix="/api/webhooks")
 
 _WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+# O endpoint de Connect ("escutar eventos em contas conectadas", que traz o
+# account.updated dos profissionais) é OUTRO endpoint no Stripe e tem o SEU
+# próprio segredo. Opcional: sem ele, só o endpoint da plataforma é aceito.
+_CONNECT_WEBHOOK_SECRET = os.environ.get("STRIPE_CONNECT_WEBHOOK_SECRET", "")
 
 
 def _get_db():
@@ -30,27 +36,44 @@ def _get_db():
     return db
 
 
+def _como_dict(obj):
+    """O objeto do evento NÃO é um dict nas versões novas do stripe-python (o
+    `.get()` dele levanta AttributeError) e todos os tratadores abaixo usam
+    `.get()`. Converte uma vez, na entrada. Em versões antigas (que ainda são
+    dict) devolve o próprio objeto."""
+    para_dict = getattr(obj, "to_dict", None)
+    return para_dict() if callable(para_dict) else obj
+
+
 @router.post("/stripe")
 async def stripe_webhook(request: Request):
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature", "")
 
-    if not _WEBHOOK_SECRET:
+    segredos = [s for s in (_WEBHOOK_SECRET, _CONNECT_WEBHOOK_SECRET) if s]
+    if not segredos:
         log.error("STRIPE_WEBHOOK_SECRET ausente — recusando webhook por segurança")
         return Response(status_code=500)
 
-    try:
-        event = stripe.Webhook.construct_event(payload, sig_header, _WEBHOOK_SECRET)
-    except ValueError:
-        log.warning("Webhook payload inválido")
-        return Response(status_code=400)
-    except stripe.error.SignatureVerificationError:
+    # Aceita se a assinatura bater com QUALQUER um dos segredos configurados
+    # (plataforma ou Connect); se não bater com nenhum, é tentativa de forjar.
+    event = None
+    for segredo in segredos:
+        try:
+            event = stripe.Webhook.construct_event(payload, sig_header, segredo)
+            break
+        except ValueError:
+            log.warning("Webhook payload inválido")
+            return Response(status_code=400)
+        except stripe.error.SignatureVerificationError:
+            continue
+    if event is None:
         # Someone tried to call this endpoint without a valid Stripe signature.
         log.warning("Assinatura de webhook inválida — possível tentativa de forjar evento")
         return Response(status_code=400)
 
     db = _get_db()
-    obj = event["data"]["object"]
+    obj = _como_dict(event["data"]["object"])
     event_type = event["type"]
 
     # Idempotency: Stripe may deliver the same event more than once. We keep a
@@ -72,6 +95,8 @@ async def stripe_webhook(request: Request):
         await _handle_pix_succeeded(db, obj)
     elif event_type in ("customer.subscription.deleted", "customer.subscription.updated"):
         await _handle_subscription_change(db, obj)
+    elif event_type == "customer.subscription.trial_will_end":
+        await _handle_trial_will_end(db, obj)
     else:
         log.info("Evento não tratado (ignorado de propósito): %s", event_type)
 
@@ -155,6 +180,44 @@ async def _handle_subscription_change(db, subscription: dict) -> None:
     if status in ("canceled", "unpaid", "incomplete_expired"):
         await db.users.update_one(
             {"stripe_subscription_id": subscription["id"]},
-            {"$set": {"plano": "free"}, "$unset": {"stripe_subscription_id": ""}},
+            {
+                "$set": {"plano": "free"},
+                "$unset": {"stripe_subscription_id": "", "plano_cobranca_pendente": "", "plano_trial_termina_em": ""},
+            },
         )
         log.info("Assinatura %s -> %s, revertido pro plano free", subscription["id"], status)
+    elif status == "past_due":
+        # A cobrança do plano falhou (fim do teste grátis ou renovação). O Stripe
+        # tenta de novo por um tempo antes de desistir; até lá o profissional
+        # mantém o plano, mas precisa saber. `find_one_and_update` devolve o
+        # documento ANTES da mudança só se ainda não estava marcado, então o
+        # aviso sai uma vez só, mesmo com o Stripe reenviando o evento.
+        user = await db.users.find_one_and_update(
+            {"stripe_subscription_id": subscription["id"], "plano_cobranca_pendente": {"$ne": True}},
+            {"$set": {"plano_cobranca_pendente": True}},
+        )
+        if user:
+            await push_para_usuario(
+                db, user["user_id"], "Não conseguimos cobrar o seu plano",
+                "O Stripe não conseguiu cobrar o cartão. Abra o app e confira seu plano para não perder a taxa reduzida.",
+                {"tipo": "cobranca_plano_falhou"},
+            )
+    elif status in ("active", "trialing"):
+        await db.users.update_one(
+            {"stripe_subscription_id": subscription["id"]},
+            {"$unset": {"plano_cobranca_pendente": ""}},
+        )
+
+
+async def _handle_trial_will_end(db, subscription: dict) -> None:
+    """O Stripe manda este evento ~3 dias antes do fim do teste grátis. Avisa o
+    profissional ANTES de a cobrança acontecer — cobrar sem aviso é o que mais
+    gera estorno e reclamação em teste grátis."""
+    user = await db.users.find_one({"stripe_subscription_id": subscription["id"]}, {"_id": 0, "user_id": 1})
+    if not user:
+        return
+    await push_para_usuario(
+        db, user["user_id"], "Seu teste grátis está acabando",
+        "Em 3 dias o plano passa a ser cobrado no cartão salvo. Se não quiser continuar, cancele no app antes disso.",
+        {"tipo": "trial_will_end"},
+    )

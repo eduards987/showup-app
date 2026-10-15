@@ -30,6 +30,9 @@ export type ProfissionalDetail = {
   categorias: string[];
   timezone: string;
   servicos: Servico[];
+  // false quando o profissional ainda não habilitou os recebimentos (e o servidor
+  // exige isso) — o app avisa em vez de deixar o cliente tentar agendar.
+  aceita_agendamentos?: boolean;
 };
 
 export type Agendamento = {

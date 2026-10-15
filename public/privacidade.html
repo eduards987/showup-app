@@ -41,12 +41,13 @@
   .contact {
     margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--line);
   }
+  .nav { margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 13px; color: var(--ink-soft); }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Política de Privacidade</h1>
-  <p class="updated">Última atualização: 21 de setembro de 2026</p>
+  <p class="updated">Última atualização: 13 de outubro de 2026</p>
 
   <p>Esta política explica quais dados o <strong>ShowUp</strong> coleta, por que
   coleta, e quais direitos você tem sobre eles. Escrevemos isso pra ser
@@ -54,7 +55,9 @@
 
   <h2>Quem somos</h2>
   <p>O ShowUp é um aplicativo de agendamento com proteção contra no-show
-  pra profissionais autônomos e seus clientes. Se você tiver qualquer
+  pra profissionais autônomos e seus clientes. O responsável pelo
+  tratamento dos seus dados (controlador, na LGPD) é
+  <strong>{{RESPONSAVEL}}</strong> ({{DOCUMENTO}}). Se você tiver qualquer
   dúvida sobre esta política, pode falar com a gente pelo contato no
   final desta página.</p>
 
@@ -122,17 +125,25 @@
   </ul>
   <div class="box">
     <strong>Excluir sua conta:</strong> você pode fazer isso direto pelo
-    app, em Perfil &gt; Configurações &gt; Excluir minha conta — sem
-    precisar entrar em contato com ninguém.
+    app, em Perfil &gt; Excluir minha conta — sem precisar entrar em
+    contato com ninguém. Veja os detalhes em
+    <a href="/excluir-conta">Excluir conta e dados</a>. Se você agendou
+    por um link e não tem o app, escreva pra
+    <a href="mailto:{{EMAIL_CONTATO}}">{{EMAIL_CONTATO}}</a>.
   </div>
 
   <h2>Por quanto tempo guardamos seus dados</h2>
   <p>Guardamos seus dados enquanto sua conta estiver ativa. Se você
   excluir sua conta, removemos ou anonimizamos seus dados pessoais
-  (nome, e-mail, telefone, foto) imediatamente — com uma exceção:
-  registros financeiros de agendamentos já realizados (valores, datas,
-  taxas) podem ser mantidos por obrigação legal e fiscal, mas
-  desvinculados da sua identidade sempre que possível.</p>
+  (nome, e-mail, telefone, foto), o cartão salvo e o token de
+  notificações imediatamente, apagamos seu cadastro de pagamentos no
+  Stripe e cancelamos qualquer plano pago ou teste grátis — com uma
+  exceção: registros financeiros de agendamentos já realizados
+  (valores, datas, taxas) podem ser mantidos por obrigação legal e
+  fiscal, mas desvinculados da sua identidade sempre que possível. Os
+  dados que o próprio Stripe mantém (pagamentos e, para profissionais,
+  a verificação de identidade) seguem a política do Stripe e a
+  legislação financeira.</p>
 
   <h2>Segurança</h2>
   <p>Usamos conexão criptografada (HTTPS) em toda comunicação entre o
@@ -151,8 +162,9 @@
     <h2>Contato</h2>
     <p>Dúvidas sobre privacidade, ou quer exercer algum dos seus
     direitos diretamente com a gente? Escreve pra
-    <a href="mailto:privacidade@showup.app">privacidade@showup.app</a>.</p>
+    <a href="mailto:{{EMAIL_CONTATO}}">{{EMAIL_CONTATO}}</a>.</p>
   </div>
+  <p class="nav"><a href="/termos">Termos de Uso</a> · <a href="/privacidade">Política de Privacidade</a> · <a href="/excluir-conta">Excluir conta e dados</a></p>
 </div>
 </body>
 </html>

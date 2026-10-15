@@ -53,6 +53,11 @@ type Resumo = {
   trial_disponivel: boolean;
   trial_dias: number;
   trial_termina_em: string | null;
+  // O Stripe não conseguiu cobrar a mensalidade do plano atual.
+  cobranca_pendente: boolean;
+  // false quando a compra de planos pagos está desligada no servidor: some a
+  // comparação e o teste grátis; fica só o que o app já fez pelo profissional.
+  compra_habilitada: boolean;
 };
 
 type SubscriptionIntent = {
@@ -68,8 +73,9 @@ type SubscriptionIntent = {
 
 // Texto de cada plano. Sem a conta do backend (carregando, ou outra moeda) cai
 // numa frase que não promete número nenhum; com ela, o ponto de equilíbrio real.
-function descricaoPlano(p: Plano, comp: Comparacao | undefined, moeda: string): string {
+function descricaoPlano(p: Plano, comp: Comparacao | undefined, moeda: string, compraHabilitada: boolean): string {
   if (p.id === "free") return "Sem mensalidade. Você paga só a taxa por agendamento.";
+  if (!compraHabilitada) return "Taxa reduzida por agendamento. Chega em breve.";
   const vsFree = comp?.equilibrio_vs_free_centavos;
   if (!vsFree) {
     return p.id === "ultra"
@@ -155,6 +161,7 @@ const useStyles = makeStyles((c) => ({
   veredito: { fontSize: 14, color: c.brandPrimary, fontWeight: "700", marginTop: spacing.sm },
   nota: { fontSize: 12, color: c.muted, marginTop: spacing.sm },
   trialInfo: { fontSize: 12, color: c.muted, marginTop: spacing.xs, textAlign: "center" },
+  cobrancaPendente: { fontSize: 13, color: c.error, fontWeight: "600", marginTop: spacing.xs, lineHeight: 18 },
   trialAtivo: { fontSize: 13, color: c.brandPrimary, fontWeight: "700", marginTop: spacing.xs },
   emBreve: { fontSize: 12, color: c.muted, fontStyle: "italic", marginTop: spacing.sm, textAlign: "center" },
   errorText: { color: c.onError, fontSize: 13, marginTop: spacing.sm },
@@ -269,7 +276,7 @@ export default function Planos() {
               {resumo.atendimentos_cobrados === 0 && resumo.faltas_cobradas_qtd === 0 ? (
                 <Text style={styles.resumoLinha}>
                   Ainda não há atendimentos cobrados pelo app nesse período.
-                  {resumo.comparacao_disponivel
+                  {resumo.comparacao_disponivel && resumo.compra_habilitada
                     ? " Quando houver, mostramos aqui quanto você pagaria em cada plano."
                     : ""}
                 </Text>
@@ -288,7 +295,7 @@ export default function Planos() {
                 </>
               )}
 
-              {resumo.comparacao_disponivel && resumo.base_taxa_centavos > 0 ? (
+              {resumo.comparacao_disponivel && resumo.compra_habilitada && resumo.base_taxa_centavos > 0 ? (
                 <>
                   <Text style={styles.resumoSub}>Quanto você pagaria (taxa + mensalidade)</Text>
                   {resumo.comparacao.map((c) => (
@@ -355,7 +362,14 @@ export default function Planos() {
                   {p.preco_centavos > 0 ? <Text style={styles.precoSufixo}> /mês</Text> : null}
                 </Text>
                 <Text style={styles.taxa}>{p.fee_percent}% por agendamento</Text>
-                <Text style={styles.descricao}>{descricaoPlano(p, comparacaoDe(p.id), moeda)}</Text>
+                <Text style={styles.descricao}>{descricaoPlano(p, comparacaoDe(p.id), moeda, resumo?.compra_habilitada !== false)}</Text>
+
+                {isAtual && !isFree && resumo?.cobranca_pendente ? (
+                  <Text style={styles.cobrancaPendente} testID="cobranca-pendente">
+                    O Stripe não conseguiu cobrar a mensalidade do seu plano. Se o problema continuar, o plano volta
+                    para o Free. Para trocar o cartão, cancele o plano e assine de novo.
+                  </Text>
+                ) : null}
 
                 {emTeste && resumo?.trial_termina_em ? (
                   <Text style={styles.trialAtivo} testID="trial-ativo">

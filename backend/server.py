@@ -53,7 +53,7 @@ load_dotenv(ROOT_DIR / ".env")
 from security import require_service_token
 from payment_errors import CardDeclinedError, GatewayUnavailableError, InvalidPaymentRequestError, PaymentError
 from webhooks import router as webhooks_router
-from expo_push import is_device_not_registered, send_push
+from expo_push import is_device_not_registered, push_para_usuario, send_push
 
 mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
@@ -160,6 +160,18 @@ PLANOS = {
 DEFAULT_PLANO = "free"
 TRIAL_DIAS = 14  # teste grátis do plano pago — uma vez por profissional
 RESUMO_JANELA_DIAS = 30  # janela da conta "quanto você pagaria em cada plano"
+# Trava de segurança do dinheiro: com "1", só dá pra agendar com profissional que
+# já tem a conta conectada do Stripe LIBERADA (repasse automático). Sem ela, o
+# valor cobrado fica na conta da plataforma e o repasse vira acerto manual
+# ("ledger interno"). Ligar em PRODUÇÃO; em teste pode ficar desligado.
+EXIGIR_RECEBIMENTO_ATIVO = os.environ.get("EXIGIR_RECEBIMENTO_ATIVO", "0") == "1"
+# Interruptor da COMPRA de planos pagos (e do teste grátis) dentro do app. O Google
+# Play costuma exigir o sistema de cobrança dele pra vender acesso a funções do
+# app, e aqui a assinatura é paga pelo Stripe. Com "0": os planos pagos aparecem
+# como "em breve", a assinatura é recusada e quem já assina continua assinando
+# (e pode cancelar). Tudo continua no código — é só religar com "1". Ver
+# lancamento/LANCAMENTO.md antes de decidir.
+PLANOS_COMPRA_HABILITADA = os.environ.get("PLANOS_COMPRA_HABILITADA", "1") == "1"
 PIX_RESERVA_MINUTOS = 20  # tempo que um agendamento via Pix fica reservado esperando pagamento antes de liberar o horário sozinho
 
 
@@ -174,7 +186,9 @@ def _fee_bps_for(profissional_doc: Optional[dict]) -> int:
 def _plano_disponivel(p: dict) -> bool:
     """Só é "comprável" de verdade se o Price ID real já foi configurado no
     .env — evita o app oferecer um plano que quebraria no clique."""
-    return p["price_env"] is None or bool(os.environ.get(p["price_env"]))
+    if p["price_env"] is None:
+        return True   # o Free sempre existe
+    return PLANOS_COMPRA_HABILITADA and bool(os.environ.get(p["price_env"]))
 
 
 def _teto_div(a: int, b: int) -> int:
@@ -353,6 +367,10 @@ class ProfissionalDetail(BaseModel):
     categorias: list[str] = []
     timezone: str = DEFAULT_TIMEZONE
     servicos: list[Servico]
+    # False quando EXIGIR_RECEBIMENTO_ATIVO está ligado e o profissional ainda
+    # não habilitou o recebimento — a página pública avisa em vez de deixar o
+    # cliente ir até o pagamento pra só então recusar.
+    aceita_agendamentos: bool = True
 
 
 class AgendamentoCreate(BaseModel):
@@ -486,6 +504,11 @@ class ConnectStatus(BaseModel):
     charges_enabled: bool = False
     payouts_enabled: bool = False
     details_submitted: bool = False
+    # nao_conectada | pendente_informacoes | em_analise | restrita | recusada | ativa
+    # | indisponivel (tem conta, mas não deu pra consultar o Stripe agora)
+    estado: str = "nao_conectada"
+    pendencias: list[str] = []
+    motivo_bloqueio: Optional[str] = None
 
 
 class ConnectLink(BaseModel):
@@ -544,6 +567,11 @@ class PlanoResumoResponse(BaseModel):
     trial_disponivel: bool
     trial_dias: int
     trial_termina_em: Optional[datetime] = None
+    # True quando o Stripe não conseguiu cobrar a mensalidade (past_due).
+    cobranca_pendente: bool = False
+    # False quando a compra de planos pagos está desligada (PLANOS_COMPRA_HABILITADA):
+    # o app esconde a comparação e o teste grátis e mostra só o que o app já recuperou.
+    compra_habilitada: bool = True
 
 
 class ConfirmPlanoRequest(BaseModel):
@@ -826,6 +854,23 @@ async def excluir_conta(request: Request, authorization: Optional[str] = Header(
             "terminarem antes de excluir sua conta.",
         )
 
+    # Cobrança que seguiria rolando sem dono: o código abaixo desvincula o
+    # cliente do Stripe, então quem excluísse a conta com plano pago (ou teste
+    # grátis) continuaria sendo cobrado sem ter como cancelar. Cancela ANTES e,
+    # se não conseguir, NÃO exclui — melhor pedir pra tentar de novo.
+    if GATEWAY_KIND == "stripe":
+        assinaturas = {doc.get("stripe_subscription_id"), (doc.get("plano_pendente") or {}).get("subscription_id")}
+        for sub_id in assinaturas - {None, ""}:
+            try:
+                await gateway.cancel_subscription(sub_id)
+            except Exception:
+                logging.exception("exclusão de conta: falha ao cancelar a assinatura %s", sub_id)
+                raise HTTPException(
+                    503,
+                    "Não conseguimos cancelar a cobrança do seu plano agora. "
+                    "Tente de novo em instantes — sua conta não foi excluída.",
+                )
+
     await db.users.update_one(
         {"user_id": user_id},
         {"$set": {
@@ -833,10 +878,29 @@ async def excluir_conta(request: Request, authorization: Optional[str] = Header(
             "email": f"deleted_{user_id}@showup.excluido",
             "picture": None,
             "telefone": None,
+            "plano": DEFAULT_PLANO,
             "deleted_at": _now(),
-        }, "$unset": {"stripe_customer_id": "", "stripe_billing_customer_id": "", "stripe_account_id": ""}},
+        }, "$unset": {
+            "stripe_customer_id": "", "stripe_billing_customer_id": "", "stripe_account_id": "",
+            "stripe_subscription_id": "", "plano_pendente": "", "plano_trial_termina_em": "",
+            "plano_cobranca_pendente": "",
+        }},
     )
     await db.user_sessions.delete_many({"user_id": user_id})
+    # Dados pessoais que não ficam no documento do usuário: token de push (senão o
+    # aparelho continuaria recebendo avisos de uma conta excluída) e o cartão salvo.
+    await db.device_tokens.delete_many({"user_id": user_id})
+    await db.customer_cards.delete_many({"user_id": user_id})
+    # No Stripe, apaga os Customers (melhor esforço — não trava a exclusão). Os
+    # registros de transação ficam lá por obrigação legal; a conta conectada do
+    # profissional (verificação de identidade) segue a política do próprio Stripe.
+    if GATEWAY_KIND == "stripe":
+        for customer_id in (doc.get("stripe_customer_id"), doc.get("stripe_billing_customer_id")):
+            if customer_id:
+                try:
+                    await gateway.delete_customer(customer_id)
+                except Exception:
+                    logging.warning("exclusão de conta: não consegui apagar o customer %s no Stripe", customer_id)
     return {"ok": True}
 
 
@@ -1085,6 +1149,9 @@ async def detalhe_profissional(user_id: str):
         categorias=u.get("categorias", []),
         timezone=u.get("timezone") or DEFAULT_TIMEZONE,
         servicos=[Servico(**{**s, "criado_em": _aware(s["criado_em"])}) for s in servicos],
+        aceita_agendamentos=(
+            not EXIGIR_RECEBIMENTO_ATIVO or bool(u.get("connect_ready") and u.get("stripe_account_id"))
+        ),
     )
 
 
@@ -1202,11 +1269,107 @@ async def connect_status(authorization: Optional[str] = Header(default=None)):
         return ConnectStatus(account_id=acct_id)
     try:
         st = await gateway.account_status(acct_id)
-        connect_ready = bool(st.get("charges_enabled") and st.get("payouts_enabled"))
-        await db.users.update_one({"user_id": doc["user_id"]}, {"$set": {"connect_ready": connect_ready}})
-        return ConnectStatus(account_id=acct_id, **st)
     except Exception:
-        return ConnectStatus(account_id=acct_id)
+        return ConnectStatus(account_id=acct_id, estado="indisponivel")
+    connect_ready = bool(st.get("charges_enabled") and st.get("payouts_enabled"))
+    await db.users.update_one({"user_id": doc["user_id"]}, {"$set": {"connect_ready": connect_ready}})
+    return ConnectStatus(
+        account_id=acct_id,
+        charges_enabled=bool(st.get("charges_enabled")),
+        payouts_enabled=bool(st.get("payouts_enabled")),
+        details_submitted=bool(st.get("details_submitted")),
+        estado=_estado_connect(st),
+        pendencias=list(st.get("pendencias") or []) + list(st.get("vencidas") or []),
+        motivo_bloqueio=st.get("motivo_bloqueio"),
+    )
+
+
+def _estado_connect(st: dict) -> str:
+    """Traduz o que o Stripe devolve num estado que o app sabe explicar. A ordem
+    importa: o que o PROFISSIONAL pode resolver (pendências) vem antes de "em
+    análise" (só esperar)."""
+    if st.get("charges_enabled") and st.get("payouts_enabled"):
+        return "ativa"
+    motivo = st.get("motivo_bloqueio") or ""
+    if motivo.startswith("rejected"):
+        return "recusada"
+    if st.get("pendencias") or st.get("vencidas") or not st.get("details_submitted"):
+        return "pendente_informacoes"
+    if motivo in ("under_review", "requirements.pending_verification") or st.get("em_verificacao"):
+        return "em_analise"
+    return "restrita"
+
+
+@api_router.post("/me/connect/painel", response_model=ConnectLink)
+async def connect_painel(authorization: Optional[str] = Header(default=None)):
+    """Abre o painel Express do Stripe do profissional. É lá que aparecem as
+    "Tasks" que o Stripe cria depois do cadastro (informações adicionais do
+    negócio, revisão de risco) — o link de onboarding não cobre isso."""
+    doc = await _current_user(authorization)
+    await _require_role(doc, "profissional")
+    if GATEWAY_KIND != "stripe":
+        raise HTTPException(400, "Connect requer gateway Stripe real")
+    acct_id = doc.get("stripe_account_id")
+    if not acct_id:
+        raise HTTPException(409, "Conecte sua conta do Stripe primeiro.")
+    try:
+        url = await gateway.create_login_link(acct_id)
+    except InvalidPaymentRequestError:
+        raise HTTPException(409, "Conclua o cadastro no Stripe antes de abrir o painel.")
+    except PaymentError:
+        logging.exception("connect_painel falhou")
+        raise HTTPException(502, "Não foi possível abrir o painel do Stripe agora. Tente de novo.")
+    return ConnectLink(url=url)
+
+
+async def _recebimento_ativo(prof: Optional[dict]) -> bool:
+    """O profissional consegue receber (conta conectada liberada)? Usa o cache
+    `connect_ready`; se ele diz "não" mas existe conta, confere no Stripe (o
+    cache só atualiza quando o profissional abre a tela, e a conta pode ter sido
+    liberada nesse meio-tempo)."""
+    if not prof or not prof.get("stripe_account_id"):
+        return False
+    if prof.get("connect_ready"):
+        return True
+    if GATEWAY_KIND != "stripe":
+        return False
+    try:
+        st = await gateway.account_status(prof["stripe_account_id"])
+    except Exception:
+        return False
+    pronto = bool(st.get("charges_enabled") and st.get("payouts_enabled"))
+    if pronto:
+        await db.users.update_one({"user_id": prof["user_id"]}, {"$set": {"connect_ready": True}})
+    return pronto
+
+
+async def _exigir_recebimento_ativo(prof: Optional[dict]) -> None:
+    if EXIGIR_RECEBIMENTO_ATIVO and not await _recebimento_ativo(prof):
+        raise HTTPException(
+            409, "Este profissional ainda não habilitou os recebimentos pelo ShowUp. Tente de novo mais tarde."
+        )
+
+
+async def _atualizar_connect_pendentes() -> int:
+    """Job (10 min): contas conectadas que ainda não estão liberadas são
+    reconsultadas no Stripe, pra liberarem as reservas assim que o Stripe
+    aprovar — sem depender do profissional abrir o app."""
+    if GATEWAY_KIND != "stripe":
+        return 0
+    pendentes = await db.users.find(
+        {"role": "profissional", "stripe_account_id": {"$nin": [None, ""]}, "connect_ready": {"$ne": True}},
+        {"_id": 0, "user_id": 1, "stripe_account_id": 1},
+    ).to_list(500)
+    liberados = 0
+    for u in pendentes:
+        try:
+            st = await gateway.account_status(u["stripe_account_id"])
+        except Exception:
+            continue
+        if st.get("charges_enabled") and st.get("payouts_enabled"):
+            await db.users.update_one({"user_id": u["user_id"]}, {"$set": {"connect_ready": True}})
+            liberados += 1
+    return liberados
 
 
 # Página web pública (Firebase Hosting) onde o cliente agenda pelo link do
@@ -1364,9 +1527,11 @@ async def plano_resumo(authorization: Optional[str] = Header(default=None)):
         comparacao_disponivel=comparacao_ok,
         comparacao=[PlanoComparacao(**l) for l in linhas],
         recomendado=recomendado,
-        trial_disponivel=_trial_disponivel(doc) and comparacao_ok,
+        trial_disponivel=_trial_disponivel(doc) and comparacao_ok and PLANOS_COMPRA_HABILITADA,
         trial_dias=TRIAL_DIAS,
         trial_termina_em=_aware(termina_em) if (termina_em and plano_atual != DEFAULT_PLANO) else None,
+        cobranca_pendente=bool(doc.get("plano_cobranca_pendente")) and plano_atual != DEFAULT_PLANO,
+        compra_habilitada=PLANOS_COMPRA_HABILITADA,
     )
 
 
@@ -1384,6 +1549,8 @@ async def plano_subscription_intent(request: Request, payload: PlanoCheckoutRequ
     if GATEWAY_KIND != "stripe":
         raise HTTPException(400, "Assinatura de plano requer gateway Stripe real")
 
+    if not PLANOS_COMPRA_HABILITADA:
+        raise HTTPException(403, "A assinatura de planos pagos ainda não está disponível.")
     plano_cfg = PLANOS[payload.plano]
     price_id = os.environ.get(plano_cfg["price_env"] or "")
     if not price_id:
@@ -1609,6 +1776,7 @@ async def criar_agendamento(request: Request, payload: AgendamentoCreate, author
 
     # Optional Connect destination for split.
     prof = await db.users.find_one({"user_id": svc["profissional_id"]}, {"_id": 0})
+    await _exigir_recebimento_ativo(prof)
     destination = None
     if prof and prof.get("connect_ready") and prof.get("stripe_account_id"):
         destination = prof["stripe_account_id"]
@@ -1716,6 +1884,7 @@ async def criar_agendamento_publico_cartao(request: Request, payload: Agendament
         raise HTTPException(400, "servico_id não pertence ao profissional_id informado")
     horario = _aware(payload.horario_inicio)
 
+    await _exigir_recebimento_ativo(prof)
     destination = None
     if prof and prof.get("connect_ready") and prof.get("stripe_account_id"):
         destination = prof["stripe_account_id"]
@@ -1803,6 +1972,7 @@ async def criar_agendamento_publico_pix(request: Request, payload: AgendamentoPu
         raise HTTPException(400, "servico_id não pertence ao profissional_id informado")
     horario = _aware(payload.horario_inicio)
 
+    await _exigir_recebimento_ativo(prof)
     destination = None
     if prof and prof.get("connect_ready") and prof.get("stripe_account_id"):
         destination = prof["stripe_account_id"]
@@ -2134,18 +2304,7 @@ _URGENCIA_ANTES_DE_EXPIRAR = timedelta(hours=2)
 
 
 async def _push_para_usuario(user_id: str, title: str, body: str, data: dict) -> None:
-    token_doc = await db.device_tokens.find_one({"user_id": user_id}, {"_id": 0})
-    if not token_doc:
-        return  # profissional não tem device registrado — nada a fazer
-    try:
-        ticket = await send_push(token_doc["expo_push_token"], title, body, data)
-    except Exception:
-        logging.exception("Falha de rede ao enviar push p/ %s", user_id)
-        return
-    if is_device_not_registered(ticket):
-        # Token morto (app desinstalado, permissão revogada) — limpa para não
-        # continuar gastando chamadas à Expo com ele.
-        await db.device_tokens.delete_one({"user_id": user_id})
+    await push_para_usuario(db, user_id, title, body, data)
 
 
 async def _enviar_pushes_confirmacao() -> dict:
@@ -2271,6 +2430,7 @@ async def lifespan(_: FastAPI):
     # Mesma cadência para as notificações de confirmação — pergunta assim
     # que o horário termina, e aviso de urgência perto do hold expirar.
     _scheduler.add_job(_enviar_pushes_confirmacao, "interval", minutes=5, id="enviar_pushes", max_instances=1)
+    _scheduler.add_job(_atualizar_connect_pendentes, "interval", minutes=10, id="connect_pendentes", max_instances=1)
     _scheduler.start()
     logger.info("Scheduler iniciado: expirar-janela e enviar-pushes a cada 5min")
 

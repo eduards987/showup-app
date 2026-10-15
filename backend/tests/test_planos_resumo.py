@@ -15,6 +15,8 @@ os.environ.setdefault("GOOGLE_WEB_CLIENT_ID", "teste.apps.googleusercontent.com"
 os.environ["STRIPE_PRICE_ID_PROFISSIONAL"] = "price_prof"
 os.environ["STRIPE_PRICE_ID_ULTRA"] = "price_ultra"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import offline_env  # noqa: E402,F401  (variáveis FALSAS, antes de importar o server)
 
 import pytest
 from fastapi.testclient import TestClient
@@ -421,3 +423,36 @@ def test_falta_entra_na_conta_pelo_valor_cobrado_e_nao_pelo_valor_do_servico(ctx
     r = client.get("/api/me/plano/resumo").json()
     free = next(l for l in r["comparacao"] if l["id"] == "free")
     assert r["base_taxa_centavos"] == 3000 and free["taxa_estimada_centavos"] == 300
+
+
+# ------------------------------------------------------------------ compra de planos desligada (Play)
+def test_compra_desligada_planos_pagos_viram_em_breve_e_o_free_continua(ctx, monkeypatch):
+    client, db, gw = ctx()
+    monkeypatch.setattr(server, "PLANOS_COMPRA_HABILITADA", False)
+    planos = {p["id"]: p for p in client.get("/api/planos").json()["planos"]}
+    assert planos["free"]["disponivel"] is True
+    assert planos["profissional"]["disponivel"] is False and planos["ultra"]["disponivel"] is False
+
+
+def test_compra_desligada_recusa_assinatura_e_teste_gratis(ctx, monkeypatch):
+    client, db, gw = ctx()
+    monkeypatch.setattr(server, "PLANOS_COMPRA_HABILITADA", False)
+    for corpo in ({"plano": "profissional"}, {"plano": "ultra", "usar_trial": True}):
+        assert client.post("/api/me/plano/subscription-intent", json=corpo).status_code == 403
+    assert gw.trial_days_chamados == [] and "plano_pendente" not in _usuario(db)
+
+
+def test_compra_desligada_resumo_nao_oferece_nada_mas_mantem_os_numeros(ctx, monkeypatch):
+    client, db, gw = ctx(agendamentos=[_agendamento() for _ in range(20)])
+    monkeypatch.setattr(server, "PLANOS_COMPRA_HABILITADA", False)
+    r = client.get("/api/me/plano/resumo").json()
+    assert r["compra_habilitada"] is False and r["trial_disponivel"] is False and r["recomendado"] is None
+    assert r["atendimentos_cobrados"] == 20          # o que o app já fez pelo profissional continua visível
+
+
+def test_compra_desligada_nao_tranca_quem_ja_assina(ctx, monkeypatch):
+    client, db, gw = ctx()
+    _abrir(client, trial=False); gw.sub_status = "active"; assert _confirmar(client).status_code == 200
+    monkeypatch.setattr(server, "PLANOS_COMPRA_HABILITADA", False)
+    assert client.get("/api/me/plano/resumo").json()["plano_atual"] == "profissional"
+    assert client.post("/api/me/plano/cancelar").json()["user"]["plano"] == "free"   # cancelar sempre funciona

@@ -18,6 +18,16 @@ import { ProfissionalDetail } from "@/src/lib/types";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 const useStyles = makeStyles((c) => ({
+  avisoIndisponivel: {
+    marginHorizontal: spacing.xl,
+    marginBottom: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: c.surfaceTertiary,
+    color: c.onSurface,
+    fontSize: 13,
+    lineHeight: 18,
+  },
   root: { flex: 1, backgroundColor: c.surface },
   headerRow: {
     flexDirection: "row",
@@ -110,6 +120,12 @@ export default function ProfissionalDetalhe() {
           <Text style={styles.sub}>{q.data.servicos.length} serviço(s)</Text>
         </View>
 
+        {q.data.aceita_agendamentos === false ? (
+          <Text style={styles.avisoIndisponivel} testID="aviso-indisponivel">
+            Este profissional ainda não está recebendo agendamentos pelo ShowUp. Tente de novo mais tarde.
+          </Text>
+        ) : null}
+
         <Text style={styles.sectionTitle}>SERVIÇOS DISPONÍVEIS</Text>
 
         {q.data.servicos.map((s) => (
@@ -117,7 +133,8 @@ export default function ProfissionalDetalhe() {
             key={s.servico_id}
             testID={`servico-${s.servico_id}`}
             onPress={() => router.push(`/(app)/book/${s.servico_id}`)}
-            style={styles.servicoCard}
+            disabled={q.data.aceita_agendamentos === false}
+            style={[styles.servicoCard, q.data.aceita_agendamentos === false && { opacity: 0.5 }]}
           >
             <View style={styles.servicoRow}>
               <Text style={styles.servicoName}>{s.nome}</Text>

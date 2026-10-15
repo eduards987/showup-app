@@ -1,0 +1,35 @@
+name: Testes
+
+# Roda a cada push e pull request. Os testes são OFFLINE (banco, Stripe e push
+# falsos; as variáveis de ambiente também são falsas, definidas em
+# backend/tests/offline_env.py) — não precisam de segredo nenhum. Cobrem: conta
+# dos planos e teste grátis, confirmação da assinatura, taxa na falta, trava de
+# recebimento, exclusão de conta, webhooks e o verificador do site.
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Instala as dependências
+        run: pip install -r backend/requirements.txt
+      - name: Testes offline
+        working-directory: backend
+        run: >
+          python -m pytest -q
+          tests/test_planos_resumo.py
+          tests/test_plano_gateway.py
+          tests/test_taxa_falta.py
+          tests/test_lancamento.py
+          tests/test_site_publicacao.py
+          tests/test_webhook_segredos.py

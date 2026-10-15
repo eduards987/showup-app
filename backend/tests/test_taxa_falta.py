@@ -16,6 +16,8 @@ from pathlib import Path
 os.environ.setdefault("TESTING", "1")
 os.environ.setdefault("GOOGLE_WEB_CLIENT_ID", "teste.apps.googleusercontent.com")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import offline_env  # noqa: E402,F401  (variáveis FALSAS, antes de importar o server)
 
 import pytest
 import stripe

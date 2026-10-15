@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   AppState,
+  Linking,
   Pressable,
   ScrollView,
   Text,
@@ -16,8 +17,10 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { ConnectCard } from "@/src/components/connect-card";
 import { api, ApiError } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
+import type { ConnectStatus } from "@/src/lib/connect-estado";
 import { TIMEZONE_LABELS } from "@/src/lib/format";
 import { openExternalCheckout } from "@/src/lib/open-external-checkout";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
@@ -182,34 +185,6 @@ export default function Configuracoes() {
     return () => sub.remove();
   }, [qc]);
 
-  const excluirContaM = useMutation({
-    mutationFn: () => api("/api/me", { method: "DELETE" }),
-    onSuccess: () => {
-      auth.signOut();
-    },
-  });
-
-  const confirmarExclusao = () => {
-    Alert.alert(
-      "Excluir sua conta",
-      "Isso é permanente — seus dados pessoais serão apagados e você não vai conseguir desfazer isso depois. Tem certeza?",
-      [
-        { text: "Cancelar", style: "cancel" },
-        {
-          text: "Excluir conta",
-          style: "destructive",
-          onPress: () => {
-            excluirContaM.mutate(undefined, {
-              onError: (e: any) => {
-                Alert.alert("Não foi possível excluir", e?.message ?? "Tente novamente.");
-              },
-            });
-          },
-        },
-      ],
-    );
-  };
-
   const [selectedCats, setSelectedCats] = useState<string[]>(
     auth.status === "authenticated" ? (auth.user.categorias ?? []) : [],
   );
@@ -253,7 +228,7 @@ export default function Configuracoes() {
 
   const connectQ = useQuery({
     queryKey: ["connect-status"],
-    queryFn: () => api<{ account_id?: string; charges_enabled: boolean; payouts_enabled: boolean; details_submitted: boolean }>("/api/me/connect"),
+    queryFn: () => api<ConnectStatus>("/api/me/connect"),
     enabled: auth.status === "authenticated" && auth.user.role === "profissional",
   });
 
@@ -333,6 +308,20 @@ export default function Configuracoes() {
       // senão a mensagem genérica do erro), pra dar pra diagnosticar.
       const msg = err instanceof ApiError ? err.message : "Não foi possível abrir o Stripe. Tente de novo.";
       Alert.alert("Não foi possível conectar", msg);
+    },
+  });
+
+  // O painel do Stripe é onde aparecem as "Tasks" que o Stripe cria depois do
+  // cadastro (informações adicionais, revisão) — o onboarding não cobre isso.
+  // Ao voltar pro app, o listener de AppState lá em cima revalida o estado.
+  const painelM = useMutation({
+    mutationFn: async () => {
+      const r = await api<{ url: string }>("/api/me/connect/painel", { method: "POST" });
+      await Linking.openURL(r.url);
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof ApiError ? err.message : "Não foi possível abrir o painel do Stripe. Tente de novo.";
+      Alert.alert("Não foi possível abrir o painel", msg);
     },
   });
 
@@ -532,62 +521,14 @@ export default function Configuracoes() {
         </View>
 
         <Text style={styles.sectionTitle}>REPASSE AUTOMÁTICO (STRIPE CONNECT)</Text>
-        <View style={styles.connectCard}>
-          <View style={styles.connectRow}>
-            <Ionicons
-              name={connectQ.data?.charges_enabled ? "checkmark-circle" : "alert-circle-outline"}
-              size={22}
-              color={connectQ.data?.charges_enabled ? colors.success : colors.warning}
-            />
-            <Text style={styles.connectTitle}>
-              {connectQ.data?.charges_enabled ? "Conta conectada" : "Conta não conectada"}
-            </Text>
-          </View>
-          <Text style={styles.connectBody}>
-            Com Stripe Connect ativo, cada captura já debita a taxa da plataforma e transfere o
-            restante para sua conta. Sem Connect, o repasse fica no ledger interno.
-          </Text>
-          {!connectQ.data?.charges_enabled ? (
-            <Pressable
-              testID="connect-onboarding"
-              onPress={() => connectM.mutate()}
-              disabled={connectM.isPending}
-              style={styles.connectBtn}
-            >
-              {connectM.isPending ? (
-                <ActivityIndicator color={colors.onBrand} />
-              ) : (
-                <>
-                  <Ionicons name="link-outline" size={16} color={colors.onBrand} />
-                  <Text style={styles.connectBtnText}>Conectar Stripe</Text>
-                </>
-              )}
-            </Pressable>
-          ) : null}
-        </View>
-
-        <Text style={styles.sectionTitle}>ZONA DE PERIGO</Text>
-        <View style={styles.connectCard}>
-          <Pressable
-            testID="excluir-conta"
-            onPress={confirmarExclusao}
-            disabled={excluirContaM.isPending}
-            style={styles.dangerRow}
-          >
-            {excluirContaM.isPending ? (
-              <ActivityIndicator color={colors.error} />
-            ) : (
-              <>
-                <Ionicons name="trash-outline" size={18} color={colors.error} />
-                <Text style={styles.dangerText}>Excluir minha conta</Text>
-              </>
-            )}
-          </Pressable>
-          <Text style={styles.dangerNote}>
-            Remove seus dados pessoais permanentemente. Agendamentos pendentes ou futuros
-            precisam ser resolvidos antes.
-          </Text>
-        </View>
+        <ConnectCard
+          status={connectQ.data}
+          ocupado={connectM.isPending || painelM.isPending}
+          recarregando={connectQ.isFetching}
+          onConectar={() => connectM.mutate()}
+          onPainel={() => painelM.mutate()}
+          onRecarregar={() => connectQ.refetch()}
+        />
       </ScrollView>
     </View>
   );
