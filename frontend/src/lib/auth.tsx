@@ -23,6 +23,7 @@ import React, {
 } from "react";
 
 import { api, ApiError, setAuthToken } from "@/src/lib/api";
+import { mensagemErroLoginSocial } from "@/src/lib/auth-email";
 import { unregisterPushToken } from "@/src/lib/push-notifications";
 import { storage } from "@/src/utils/storage";
 
@@ -51,6 +52,10 @@ type AuthState =
 
 type AuthContextValue = AuthState & {
   signIn: () => Promise<void>;
+  /** Login com conta Microsoft (Outlook, Hotmail, Live). Devolve a mensagem de erro, ou null se deu certo/foi cancelado. */
+  signInMicrosoft: () => Promise<string | null>;
+  /** Conclui o login com um session_token que o backend já emitiu (e-mail + senha, código de verificação). */
+  signInWithToken: (sessionToken: string) => Promise<void>;
   signOut: () => Promise<void>;
   setRole: (role: Role) => Promise<void>;
   refresh: () => Promise<void>;
@@ -75,6 +80,7 @@ const googleCallbackUrl = process.env.EXPO_PUBLIC_BACKEND_URL
 // WebBrowser.openAuthSessionAsync fica esperando pra saber que acabou e
 // fechar a tela.
 const APP_AUTH_CALLBACK = "showup://auth-callback";
+const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL ?? "";
 
 // Guarda a Promise do "acorda o backend" (ver o useEffect abaixo) fora do
 // componente, pra signIn() poder esperar por ela mesmo que tenha sido
@@ -149,6 +155,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [applyAuth]);
 
+  const signInWithToken = useCallback(
+    async (sessionToken: string) => {
+      setAuthToken(sessionToken);
+      try {
+        const me = await api<{ user: User }>("/api/auth/me");
+        await storage.secureSet(TOKEN_KEY, sessionToken);
+        applyAuth(sessionToken, me.user);
+      } catch (e) {
+        setAuthToken(null); // não deixa um token que não funcionou "pendurado" na memória
+        throw e;
+      }
+    },
+    [applyAuth],
+  );
+
   const signIn = useCallback(async () => {
     if (!googleWebClientId || !googleCallbackUrl) return;
     // Dá até 3s pro "acorda o backend" do useEffect terminar antes de abrir
@@ -185,12 +206,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.warn("[auth] Callback do Google voltou sem token");
       return;
     }
+    await signInWithToken(sessionToken);
+  }, [signInWithToken]);
 
-    setAuthToken(sessionToken);
-    const me = await api<{ user: User }>("/api/auth/me");
-    await storage.secureSet(TOKEN_KEY, sessionToken);
-    applyAuth(sessionToken, me.user);
-  }, [applyAuth]);
+  const signInMicrosoft = useCallback(async (): Promise<string | null> => {
+    if (!backendUrl) return "O endereço do servidor não está configurado.";
+    if (backendWakeUpPromise) {
+      await Promise.race([backendWakeUpPromise, sleep(3000)]);
+    }
+    // O servidor monta a URL da Microsoft (com state e nonce dele): o app só abre este endereço.
+    const result = await WebBrowser.openAuthSessionAsync(`${backendUrl}/api/auth/microsoft/start`, APP_AUTH_CALLBACK);
+    if (result.type !== "success") return null; // usuário cancelou/fechou o navegador
+    const returnedUrl = new URL(result.url);
+    const error = returnedUrl.searchParams.get("error");
+    if (error) return mensagemErroLoginSocial(error, "Microsoft");
+    const sessionToken = returnedUrl.searchParams.get("token");
+    if (!sessionToken) return mensagemErroLoginSocial(null, "Microsoft");
+    try {
+      await signInWithToken(sessionToken);
+    } catch {
+      return "Não foi possível concluir o login. Tente de novo.";
+    }
+    return null;
+  }, [signInWithToken]);
 
   const signOut = useCallback(async () => {
     await unregisterPushToken(); // antes do logout: precisa do token de auth ainda válido
@@ -225,8 +263,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [applyAuth]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ ...state, signIn, signOut, setRole, refresh }),
-    [state, signIn, signOut, setRole, refresh],
+    () => ({ ...state, signIn, signInMicrosoft, signInWithToken, signOut, setRole, refresh }),
+    [state, signIn, signInMicrosoft, signInWithToken, signOut, setRole, refresh],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

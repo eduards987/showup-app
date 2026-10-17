@@ -57,14 +57,23 @@
   <p>O ShowUp é um aplicativo de agendamento com proteção contra no-show
   pra profissionais autônomos e seus clientes. O responsável pelo
   tratamento dos seus dados (controlador, na LGPD) é
-  <strong>{{RESPONSAVEL}}</strong> ({{DOCUMENTO}}). Se você tiver qualquer
+  <strong>Showw Up</strong>. Se você tiver qualquer
   dúvida sobre esta política, pode falar com a gente pelo contato no
   final desta página.</p>
 
   <h2>Quais dados coletamos</h2>
-  <p><strong>Quando você cria uma conta (login com Google):</strong></p>
+  <p><strong>Quando você cria uma conta com Google ou Microsoft:</strong></p>
   <ul>
-    <li>Nome, e-mail e foto de perfil — fornecidos pelo Google no momento do login.</li>
+    <li>Nome e e-mail — fornecidos pelo Google ou pela Microsoft no momento do
+    login — e, no caso do Google, a foto de perfil.</li>
+  </ul>
+  <p><strong>Quando você cria uma conta com e-mail e senha:</strong></p>
+  <ul>
+    <li>O nome e o e-mail que você digita.</li>
+    <li>Uma versão criptografada da sua senha (um &quot;hash&quot;). Nós nunca
+    guardamos a senha em si e não conseguimos vê-la.</li>
+    <li>Códigos de verificação temporários, enviados ao seu e-mail e guardados
+    de forma criptografada. Eles expiram em 10 minutos e são apagados.</li>
   </ul>
   <p><strong>Quando você agenda por um link (sem baixar o app):</strong></p>
   <ul>
@@ -102,7 +111,13 @@
   <p>Só com os parceiros estritamente necessários pra fazer o app
   funcionar:</p>
   <ul>
-    <li><strong>Google</strong> — autenticação (login).</li>
+    <li><strong>Google</strong> e <strong>Microsoft</strong> — autenticação
+    (login), quando você escolhe entrar com uma dessas contas.</li>
+    <li><strong>Provedor de envio de e-mail</strong> — entrega os códigos de
+    verificação e de recuperação de senha, quando você usa e-mail e senha.</li>
+    <li><strong>Render</strong> — hospedagem do servidor do app.</li>
+    <li><strong>Expo</strong> e <strong>Google Firebase</strong> — entrega das
+    notificações no seu celular.</li>
     <li><strong>Stripe</strong> — processamento de pagamentos, repasses
     aos profissionais, e verificação de identidade exigida por lei pra
     quem recebe pagamentos.</li>
@@ -129,7 +144,7 @@
     contato com ninguém. Veja os detalhes em
     <a href="/excluir-conta">Excluir conta e dados</a>. Se você agendou
     por um link e não tem o app, escreva pra
-    <a href="mailto:{{EMAIL_CONTATO}}">{{EMAIL_CONTATO}}</a>.
+    <a href="mailto:supportshowup@gmail.com">supportshowup@gmail.com</a>.
   </div>
 
   <h2>Por quanto tempo guardamos seus dados</h2>
@@ -148,7 +163,10 @@
   <h2>Segurança</h2>
   <p>Usamos conexão criptografada (HTTPS) em toda comunicação entre o
   app e nossos servidores, autenticação por token com expiração, e
-  nunca armazenamos senhas (o login é sempre feito através do Google).</p>
+  guardamos as senhas apenas de forma criptografada (hash), nunca como
+  texto, de um jeito que não permite recuperá-las. Há bloqueio temporário
+  depois de várias tentativas erradas de entrar. Nos logins com Google ou
+  Microsoft, quem guarda a senha é o próprio provedor, não o ShowUp.</p>
 
   <h2>Menores de idade</h2>
   <p>O ShowUp não é destinado a menores de 18 anos, e não coletamos
@@ -162,7 +180,7 @@
     <h2>Contato</h2>
     <p>Dúvidas sobre privacidade, ou quer exercer algum dos seus
     direitos diretamente com a gente? Escreve pra
-    <a href="mailto:{{EMAIL_CONTATO}}">{{EMAIL_CONTATO}}</a>.</p>
+    <a href="mailto:supportshowup@gmail.com">supportshowup@gmail.com</a>.</p>
   </div>
   <p class="nav"><a href="/termos">Termos de Uso</a> · <a href="/privacidade">Política de Privacidade</a> · <a href="/excluir-conta">Excluir conta e dados</a></p>
 </div>

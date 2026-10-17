@@ -18,13 +18,21 @@ Python 3.12, `list[str]`, `dict[str, Any]` e `X | None` funcionam nativamente
 sem o future-import — não há motivo para mantê-lo.
 """
 
+import asyncio
+import base64
+import hashlib
+import hmac
+import json
 import logging
 import os
+import re
+import secrets
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Literal, Optional
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -54,6 +62,8 @@ from security import require_service_token
 from payment_errors import CardDeclinedError, GatewayUnavailableError, InvalidPaymentRequestError, PaymentError
 from webhooks import router as webhooks_router
 from expo_push import is_device_not_registered, push_para_usuario, send_push
+from emailer import email_configurado, enviar_email
+from senhas import hash_falso, hash_senha, validar_senha, verificar_senha
 
 mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
@@ -110,6 +120,35 @@ if not GOOGLE_OAUTH_REDIRECT_URI:
         "GOOGLE_OAUTH_REDIRECT_URI não configurado. Ex: "
         "https://showup-backend-s9y1.onrender.com/api/auth/google/callback"
     )
+
+# --- Login com Microsoft (contas PESSOAIS: Outlook, Hotmail, Live) ---------
+# Opcional: sem as três variáveis o botão some do app (ver GET /auth/metodos).
+# Só aceitamos o locatário de contas pessoais: nele o e-mail é verificado pela
+# Microsoft. Em contas corporativas o claim `email` pode ser definido por quem
+# administra o diretório (falha "nOAuth"), então vincular conta por e-mail ali
+# permitiria tomar a conta de outra pessoa.
+MICROSOFT_CLIENT_ID = os.environ.get("MICROSOFT_CLIENT_ID", "")
+MICROSOFT_CLIENT_SECRET = os.environ.get("MICROSOFT_CLIENT_SECRET", "")
+# URL completa deste backend + /api/auth/microsoft/callback (idêntica à cadastrada no Azure).
+MICROSOFT_OAUTH_REDIRECT_URI = os.environ.get("MICROSOFT_OAUTH_REDIRECT_URI", "")
+MS_TENANT_PESSOAL = "9188040d-6c67-4c5b-b112-36a304b66dad"
+MS_AUTORIZAR_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize"
+MS_TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
+
+# --- Cadastro e login por e-mail + senha ------------------------------------
+# "1" imprime os códigos de verificação no LOG em vez de enviá-los: só para
+# desenvolvimento sem SMTP. NUNCA em produção (quem lê o log toma contas).
+EMAIL_CODIGOS_NO_LOG = os.environ.get("EMAIL_CODIGOS_NO_LOG", "0") == "1"
+CODIGO_EMAIL_VALIDADE_MIN = 10
+CODIGO_EMAIL_MAX_TENTATIVAS = 5
+CODIGO_EMAIL_REENVIO_SEG = 60
+LOGIN_MAX_FALHAS = 5
+LOGIN_BLOQUEIO_MIN = 15
+_EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$")
+# "pimenta" do HMAC dos códigos: sem ela, quem vazasse o banco poderia testar os 10^6
+# códigos possíveis offline. Reaproveita o token interno se não houver uma própria.
+_AUTH_PEPPER = (os.environ.get("AUTH_CODE_PEPPER") or os.environ.get("INTERNAL_SERVICE_TOKEN") or "").encode()
+
 Role = Literal["cliente", "profissional"]
 
 CATEGORIAS = ["fitness", "terapia", "consultoria", "estetica", "coaching", "nutricao"]
@@ -256,16 +295,37 @@ def _tz_for(profissional_doc: Optional[dict]) -> ZoneInfo:
         logging.warning("timezone inválida no profissional: %r — usando default", tz_name)
         return ZoneInfo(DEFAULT_TIMEZONE)
 
-# Gateway selection: real Stripe if key is present and valid-looking.
-_STRIPE_KEY = os.environ.get("STRIPE_API_KEY", "")
-if _STRIPE_KEY.startswith("sk_test_") and len(_STRIPE_KEY) > 20:
+def _gateway_para_chave(chave: str) -> str:
+    """Qual gateway usar, a partir da STRIPE_API_KEY.
+
+    - vazia → "mock" (desenvolvimento/testes: pagamentos SIMULADOS);
+    - chave secreta ou restrita do Stripe, de TESTE ou de PRODUÇÃO → "stripe";
+    - qualquer outra coisa → erro e o servidor NÃO sobe.
+
+    Antes só `sk_test_` era reconhecida: ao trocar pela chave de produção (`sk_live_`)
+    o backend caía em silêncio no modo simulado, que "aprova" reservas sem cobrar nada.
+    Chave preenchida porém irreconhecível é erro de configuração, não motivo para simular.
+    """
+    chave = (chave or "").strip()
+    if not chave:
+        return "mock"
+    if chave.startswith(("sk_test_", "sk_live_", "rk_test_", "rk_live_")) and len(chave) > 20:
+        return "stripe"
+    raise RuntimeError(
+        "STRIPE_API_KEY está preenchida, mas não parece uma chave secreta do Stripe "
+        "(esperado sk_test_..., sk_live_... ou rk_..., completa). Corrija a variável — ou deixe-a "
+        "vazia para usar o modo simulado (só em desenvolvimento)."
+    )
+
+
+# Gateway selection: real Stripe if the key is valid (test OR live); mock only if no key at all.
+GATEWAY_KIND = _gateway_para_chave(os.environ.get("STRIPE_API_KEY", ""))
+if GATEWAY_KIND == "stripe":
     from stripe_gateway import StripeGateway
     gateway = StripeGateway(db)
-    GATEWAY_KIND = "stripe"
 else:
     from gateway import MockGateway
     gateway = MockGateway(db)
-    GATEWAY_KIND = "mock"
 
 
 # ---------------------------------------------------------------------------
@@ -689,6 +749,22 @@ async def root():
     return {"service": "ShowUp API", "status": "ok", "gateway": GATEWAY_KIND}
 
 
+async def _emitir_sessao(user_id: str) -> SessionResponse:
+    """Cria a sessão NOSSA (7 dias) e devolve o usuário. Usado por todos os jeitos de entrar
+    (Google, Microsoft, e-mail e senha): depois do login, ninguém depende de token de terceiros."""
+    session_token = uuid.uuid4().hex + uuid.uuid4().hex
+    # upsert por segurança (colisão de UUID é praticamente impossível, mas o
+    # índice único em session_token é uma garantia barata de manter).
+    await db.user_sessions.replace_one(
+        {"session_token": session_token},
+        {"session_token": session_token, "user_id": user_id,
+         "created_at": _now(), "expires_at": _now() + timedelta(days=7)},
+        upsert=True,
+    )
+    doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    return SessionResponse(session_token=session_token, user=await _serialize_user(doc))
+
+
 async def _login_or_create_session_from_google_claims(claims: dict) -> SessionResponse:
     """Lógica compartilhada entre os dois jeitos de chegar num id_token do
     Google validado: o endpoint antigo (/auth/session, recebe direto do
@@ -713,20 +789,7 @@ async def _login_or_create_session_from_google_claims(claims: dict) -> SessionRe
             "role": None, "categorias": [], "created_at": _now(),
         })
 
-    # session_token é NOSSO, gerado aqui — nunca mais dependemos de um
-    # token emitido por um servidor de terceiros pra manter a sessão.
-    session_token = uuid.uuid4().hex + uuid.uuid4().hex
-
-    # upsert por segurança (colisão de UUID é praticamente impossível, mas o
-    # índice único em session_token é uma garantia barata de manter).
-    await db.user_sessions.replace_one(
-        {"session_token": session_token},
-        {"session_token": session_token, "user_id": user_id,
-         "created_at": _now(), "expires_at": _now() + timedelta(days=7)},
-        upsert=True,
-    )
-    doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-    return SessionResponse(session_token=session_token, user=await _serialize_user(doc))
+    return await _emitir_sessao(user_id)
 
 
 @api_router.post("/auth/session", response_model=SessionResponse)
@@ -800,6 +863,365 @@ async def auth_google_callback(code: Optional[str] = None, error: Optional[str] 
         return RedirectResponse(f"showup://auth-callback?error={e.detail}")
 
     return RedirectResponse(f"showup://auth-callback?token={session.session_token}")
+
+
+# ---------------------------------------------------------------------------
+# Auth: métodos disponíveis, e-mail + senha e Microsoft
+# ---------------------------------------------------------------------------
+class MetodosLogin(BaseModel):
+    google: bool = True
+    microsoft: bool = False
+    email: bool = False
+
+
+class EmailCadastroRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+
+
+class EmailVerificarRequest(BaseModel):
+    email: str
+    code: str
+
+
+class EmailLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class EmailEsqueciRequest(BaseModel):
+    email: str
+
+
+class EmailRedefinirRequest(BaseModel):
+    email: str
+    code: str
+    new_password: str
+
+
+def _microsoft_ativo() -> bool:
+    return bool(MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET and MICROSOFT_OAUTH_REDIRECT_URI)
+
+
+def _email_ativo() -> bool:
+    return email_configurado() or EMAIL_CODIGOS_NO_LOG
+
+
+@api_router.get("/auth/metodos", response_model=MetodosLogin)
+async def auth_metodos():
+    """O app só mostra os botões que o servidor realmente consegue atender."""
+    return MetodosLogin(google=True, microsoft=_microsoft_ativo(), email=_email_ativo())
+
+
+def _norm_email(valor: str) -> str:
+    email = (valor or "").strip().lower()
+    if len(email) > 254 or not _EMAIL_RE.match(email):
+        raise HTTPException(422, "Informe um e-mail válido.")
+    return email
+
+
+def _exigir_email_ativo() -> None:
+    if not _email_ativo():
+        raise HTTPException(503, "O cadastro por e-mail ainda não está disponível. Use o login com Google ou Microsoft.")
+
+
+def _hash_codigo(email: str, finalidade: str, codigo: str) -> str:
+    return hmac.new(_AUTH_PEPPER, f"{email}|{finalidade}|{codigo}".encode(), hashlib.sha256).hexdigest()
+
+
+async def _entregar_codigo(email: str, finalidade: str, codigo: str) -> None:
+    if finalidade == "verify":
+        assunto = "Seu código de verificação do ShowUp"
+        abertura = "Use este código para confirmar o seu e-mail e concluir o cadastro no ShowUp:"
+    else:
+        assunto = "Redefinir a sua senha do ShowUp"
+        abertura = "Use este código para criar uma nova senha no ShowUp:"
+    texto = (f"{abertura}\n\n    {codigo}\n\nEle vale por {CODIGO_EMAIL_VALIDADE_MIN} minutos e só pode ser usado uma vez.\n"
+             "Se não foi você que pediu, ignore esta mensagem: nada será alterado.\n\n— Equipe ShowUp")
+    if email_configurado():
+        await enviar_email(email, assunto, texto)
+    elif EMAIL_CODIGOS_NO_LOG:
+        logging.warning("[DEV] código %s para %s: %s", finalidade, email, codigo)
+    else:
+        raise RuntimeError("e-mail não configurado")
+
+
+async def _entregar_aviso_conta_existente(email: str) -> None:
+    texto = ("Alguém tentou criar uma conta no ShowUp com este e-mail, mas ele já tem cadastro.\n\n"
+             "Se foi você, entre normalmente com o seu e-mail e senha (ou use \"Esqueci minha senha\" no app).\n"
+             "Se não foi você, ignore esta mensagem: nada foi alterado.\n\n— Equipe ShowUp")
+    if email_configurado():
+        await enviar_email(email, "Você já tem uma conta no ShowUp", texto)
+    elif EMAIL_CODIGOS_NO_LOG:
+        logging.warning("[DEV] aviso de conta existente para %s", email)
+    else:
+        raise RuntimeError("e-mail não configurado")
+
+
+async def _emitir_codigo(email: str, finalidade: str, modo: str = "codigo", extra: Optional[dict] = None) -> None:
+    """Guarda (só o HASH do) código e envia o e-mail.
+
+    modo "codigo": envia o código · "aviso": envia o aviso de conta já existente (sem código) ·
+    "silencio": não envia nada. Os três gravam o registro de espera de 60 s, então quem pede
+    não consegue descobrir, pela resposta, se um e-mail tem conta: o comportamento é igual."""
+    agora = _now()
+    filtro = {"email": email, "finalidade": finalidade}
+    atual = await db.email_codes.find_one(filtro, {"_id": 0, "enviado_em": 1})
+    if atual and (agora - _aware(atual["enviado_em"])).total_seconds() < CODIGO_EMAIL_REENVIO_SEG:
+        raise HTTPException(429, "Aguarde um minuto antes de pedir outro código.")
+    codigo = f"{secrets.randbelow(10 ** 6):06d}"
+    await db.email_codes.replace_one(filtro, {
+        **filtro, "enviado_em": agora, "tentativas": 0,
+        "expira_em": agora + timedelta(minutes=CODIGO_EMAIL_VALIDADE_MIN),
+        "codigo_hash": _hash_codigo(email, finalidade, codigo) if modo == "codigo" else None,
+        **(extra or {}),
+    }, upsert=True)
+    if modo == "silencio":
+        return
+    try:
+        if modo == "codigo":
+            await _entregar_codigo(email, finalidade, codigo)
+        else:
+            await _entregar_aviso_conta_existente(email)
+    except Exception:
+        logging.exception("falha ao enviar e-mail de %s", finalidade)
+        await db.email_codes.delete_one(filtro)
+        raise HTTPException(503, "Não conseguimos enviar o e-mail agora. Tente de novo em instantes.")
+
+
+async def _validar_codigo(email: str, finalidade: str, codigo: str) -> dict:
+    """Confere o código e devolve o registro. A tentativa é contada de forma ATÔMICA antes da
+    comparação (5 no máximo), então chamadas em paralelo não furam o limite."""
+    erro = HTTPException(400, "Código inválido ou expirado.")
+    agora = _now()
+    doc = await db.email_codes.find_one_and_update(
+        {"email": email, "finalidade": finalidade, "codigo_hash": {"$ne": None},
+         "tentativas": {"$lt": CODIGO_EMAIL_MAX_TENTATIVAS}, "expira_em": {"$gt": agora}},
+        {"$inc": {"tentativas": 1}},
+    )
+    if not doc:
+        raise erro
+    recebido = _hash_codigo(email, finalidade, (codigo or "").strip())
+    if not hmac.compare_digest(doc["codigo_hash"], recebido):
+        raise erro
+    return doc
+
+
+async def _checar_bloqueio_login(email: str) -> None:
+    doc = await db.login_attempts.find_one({"email": email}, {"_id": 0})
+    if doc and doc.get("bloqueado_ate") and _aware(doc["bloqueado_ate"]) > _now():
+        raise HTTPException(429, "Muitas tentativas. Tente de novo em alguns minutos ou use \"Esqueci minha senha\".")
+
+
+async def _registrar_falha_login(email: str) -> None:
+    agora = _now()
+    doc = await db.login_attempts.find_one({"email": email}, {"_id": 0})
+    falhas = (doc["falhas"] if doc and _aware(doc["expira_em"]) > agora else 0) + 1
+    novo = {"email": email, "falhas": falhas, "expira_em": agora + timedelta(minutes=LOGIN_BLOQUEIO_MIN)}
+    if falhas >= LOGIN_MAX_FALHAS:
+        novo["bloqueado_ate"] = agora + timedelta(minutes=LOGIN_BLOQUEIO_MIN)
+    await db.login_attempts.replace_one({"email": email}, novo, upsert=True)
+
+
+@api_router.post("/auth/email/cadastro")
+@limiter.limit("5/minute")
+async def auth_email_cadastro(request: Request, payload: EmailCadastroRequest):
+    """Passo 1 do cadastro: manda um código de 6 dígitos pro e-mail. A conta SÓ é criada no passo 2
+    (depois de provar que o e-mail é da pessoa), então ninguém reserva o e-mail dos outros e a
+    senha só vale depois da prova."""
+    _exigir_email_ativo()
+    email = _norm_email(payload.email)
+    nome = (payload.name or "").strip()
+    if not 2 <= len(nome) <= 80:
+        raise HTTPException(422, "Informe seu nome (de 2 a 80 caracteres).")
+    erro_senha = validar_senha(payload.password, email)
+    if erro_senha:
+        raise HTTPException(422, erro_senha)
+
+    existente = await db.users.find_one({"email": email}, {"_id": 0, "password_hash": 1})
+    if existente and existente.get("password_hash"):
+        await _emitir_codigo(email, "verify", modo="aviso")
+    else:
+        # conta que já existe por Google/Microsoft, sem senha: o mesmo caminho adiciona a senha
+        pendente = {"nome": nome, "password_hash": await asyncio.to_thread(hash_senha, payload.password)}
+        await _emitir_codigo(email, "verify", extra=pendente)
+    return {"ok": True, "mensagem": f"Se o e-mail for válido, enviamos um código de 6 dígitos. Ele vale {CODIGO_EMAIL_VALIDADE_MIN} minutos."}
+
+
+@api_router.post("/auth/email/verificar", response_model=SessionResponse)
+@limiter.limit("10/minute")
+async def auth_email_verificar(request: Request, payload: EmailVerificarRequest):
+    """Passo 2: o código confere → cria a conta (ou adiciona a senha a uma conta Google/Microsoft
+    do mesmo e-mail, já que o código prova que o e-mail é dele) e já entra."""
+    email = _norm_email(payload.email)
+    doc = await _validar_codigo(email, "verify", payload.code)
+    if not doc.get("password_hash"):
+        raise HTTPException(400, "Código inválido ou expirado.")
+    existente = await db.users.find_one({"email": email}, {"_id": 0, "user_id": 1})
+    if existente:
+        user_id = existente["user_id"]
+        await db.users.update_one({"user_id": user_id}, {"$set": {"password_hash": doc["password_hash"], "email_verified": True}})
+    else:
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+        await db.users.insert_one({
+            "user_id": user_id, "email": email, "name": doc.get("nome") or email.split("@")[0], "picture": None,
+            "role": None, "categorias": [], "created_at": _now(),
+            "password_hash": doc["password_hash"], "email_verified": True,
+        })
+    await db.email_codes.delete_one({"email": email, "finalidade": "verify"})
+    return await _emitir_sessao(user_id)
+
+
+@api_router.post("/auth/email/login", response_model=SessionResponse)
+@limiter.limit("10/minute")
+async def auth_email_login(request: Request, payload: EmailLoginRequest):
+    erro = HTTPException(401, "E-mail ou senha incorretos.")
+    try:
+        email = _norm_email(payload.email)
+    except HTTPException:
+        raise erro
+    await _checar_bloqueio_login(email)
+    user = await db.users.find_one({"email": email}, {"_id": 0, "user_id": 1, "password_hash": 1})
+    armazenado = (user or {}).get("password_hash")
+    # sempre gasta o tempo de uma conferência, exista a conta ou não
+    confere = await asyncio.to_thread(verificar_senha, payload.password or "", armazenado or hash_falso())
+    if not (user and armazenado and confere):
+        await _registrar_falha_login(email)
+        raise erro
+    await db.login_attempts.delete_one({"email": email})
+    return await _emitir_sessao(user["user_id"])
+
+
+@api_router.post("/auth/email/esqueci")
+@limiter.limit("5/minute")
+async def auth_email_esqueci(request: Request, payload: EmailEsqueciRequest):
+    """Sempre responde igual, exista a conta ou não (não revela quem tem cadastro)."""
+    _exigir_email_ativo()
+    email = _norm_email(payload.email)
+    user = await db.users.find_one({"email": email}, {"_id": 0, "user_id": 1})
+    await _emitir_codigo(email, "reset", modo="codigo" if user else "silencio")
+    return {"ok": True, "mensagem": "Se existir uma conta com esse e-mail, enviamos um código de 6 dígitos."}
+
+
+@api_router.post("/auth/email/redefinir")
+@limiter.limit("10/minute")
+async def auth_email_redefinir(request: Request, payload: EmailRedefinirRequest):
+    email = _norm_email(payload.email)
+    erro_senha = validar_senha(payload.new_password, email)
+    if erro_senha:
+        raise HTTPException(422, erro_senha)
+    await _validar_codigo(email, "reset", payload.code)
+    user = await db.users.find_one({"email": email}, {"_id": 0, "user_id": 1})
+    if not user:
+        raise HTTPException(400, "Código inválido ou expirado.")
+    novo_hash = await asyncio.to_thread(hash_senha, payload.new_password)
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"password_hash": novo_hash, "email_verified": True}})
+    # quem tinha a senha antiga (ou a sessão roubada) é desconectado em todos os aparelhos
+    await db.user_sessions.delete_many({"user_id": user["user_id"]})
+    await db.email_codes.delete_one({"email": email, "finalidade": "reset"})
+    await db.login_attempts.delete_one({"email": email})
+    return {"ok": True}
+
+
+def _claims_do_jwt(token: str) -> dict:
+    """Lê o payload de um JWT SEM verificar a assinatura. Só é seguro aqui porque o token veio
+    direto do endpoint de token da Microsoft, por TLS, na resposta a um pedido autenticado com o
+    nosso segredo (OIDC Core §3.1.3.7 dispensa a checagem de assinatura nesse caso). Nunca use
+    isto com um token que veio do app ou de qualquer outro lugar."""
+    try:
+        payload = token.split(".")[1]
+        return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    except Exception:
+        raise ValueError("id_token ilegível")
+
+
+@api_router.get("/auth/microsoft/start")
+async def auth_microsoft_start():
+    """O app abre ESTE endereço no navegador; daqui mandamos pra Microsoft com `state` e `nonce`
+    nossos (guardados por 10 minutos), que o callback confere. O client id fica só no servidor."""
+    if not _microsoft_ativo():
+        return RedirectResponse("showup://auth-callback?error=microsoft_indisponivel")
+    state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+    await db.oauth_states.insert_one({"state": state, "nonce": nonce, "expira_em": _now() + timedelta(minutes=10)})
+    return RedirectResponse(MS_AUTORIZAR_URL + "?" + urlencode({
+        "client_id": MICROSOFT_CLIENT_ID, "response_type": "code", "redirect_uri": MICROSOFT_OAUTH_REDIRECT_URI,
+        "response_mode": "query", "scope": "openid profile email", "state": state, "nonce": nonce,
+        "prompt": "select_account",
+    }))
+
+
+async def _login_ou_cria_sessao_microsoft(claims: dict) -> SessionResponse:
+    oid = claims.get("oid") or claims.get("sub")
+    if not oid:
+        raise HTTPException(401, "Resposta da Microsoft sem identificador")
+    ms_id = f"{MS_TENANT_PESSOAL}:{oid}"
+    email = (claims.get("email") or claims.get("preferred_username") or "").strip().lower()
+    nome = claims.get("name") or (email.split("@")[0] if email else "Usuário")
+
+    user = await db.users.find_one({"microsoft_id": ms_id}, {"_id": 0, "user_id": 1})
+    if user:
+        return await _emitir_sessao(user["user_id"])
+    if not _EMAIL_RE.match(email):
+        raise HTTPException(401, "A conta Microsoft não informou um e-mail")
+    existente = await db.users.find_one({"email": email}, {"_id": 0, "user_id": 1})
+    if existente:
+        # conta pessoal Microsoft = e-mail verificado pela Microsoft → vincular é seguro
+        await db.users.update_one({"user_id": existente["user_id"]}, {"$set": {"microsoft_id": ms_id, "email_verified": True}})
+        return await _emitir_sessao(existente["user_id"])
+    user_id = f"user_{uuid.uuid4().hex[:12]}"
+    await db.users.insert_one({
+        "user_id": user_id, "email": email, "name": nome, "picture": None, "role": None, "categorias": [],
+        "created_at": _now(), "microsoft_id": ms_id, "email_verified": True,
+    })
+    return await _emitir_sessao(user_id)
+
+
+@api_router.get("/auth/microsoft/callback")
+async def auth_microsoft_callback(code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
+    def volta(erro: str) -> RedirectResponse:
+        return RedirectResponse(f"showup://auth-callback?error={erro}")
+
+    if error or not code or not state or not _microsoft_ativo():
+        return volta(error or "sem_code")
+    # `state` é de uso único: apaga ao ler (impede reuso e login forjado por link de terceiros)
+    guardado = await db.oauth_states.find_one_and_delete({"state": state})
+    if not guardado or _aware(guardado["expira_em"]) <= _now():
+        return volta("estado_invalido")
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(MS_TOKEN_URL, data={
+            "client_id": MICROSOFT_CLIENT_ID, "client_secret": MICROSOFT_CLIENT_SECRET, "code": code,
+            "redirect_uri": MICROSOFT_OAUTH_REDIRECT_URI, "grant_type": "authorization_code",
+            "scope": "openid profile email",
+        })
+    if resp.status_code != 200:
+        logging.error("Falha trocando code por token na Microsoft: %s", resp.text[:300])
+        return volta("token_exchange_failed")
+    id_token_str = resp.json().get("id_token")
+    if not id_token_str:
+        return volta("sem_id_token")
+    try:
+        claims = _claims_do_jwt(id_token_str)
+    except ValueError:
+        return volta("token_invalido")
+
+    # confere para quem e de quem é o token (a assinatura não precisa: ver _claims_do_jwt)
+    valido = (
+        claims.get("aud") == MICROSOFT_CLIENT_ID
+        and claims.get("iss") == f"https://login.microsoftonline.com/{MS_TENANT_PESSOAL}/v2.0"
+        and claims.get("tid") == MS_TENANT_PESSOAL
+        and claims.get("nonce") == guardado["nonce"]
+        and isinstance(claims.get("exp"), (int, float)) and claims["exp"] > _now().timestamp()
+    )
+    if not valido:
+        logging.warning("id_token da Microsoft recusado (aud/iss/tid/nonce/exp não conferem)")
+        return volta("token_invalido")
+    try:
+        sessao = await _login_ou_cria_sessao_microsoft(claims)
+    except HTTPException as e:
+        return volta(e.detail)
+    return RedirectResponse(f"showup://auth-callback?token={sessao.session_token}")
 
 
 @api_router.get("/auth/me", response_model=MeResponse)
@@ -883,7 +1305,7 @@ async def excluir_conta(request: Request, authorization: Optional[str] = Header(
         }, "$unset": {
             "stripe_customer_id": "", "stripe_billing_customer_id": "", "stripe_account_id": "",
             "stripe_subscription_id": "", "plano_pendente": "", "plano_trial_termina_em": "",
-            "plano_cobranca_pendente": "",
+            "plano_cobranca_pendente": "", "password_hash": "", "microsoft_id": "", "email_verified": "",
         }},
     )
     await db.user_sessions.delete_many({"user_id": user_id})
@@ -891,6 +1313,8 @@ async def excluir_conta(request: Request, authorization: Optional[str] = Header(
     # aparelho continuaria recebendo avisos de uma conta excluída) e o cartão salvo.
     await db.device_tokens.delete_many({"user_id": user_id})
     await db.customer_cards.delete_many({"user_id": user_id})
+    await db.email_codes.delete_many({"email": doc["email"]})
+    await db.login_attempts.delete_many({"email": doc["email"]})
     # No Stripe, apaga os Customers (melhor esforço — não trava a exclusão). Os
     # registros de transação ficam lá por obrigação legal; a conta conectada do
     # profissional (verificação de identidade) segue a política do próprio Stripe.
@@ -2391,6 +2815,14 @@ async def lifespan(_: FastAPI):
     # evita duplicar o mesmo cliente se ele volta a agendar pelo mesmo número.
     await db.users.create_index("telefone", unique=True, sparse=True)
     await db.users.create_index("user_id", unique=True)
+    await db.users.create_index("microsoft_id", unique=True, sparse=True)
+    # expira_em: o Mongo apaga sozinho os códigos, os "state" do OAuth e os bloqueios de login
+    await db.email_codes.create_index([("email", 1), ("finalidade", 1)], unique=True)
+    await db.email_codes.create_index("expira_em", expireAfterSeconds=0)
+    await db.oauth_states.create_index("state", unique=True)
+    await db.oauth_states.create_index("expira_em", expireAfterSeconds=0)
+    await db.login_attempts.create_index("email", unique=True)
+    await db.login_attempts.create_index("expira_em", expireAfterSeconds=0)
     await db.user_sessions.create_index("session_token", unique=True)
     await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
     await db.servicos.create_index([("profissional_id", 1), ("ativo", 1)])

@@ -54,12 +54,16 @@ O ShowUp não presta os serviços agendados: eles são combinados diretamente en
 
 ## Acesso ao app (instruções para o revisor do Google)
 
-O login é só com Google, e o revisor precisa conseguir entrar:
+O revisor precisa conseguir entrar. **O jeito mais simples é uma conta de e-mail e senha** (não depende de Google nem de
+verificação em duas etapas):
 
-1. Crie **uma conta Google dedicada** à revisão (ex.: `showup.revisao@gmail.com`), **sem verificação em duas etapas** — o revisor não consegue receber o código.
+1. Configure o cadastro por e-mail (`LOGIN.md`, seção A), abra o app e crie uma conta de revisão (ex.:
+   `revisao@seudominio.com.br`) com uma senha só para isso. Escolha o perfil "Profissional", cadastre um serviço e
+   horários de atendimento, para o revisor conseguir fazer uma reserva de ponta a ponta.
 2. Em *Acesso ao app*, escolha "todas ou algumas funcionalidades têm restrições" e informe:
-   > Login apenas com conta Google. Use: e-mail `[...]` / senha `[...]`. Ao entrar, escolha o perfil "Profissional" para cadastrar serviços e ver a agenda, ou "Cliente" para reservar. O pagamento usa o modo de teste do Stripe: cartão 4242 4242 4242 4242, qualquer validade futura e CVC.
-3. Essa conta deve ter um serviço e horários já cadastrados, para o revisor conseguir fazer uma reserva de ponta a ponta.
+   > Na tela inicial, toque em "Continuar com e-mail" e entre com: e-mail `[...]` / senha `[...]`. Para agendar como
+   > cliente, use o link de agendamento do profissional ou crie outra conta. O pagamento usa o modo de teste do Stripe:
+   > cartão 4242 4242 4242 4242, qualquer validade futura e CVC.
 
 *(Se o build enviado ao Google já estiver em modo de produção do Stripe, troque a frase do cartão: o revisor não deve fazer cobranças reais.)*
 
@@ -70,8 +74,8 @@ costumam não contar como "compartilhamento" no Play, mas **declare-os como cole
 
 | Categoria do Play | Coleta? | Detalhe | Finalidade |
 |---|---|---|---|
-| Informações pessoais: nome | Sim | Vem do login com Google | Funcionalidade do app; gerenciamento de conta |
-| Informações pessoais: e-mail | Sim | Vem do login com Google | Funcionalidade do app; gerenciamento de conta |
+| Informações pessoais: nome | Sim | Vem do login com Google ou Microsoft, ou digitado no cadastro por e-mail | Funcionalidade do app; gerenciamento de conta |
+| Informações pessoais: e-mail | Sim | Vem do login com Google ou Microsoft, ou digitado no cadastro por e-mail | Funcionalidade do app; gerenciamento de conta |
 | Informações pessoais: ID de usuário | Sim | ID interno da conta | Funcionalidade do app; gerenciamento de conta |
 | Fotos | Sim | Foto de perfil do Google (guardamos o link) | Funcionalidade do app |
 | Informações financeiras: informações de pagamento | Sim | Cartão coletado pelo SDK do Stripe; não guardamos o número completo | Funcionalidade do app; pagamentos |
@@ -79,6 +83,8 @@ costumam não contar como "compartilhamento" no Play, mas **declare-os como cole
 | Identificadores de dispositivo ou outros | Sim | Token de notificações push (Expo) | Funcionalidade do app (notificações) |
 | Localização, contatos, mensagens, áudio, arquivos, calendário | Não | — | — |
 | Desempenho/diagnóstico (relatórios de falha) | Não | Nenhuma ferramenta de falhas instalada hoje; se adicionar uma (ex.: Sentry), volte aqui | — |
+
+Senha: o Play não tem uma categoria própria para senhas. No cadastro por e-mail ela é guardada **só como hash** (nunca em texto); informe isso se o formulário perguntar sobre dados de autenticação.
 
 Telefone: o app **não** coleta; o número é digitado só na **página web** de agendamento (que não faz parte da ficha do app).
 

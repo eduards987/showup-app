@@ -1,6 +1,6 @@
 # Lançamento do ShowUp — o que falta, em ordem
 
-Marque cada item quando terminar. **Quem** diz de quem é a tarefa: *você* (só você consegue),
+**Para montar e testar tudo, siga `TESTAR-TUDO.md`; para publicar o código nos servidores, `DEPLOY.md`.** Marque cada item quando terminar. **Quem** diz de quem é a tarefa: *você* (só você consegue),
 *eu* (já está no código/arquivos) ou *os dois*. Os tempos são estimativas.
 
 ## 0. Três decisões que só você toma
@@ -23,6 +23,8 @@ Marque cada item quando terminar. **Quem** diz de quem é a tarefa: *você* (só
 - [ ] **Preencher os dados do site** (você, 5 min). Os Termos e a Privacidade têm três campos em branco: nome/razão social, CPF/CNPJ e um **e-mail que você lê de verdade** (a política publicada antes usava `privacidade@showup.app`, que só funciona se você for dono desse domínio). Da raiz do projeto:
   `python lancamento/preencher-site.py --responsavel "Seu Nome" --documento "CPF 000.000.000-00" --email "contato@..."`
 - [ ] **Revisão jurídica dos Termos e da Privacidade** (você · um advogado ou contador de confiança). Os termos são um rascunho meu, **não aconselhamento jurídico**. Pontos para olhar: reembolso, retenção de valores em contestação, foro e a promessa de atender pedidos de exclusão por e-mail **em até 15 dias** (você precisa conseguir cumprir).
+- [ ] **Login por e-mail e Microsoft** (você, opcional mas recomendado para o lançamento): siga `LOGIN.md`. Só configure
+  depois de publicar a Política de Privacidade nova (a antiga dizia que o app não guarda senhas).
 - [ ] **Publicar o site** (você): `python lancamento/preencher-site.py --verificar` e, só se passar, `firebase deploy --only hosting --project showup-509120`. Conferir que `/termos`, `/privacidade` e `/excluir-conta` abrem.
 - [ ] **Google Cloud Console > Tela de consentimento OAuth**: preencher nome, e-mail de suporte, link da política de privacidade e **publicar o app ("Em produção")**. Em "Teste", só quem está na lista de testadores consegue entrar.
 - [ ] **Webhooks do Stripe** (você) — ver `CHAVES-PRODUCAO.md`, seção 4. Dois endpoints, um deles de Connect, e o evento `customer.subscription.trial_will_end`.

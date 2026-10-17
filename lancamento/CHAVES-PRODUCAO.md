@@ -14,6 +14,11 @@ secreta de um modo com a publicável do outro.
 | Price IDs dos planos | `price_...` (teste) | `price_...` (produção) | Render: `STRIPE_PRICE_ID_PROFISSIONAL` / `_ULTRA` (só se `PLANOS_COMPRA_HABILITADA=1`) |
 | Backend usado pelo app | — | URL pública (https) | EAS: `EXPO_PUBLIC_BACKEND_URL`; `agendar.html`: `BACKEND_URL` |
 
+> **Como o backend escolhe o gateway:** `STRIPE_API_KEY` vazia = modo **simulado** (aprova reservas sem cobrar nada — só
+> para desenvolvimento); `sk_test_`/`sk_live_`/`rk_...` válida = Stripe real; preenchida e **inválida** = o servidor se
+> recusa a subir (o Render mantém a versão anterior no ar). Depois de trocar a chave, confirme com
+> `python lancamento/verificar-producao.py ...`: ele acusa `gateway = mock` se algo escapou.
+
 ## 2. Ordem
 
 1. Ative a conta da plataforma no Stripe (Dashboard > Ativar conta) e espere ficar liberada.

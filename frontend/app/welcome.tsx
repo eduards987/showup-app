@@ -1,8 +1,10 @@
 // Welcome screen: full-bleed image, gradient scrim, bottom card with Google Sign-In.
 
+import Ionicons from "@react-native-vector-icons/ionicons";
+import { useQuery } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
-import { Redirect } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
 import { useState } from "react";
 import {
   ActivityIndicator,
@@ -14,7 +16,9 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
+import type { Metodos } from "@/src/lib/auth-email";
 import { URL_PRIVACIDADE, URL_TERMOS } from "@/src/lib/legal";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
@@ -86,6 +90,21 @@ const useStyles = makeStyles((colors) => ({
     justifyContent: "center",
   },
   gLogoText: { color: "#4285F4", fontWeight: "700", fontSize: 14 },
+  outlineBtn: {
+    height: 54,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: spacing.md,
+  },
+  outlineText: { color: colors.onSurface, fontSize: 16, fontWeight: "600" },
+  msLogo: { width: 20, height: 20, flexDirection: "row", flexWrap: "wrap", gap: 2 },
+  msQuad: { width: 9, height: 9 },
+  erro: { fontSize: 13, color: colors.error, textAlign: "center", lineHeight: 18 },
   legal: {
     marginTop: spacing.md,
     fontSize: 12,
@@ -101,16 +120,41 @@ export default function Welcome() {
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const [loading, setLoading] = useState(false);
+  const router = useRouter();
+  const [loading, setLoading] = useState<"google" | "microsoft" | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  // Quais jeitos de entrar o servidor consegue atender (Microsoft e e-mail dependem de configuração
+  // dele). Enquanto não responde — ou se o servidor estiver dormindo — só o Google aparece.
+  const metodosQ = useQuery({
+    queryKey: ["auth-metodos"],
+    queryFn: () => api<Metodos>("/api/auth/metodos"),
+    retry: 2,
+    staleTime: 5 * 60 * 1000,
+  });
+  const metodos = metodosQ.data;
 
   if (auth.status === "authenticated") return <Redirect href="/" />;
 
   const handleSignIn = async () => {
-    setLoading(true);
+    setErro(null);
+    setLoading("google");
     try {
       await auth.signIn();
     } finally {
-      setLoading(false);
+      setLoading(null);
+    }
+  };
+
+  const handleMicrosoft = async () => {
+    setErro(null);
+    setLoading("microsoft");
+    try {
+      setErro(await auth.signInMicrosoft());
+    } catch {
+      setErro("Não foi possível entrar com a Microsoft. Tente de novo.");
+    } finally {
+      setLoading(null);
     }
   };
 
@@ -141,13 +185,13 @@ export default function Welcome() {
         <Pressable
           testID="google-signin-button"
           onPress={handleSignIn}
-          disabled={loading}
+          disabled={loading !== null}
           style={({ pressed }) => [
             styles.googleBtn,
             pressed && styles.googleBtnPressed,
           ]}
         >
-          {loading ? (
+          {loading === "google" ? (
             <ActivityIndicator color={colors.onSurfaceInverse} />
           ) : (
             <>
@@ -158,6 +202,44 @@ export default function Welcome() {
             </>
           )}
         </Pressable>
+        {metodos?.microsoft ? (
+          <Pressable
+            testID="microsoft-signin-button"
+            onPress={handleMicrosoft}
+            disabled={loading !== null}
+            style={({ pressed }) => [styles.outlineBtn, pressed && styles.googleBtnPressed]}
+          >
+            {loading === "microsoft" ? (
+              <ActivityIndicator color={colors.onSurface} />
+            ) : (
+              <>
+                <View style={styles.msLogo}>
+                  <View style={[styles.msQuad, { backgroundColor: "#F25022" }]} />
+                  <View style={[styles.msQuad, { backgroundColor: "#7FBA00" }]} />
+                  <View style={[styles.msQuad, { backgroundColor: "#00A4EF" }]} />
+                  <View style={[styles.msQuad, { backgroundColor: "#FFB900" }]} />
+                </View>
+                <Text style={styles.outlineText}>Continuar com Microsoft</Text>
+              </>
+            )}
+          </Pressable>
+        ) : null}
+        {metodos?.email ? (
+          <Pressable
+            testID="email-signin-button"
+            onPress={() => router.push("/entrar-email")}
+            disabled={loading !== null}
+            style={({ pressed }) => [styles.outlineBtn, pressed && styles.googleBtnPressed]}
+          >
+            <Ionicons name="mail-outline" size={20} color={colors.onSurface} />
+            <Text style={styles.outlineText}>Continuar com e-mail</Text>
+          </Pressable>
+        ) : null}
+        {erro ? (
+          <Text style={styles.erro} testID="login-erro">
+            {erro}
+          </Text>
+        ) : null}
         <Text style={styles.legal}>
           Ao continuar você concorda com os{" "}
           <Text testID="link-termos" style={styles.legalLink} onPress={() => Linking.openURL(URL_TERMOS)}>

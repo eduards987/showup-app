@@ -2713,3 +2713,37 @@ de segurança de dados, acesso do revisor), `CHAVES-PRODUCAO.md` (troca teste→
 - Pacotes antigos levavam `backend/.env` e `frontend/.env` — `empacotar` agora exclui `.env`, `*.pem`, `*.key`.
 - Testes que chamam tratadores com dict comum escondem bugs de objeto do Stripe: passar pelo caminho real
   (assinatura → `construct_event`).
+
+### Link de agendamento: dropdown "não aparecia" (15/10/2026)
+O código já tinha os dois `<select>`; o que o usuário via era a versão ANTIGA publicada (o pacote completo do
+site estava travado por causa dos campos em branco dos Termos). Correções: `firebase.json` com
+`Cache-Control: no-cache` (o padrão do Firebase deixa HTML em cache ~1h), marcador de versão `v2026.10.15` no
+rodapé do `agendar.html` (confirma o que está no ar) e pacote `showup-agendar-agora.zip` (só a página, sem
+depender dos Termos). Testado no navegador com os horários REAIS gerados pelo backend, em 3 fusos.
+
+### Bug crítico achado antes do go-live: gateway "mock" com chave de produção (15/10/2026)
+`server.py` só ligava o Stripe real se `STRIPE_API_KEY` começasse com `sk_test_`. Com `sk_live_` o backend caía em
+SILÊNCIO no `MockGateway` (aprova reservas sem cobrar nada). Corrigido com `_gateway_para_chave`: vazia → mock;
+`sk_/rk_` + `test/live` → stripe; preenchida e inválida → RuntimeError (o servidor não sobe; o Render mantém a versão
+anterior). Achado ao rodar `lancamento/verificar-producao.py` contra o backend real, que acusa `gateway = mock`.
+Roteiro de publicação em `lancamento/DEPLOY.md`.
+
+## Login por e-mail + senha e Microsoft (15/10/2026)
+Pedido: o cliente criar a conta sem depender do Gmail (ex.: Outlook). Guia completo em `lancamento/LOGIN.md`.
+- **Config-driven**: `GET /auth/metodos` diz o que está ligado (`google` sempre; `microsoft` com `MICROSOFT_*`;
+  `email` com `SMTP_HOST`+`SMTP_FROM`). O app só mostra os botões que o servidor atende; sem config, nada muda.
+- **E-mail + senha** (`/auth/email/{cadastro,verificar,login,esqueci,redefinir}`): a conta só é criada DEPOIS do
+  código de 6 dígitos (10 min, 5 tentativas, uso único, guardado só como HMAC); senha em scrypt (`senhas.py`, sem
+  dependência nova); 60 s entre pedidos; bloqueio de 15 min após 5 falhas; respostas idênticas para e-mail com e sem
+  conta (e aviso por e-mail ao dono); redefinir derruba todas as sessões; senha nova só vale depois de provar o e-mail
+  (conta Google existente ganha senha pelo mesmo caminho). Envio por SMTP padrão (`emailer.py`).
+- **Microsoft** (`/auth/microsoft/{start,callback}`): só contas PESSOAIS (tenant `9188040d-...`); `state` de uso único
+  e `nonce` guardados no servidor; confere aud/iss/tid/nonce/exp (assinatura dispensada por vir direto do endpoint de
+  token via TLS). Contas corporativas recusadas de propósito (falha "nOAuth": e-mail do claim não é confiável).
+- **Exclusão de conta** também apaga `password_hash`, `microsoft_id`, códigos e bloqueios.
+- **Política de Privacidade corrigida**: dizia "nunca armazenamos senhas" — falso com este recurso. Também passou a
+  listar Microsoft, provedor de e-mail, Render, Expo e Firebase. Publicar o site ANTES de ligar o SMTP.
+- App: `src/lib/auth-email.ts` (validação pura, testada em node), `app/entrar-email.tsx` (entrar / criar / código /
+  esqueci / redefinir), `signInMicrosoft` e `signInWithToken` em `auth.tsx`, botões em `welcome.tsx`.
+- Testes: `test_senhas_e_email.py` (SMTP falso em socket real), `test_auth_email.py` (fluxos + ataques; mutação
+  conferida em 7 proteções). Não testado em aparelho nem contra Microsoft/SMTP reais.

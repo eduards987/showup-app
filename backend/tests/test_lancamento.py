@@ -103,7 +103,8 @@ class _Col:
 class FakeDB:
     def __init__(self, users, **cols):
         self.users = _Col(users)
-        for nome in ("agendamentos", "user_sessions", "device_tokens", "customer_cards", "servicos"):
+        for nome in ("agendamentos", "user_sessions", "device_tokens", "customer_cards", "servicos",
+                     "email_codes", "login_attempts"):
             setattr(self, nome, _Col(cols.get(nome)))
 
 
@@ -446,3 +447,26 @@ def test_resumo_do_plano_informa_cobranca_pendente(ctx):
     assert client.get("/api/me/plano/resumo").json()["cobranca_pendente"] is True
     db.users.docs[0]["plano"] = "free"      # no Free não faz sentido avisar de cobrança
     assert client.get("/api/me/plano/resumo").json()["cobranca_pendente"] is False
+
+
+# ------------------------------------------------------------------ escolha do gateway pela chave do Stripe
+CHAVE_LONGA = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4"
+
+
+@pytest.mark.parametrize("chave", [f"sk_test_{CHAVE_LONGA}", f"sk_live_{CHAVE_LONGA}",
+                                   f"rk_test_{CHAVE_LONGA}", f"rk_live_{CHAVE_LONGA}", f"  sk_live_{CHAVE_LONGA}\\n"])
+def test_chave_do_stripe_de_teste_ou_producao_liga_o_gateway_real(chave):
+    assert server._gateway_para_chave(chave) == "stripe"
+
+
+@pytest.mark.parametrize("chave", ["", "   ", None])
+def test_sem_chave_usa_o_modo_simulado(chave):
+    assert server._gateway_para_chave(chave) == "mock"
+
+
+@pytest.mark.parametrize("chave", ["sk_test_...", "sk_live_curta", "abc123", f"pk_live_{CHAVE_LONGA}",
+                                   f"sk_prod_{CHAVE_LONGA}"])
+def test_chave_preenchida_mas_irreconhecivel_nao_cai_no_modo_simulado(chave):
+    # o modo simulado "aprova" reservas sem cobrar nada: em produção isso seria silencioso e caro
+    with pytest.raises(RuntimeError, match="STRIPE_API_KEY"):
+        server._gateway_para_chave(chave)
