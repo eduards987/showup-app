@@ -140,7 +140,9 @@ export default function Welcome() {
     setErro(null);
     setLoading("google");
     try {
-      await auth.signIn();
+      setErro(await auth.signIn());
+    } catch {
+      setErro("Não foi possível entrar com o Google. Tente de novo.");
     } finally {
       setLoading(null);
     }

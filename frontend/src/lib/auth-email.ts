@@ -39,6 +39,8 @@ export function codigoCompleto(valor: string): boolean {
 
 /** Código que o backend devolve no redirecionamento (showup://auth-callback?error=...) → texto pro usuário. */
 export function mensagemErroLoginSocial(codigo: string | null, provedor: "Google" | "Microsoft"): string {
+  // O código técnico entre parênteses ajuda a achar a causa no log do servidor ("token_exchange_failed" etc.).
+  const detalhe = codigo && !/\s/.test(codigo) ? ` (código: ${codigo})` : "";
   switch (codigo) {
     case "access_denied":
     case "user_cancelled":
@@ -48,14 +50,15 @@ export function mensagemErroLoginSocial(codigo: string | null, provedor: "Google
     case "estado_invalido":
       return "O pedido de login expirou. Toque no botão e tente de novo.";
     case "token_exchange_failed":
+      return `O servidor não conseguiu confirmar o login com ${provedor}. Tente de novo.${detalhe}`;
     case "token_invalido":
     case "sem_id_token":
     case "sem_code":
     case null:
-      return `Não foi possível entrar com ${provedor}. Tente de novo.`;
+      return `Não foi possível entrar com ${provedor}. Tente de novo.${detalhe}`;
     default:
       // o backend manda mensagens já em português (ex.: "A conta Microsoft não informou um e-mail")
-      return /\s/.test(codigo) ? codigo : `Não foi possível entrar com ${provedor}. Tente de novo.`;
+      return /\s/.test(codigo) ? codigo : `Não foi possível entrar com ${provedor}. Tente de novo.${detalhe}`;
   }
 }
 

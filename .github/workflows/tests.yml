@@ -38,3 +38,4 @@ jobs:
           tests/test_auth_email.py
           tests/test_verificar_config.py
           tests/test_verificar_mongo.py
+          tests/test_verificar_google.py

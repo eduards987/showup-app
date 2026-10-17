@@ -280,6 +280,7 @@ A primeira chamada ao Render pode levar ~1 minuto se ele estiver dormindo.
 
 | Sintoma | Causa mais provável |
 |---|---|
+| Google: escolho a conta e **volto para a tela inicial** | O servidor não conseguiu trocar o código do Google por uma sessão, quase sempre `GOOGLE_CLIENT_SECRET` (ou o ID) do Render diferente do Google Cloud, em especial depois de trocar o segredo. O app agora mostra a mensagem com um código entre parênteses. Rode `py lancamento\verificar-google.py --perguntar` (diz se o ID e o segredo conferem) e procure no log do Render a linha com `google/callback`. |
 | Google: `redirect_uri_mismatch` | A URI do Google Cloud difere do `GOOGLE_OAUTH_REDIRECT_URI` (compare caractere por caractere). |
 | Google: "acesso bloqueado" / app não verificado | O Gmail não está na lista de usuários de teste (passo 2.3). |
 | Tela de "application loading" no meio do login | O Render estava dormindo; tente de novo (o GitHub Actions de keep-alive ajuda). |

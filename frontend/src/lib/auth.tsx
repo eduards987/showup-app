@@ -51,7 +51,8 @@ type AuthState =
   | { status: "unauthenticated"; user: null };
 
 type AuthContextValue = AuthState & {
-  signIn: () => Promise<void>;
+  /** Login com Google. Devolve a mensagem de erro para mostrar na tela, ou null se deu certo/foi cancelado. */
+  signIn: () => Promise<string | null>;
   /** Login com conta Microsoft (Outlook, Hotmail, Live). Devolve a mensagem de erro, ou null se deu certo/foi cancelado. */
   signInMicrosoft: () => Promise<string | null>;
   /** Conclui o login com um session_token que o backend já emitiu (e-mail + senha, código de verificação). */
@@ -170,8 +171,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [applyAuth],
   );
 
-  const signIn = useCallback(async () => {
-    if (!googleWebClientId || !googleCallbackUrl) return;
+  const signIn = useCallback(async (): Promise<string | null> => {
+    if (!googleWebClientId || !googleCallbackUrl) {
+      return "O login com Google não está configurado neste app (faltam EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ou EXPO_PUBLIC_BACKEND_URL no frontend/.env).";
+    }
     // Dá até 3s pro "acorda o backend" do useEffect terminar antes de abrir
     // o navegador — não trava o login por muito tempo se o backend estiver
     // realmente dormindo (nesse caso, o usuário ainda pode ver a tela do
@@ -193,20 +196,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }).toString();
 
     const result = await WebBrowser.openAuthSessionAsync(authUrl, APP_AUTH_CALLBACK);
-    if (result.type !== "success") return; // usuário cancelou/fechou o navegador
+    if (result.type !== "success") return null; // usuário cancelou/fechou o navegador
 
     const returnedUrl = new URL(result.url);
     const error = returnedUrl.searchParams.get("error");
     if (error) {
       console.warn("[auth] Login com Google falhou:", error);
-      return;
+      return mensagemErroLoginSocial(error, "Google");
     }
     const sessionToken = returnedUrl.searchParams.get("token");
     if (!sessionToken) {
       console.warn("[auth] Callback do Google voltou sem token");
-      return;
+      return mensagemErroLoginSocial(null, "Google");
     }
-    await signInWithToken(sessionToken);
+    try {
+      await signInWithToken(sessionToken);
+    } catch (e) {
+      console.warn("[auth] Não consegui concluir o login com o token recebido:", e);
+      return e instanceof ApiError
+        ? `O servidor recusou a sessão (erro ${e.status}). Tente de novo.`
+        : "Sem conexão com o servidor. Confira a internet e tente de novo.";
+    }
+    return null;
   }, [signInWithToken]);
 
   const signInMicrosoft = useCallback(async (): Promise<string | null> => {
