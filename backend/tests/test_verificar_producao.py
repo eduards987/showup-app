@@ -48,6 +48,7 @@ def servidores():
         b_rotas = {("GET", "/api/"): (200, json.dumps({"service": "ShowUp API", "status": "ok", "gateway": "stripe"})),
                    ("GET", "/api/auth/metodos"): (200, json.dumps({"google": True, "microsoft": True, "email": True})),
                    ("POST", "/api/me/connect/painel"): (401, "{}"),
+                   ("POST", "/api/me/notificacoes/teste"): (401, "{}"),
                    ("POST", "/api/webhooks/stripe"): (400, "{}")}
         b_rotas.update(backend or {})
         s_rotas = {("GET", "/agendar"): (200, AGENDAR_NOVO), ("GET", "/termos"): (200, "Termos completos"),
@@ -142,3 +143,16 @@ def test_backend_sem_lista_de_logins_avisa(servidores, capsys):
     ub, us = servidores(backend={("GET", "/api/auth/metodos"): (404, "x")})
     assert _rodar(ub, us) == 0
     assert "lista de logins" in capsys.readouterr().out
+
+
+def test_backend_sem_os_avisos_por_notificacao_falha_e_manda_publicar(servidores, capsys):
+    ub, us = servidores(backend={("POST", "/api/me/notificacoes/teste"): (404, "{}")})
+    assert _rodar(ub, us) == 1
+    saida = capsys.readouterr().out
+    assert "NÃO tem os avisos por notificação" in saida and "git push" in saida
+
+
+def test_backend_com_os_avisos_por_notificacao_passa(servidores, capsys):
+    ub, us = servidores()
+    assert _rodar(ub, us) == 0
+    assert "avisos por notificação (novo agendamento e próximo atendimento)" in capsys.readouterr().out

@@ -2,7 +2,7 @@
   "expo": {
     "name": "ShowUp",
     "slug": "holdbooked-app",
-    "owner": "octalabs",
+    "owner": "educerqueira",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -50,9 +50,8 @@
     },
     "extra": {
       "eas": {
-        "projectId": "4925717d-9534-4ad9-93c5-4cac60a55e7a"
-      },
-      "router": {}
+        "projectId": "e403a3c9-d25f-4337-860a-2bd5df12e201"
+      }
     }
   }
 }

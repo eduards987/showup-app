@@ -104,14 +104,30 @@ No modo de teste o Stripe tenta reenviar só 3 vezes; depois, reenvie à mão pe
 | `whsec_...` do endpoint **Connected accounts** | Render: `STRIPE_CONNECT_WEBHOOK_SECRET` |
 | `price_...` do Profissional / do Ultra | Render: `STRIPE_PRICE_ID_PROFISSIONAL` / `STRIPE_PRICE_ID_ULTRA` |
 
-### 2.3 Google (login)
-- **Google Cloud Console > APIs e serviços > Credenciais > ID do cliente OAuth (Web):**
-  - `GOOGLE_WEB_CLIENT_ID` e `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` = o mesmo ID.
-  - **URI de redirecionamento autorizada:** `https://showup-backend-s9y1.onrender.com/api/auth/google/callback`
-    (idêntica ao `GOOGLE_OAUTH_REDIRECT_URI`, caractere por caractere).
-- **Tela de consentimento (Google Auth Platform > Público/Audience):** enquanto o app está em **"Teste"**, só entram os
-  e-mails da lista de **usuários de teste**. Adicione os Gmails de quem vai testar (até 100). Se aparecer "acesso bloqueado",
-  é isto.
+### 2.3 Google (login) — onde pegar cada informação
+
+**O ID do cliente** (`GOOGLE_WEB_CLIENT_ID`) você pode ver quando quiser; **o segredo** (`GOOGLE_CLIENT_SECRET`) o Google
+**mostra inteiro uma única vez**, na hora em que é criado. Depois não dá mais para consultar: se perdeu ou não sabe qual
+está no Render, a solução é **criar um segredo novo** e colocá-lo no Render.
+
+1. Entre em `console.cloud.google.com` e confira, no topo, que o **projeto** é o do ShowUp.
+2. Menu da esquerda: **APIs e serviços > Credenciais** (em contas novas aparece como *Google Auth Platform > Clientes*).
+3. Em **IDs do cliente OAuth 2.0**, clique no cliente do tipo **Aplicativo da Web** (o do ShowUp).
+4. **ID do cliente:** está no topo da página (termina em `.apps.googleusercontent.com`). Copie para
+   `GOOGLE_WEB_CLIENT_ID` (Render) e `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` (`frontend\.env`): é o **mesmo** nos dois.
+5. **Segredo novo:** na mesma página, em **Segredos do cliente**, clique em **Adicionar segredo**. Aparece um segredo novo
+   (começa com `GOCSPX-`). **Copie o valor inteiro na hora**, antes de fechar. O Google aceita no máximo 2 segredos ao mesmo
+   tempo: se já houver 2, desative e apague o mais antigo antes de criar outro.
+6. Cole em **Render > Environment > `GOOGLE_CLIENT_SECRET`** e use **Save and deploy**. Segredo **desativado** ou antigo no
+   Render = login volta para a tela inicial.
+7. **URIs de redirecionamento autorizados:** na mesma página, deve existir
+   `https://showup-backend-s9y1.onrender.com/api/auth/google/callback` (igual ao `GOOGLE_OAUTH_REDIRECT_URI`, sem espaço nem `/` a mais).
+8. **Quem pode entrar enquanto o app está em "Teste":** menu **Google Auth Platform > Público (Audience) > Usuários de teste >
+   Add users**. Adicione o Gmail de quem vai testar.
+
+**Conferir se ID e segredo estão certos** (1 minuto): `py lancamento\verificar-google.py --perguntar`. Ele pergunta o ID, o
+segredo (não aparece enquanto você digita) e o endereço de retorno (Enter usa o do Render). Resposta **"ACEITOU"** = certo;
+**"NÃO reconhece"** = segredo ou ID errado (volte ao passo 5).
 
 ### 2.4 Microsoft (opcional) e e-mail (opcional)
 - Siga o `LOGIN.md`: seção **B** (Microsoft Entra) e seção **A** (SMTP).
@@ -187,6 +203,15 @@ nunca mostra a senha. O servidor precisa de **permissão de escrita** (ele cria 
 - Acompanhe na aba **Logs** (ou **Events**). Deu certo quando o status vira **Live** e o log mostra o Uvicorn rodando.
 - **Se o deploy falhar**, o Render mantém a versão anterior no ar. Leia o final do log (tabela do passo 7).
 
+### 3.4b Como abrir e copiar os logs do Render
+1. `dashboard.render.com` > clique no serviço `showup-backend-s9y1`.
+2. No menu da esquerda, clique em **Logs**.
+3. Faça o erro acontecer de novo (ex.: tente entrar com o Google) e **volte aos logs na hora**: as linhas mais novas ficam no fim.
+4. Use a caixa de busca do topo da tela de logs para filtrar por uma palavra (ex.: `google/callback` ou `ERROR`).
+5. Selecione as linhas com o mouse, copie (Ctrl+C) e cole na conversa. Antes de colar, **apague o que vem depois de `code=`**
+   nas linhas de endereço (é um código de uso único, mas não precisa ir junto).
+6. Nunca cole valores de variáveis (senhas, `sk_`, `whsec_`, `GOCSPX-`). Os logs normais não os contêm.
+
 ### 3.5 Confirmar
 - Abra no navegador `https://showup-backend-s9y1.onrender.com/api/` → deve mostrar `{"service":"ShowUp API","status":"ok","gateway":"stripe"}`.
   Se `gateway` vier `mock`, a `STRIPE_API_KEY` está vazia.
@@ -251,12 +276,14 @@ A primeira chamada ao Render pode levar ~1 minuto se ele estiver dormindo.
 - [ ] Senha errada 5 vezes: bloqueia por 15 minutos e a mensagem é clara.
 
 **B. Profissional**
+- [ ] *Configurações > Notificações > Enviar notificação de teste*: a notificação chega no celular (se não, siga `NOTIFICACOES.md`).
 - [ ] Cadastra serviço (valor e taxa de falta) e horários de atendimento.
 - [ ] *Perfil → link de agendamento*: copia o link.
 - [ ] *Configurações → Repasse automático*: **Conectar Stripe**. No modo teste o formulário do Stripe oferece dados de teste ou um
   botão para pular etapas. Volte ao app: o estado muda (pendente / em análise / conectada). O botão abre o painel do Stripe.
 
 **C. Cliente**
+- [ ] Quando a reserva é feita, o profissional recebe **"Novo agendamento"** em segundos (cartão pelo link e pelo app).
 - [ ] Abre o link no navegador: escolhe serviço → **data e horário em dropdown** → reserva com `4242…`.
 - [ ] Reserva também pelo app, logado como cliente.
 - [ ] Cartão recusado (`…0002`) mostra mensagem clara e não cria a reserva.

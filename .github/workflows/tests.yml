@@ -39,3 +39,5 @@ jobs:
           tests/test_verificar_config.py
           tests/test_verificar_mongo.py
           tests/test_verificar_google.py
+          tests/test_notificacoes.py
+          tests/test_expo_push.py

@@ -218,3 +218,9 @@ def test_url_do_mongo_correta_nao_gera_falso_alarme(url):
 def test_verificador_de_config_acusa_o_exemplo_do_roteiro_em_maiusculas(tmp_path, capsys):
     codigo, saida = rodar(tmp_path, capsys, backend={"MONGO_URL": "mongodb+srv://USUARIO:SENHA@cluster0.xxxxx.mongodb.net/?retryWrites=true"})
     assert codigo == 1 and "texto de exemplo" in saida and "SENHA@" not in saida
+
+
+@pytest.mark.parametrize("valor,codigo_esperado,trecho", [("60", 0, "60 min antes"), ("0", 0, "desligado"), ("1h", 1, "número de minutos"), ("-5", 1, "número de minutos")])
+def test_lembrete_do_proximo_atendimento_precisa_ser_um_numero(tmp_path, capsys, valor, codigo_esperado, trecho):
+    codigo, saida = rodar(tmp_path, capsys, backend={"LEMBRETE_PROFISSIONAL_MIN": valor})
+    assert codigo == codigo_esperado and trecho in saida

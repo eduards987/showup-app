@@ -87,6 +87,16 @@ def verificar_backend(base: str, rel: Relatorio) -> None:
     else:
         rel.atencao(f"Rota do painel do Stripe respondeu {status} (esperado 401).")
 
+    # avisos por notificação (novo agendamento / próximo atendimento / botão de teste): rota que só existe na versão nova
+    status, _, _ = requisitar(f"{base}/api/me/notificacoes/teste", "POST", b"{}")
+    if status in (401, 403):
+        rel.ok("Backend com os avisos por notificação (novo agendamento e próximo atendimento).")
+    elif status in (404, 405):
+        rel.falhou("O backend ainda NÃO tem os avisos por notificação (rota /me/notificacoes/teste não existe). "
+                   "Falta publicar o código novo: git push e esperar o Render ficar Live.")
+    else:
+        rel.atencao(f"Rota de teste de notificação respondeu {status} (esperado 401).")
+
     # quais jeitos de entrar o servidor oferece (Microsoft e e-mail dependem de configuração)
     status, _, texto = requisitar(f"{base}/api/auth/metodos")
     if status == 200:

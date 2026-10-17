@@ -119,3 +119,27 @@ def test_modo_perguntar_nao_precisa_de_arquivo_e_usa_o_endereco_padrao(capsys, g
     assert vg.main(["--perguntar"], url_token=url) == 1
     assert recebidos[0]["redirect_uri"] == "https://showup-backend-s9y1.onrender.com/api/auth/google/callback"
     assert SEGREDO_CERTO not in capsys.readouterr().out
+
+
+def test_avisa_quando_o_app_usa_outro_id_de_cliente_que_o_digitado(tmp_path, capsys, google_falso):
+    url, _ = google_falso
+    app = tmp_path / "app.env"
+    app.write_text("EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=63469089229-q8l0k5cs40ia3ri753erg77j101o1l18.apps.googleusercontent.com\n", encoding="utf-8")
+    assert vg.main(["--arquivo", env(tmp_path), "--app-env", str(app)], url_token=url) == 0       # as credenciais em si estão certas
+    saida = capsys.readouterr().out
+    assert "OUTRO ID de cliente" in saida and "MESMO cliente" in saida and "q8l0k5" in saida
+
+
+def test_sem_aviso_quando_app_e_servidor_usam_o_mesmo_id(tmp_path, capsys, google_falso):
+    url, _ = google_falso
+    app = tmp_path / "app.env"
+    app.write_text(f"EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID={CLIENT_ID}\n", encoding="utf-8")
+    assert vg.main(["--arquivo", env(tmp_path), "--app-env", str(app)], url_token=url) == 0
+    saida = capsys.readouterr().out
+    assert "OUTRO ID" not in saida and "MESMO ID e o MESMO segredo" in saida
+
+
+def test_invalid_client_lembra_que_o_segredo_tem_que_ser_do_mesmo_cliente(tmp_path, capsys, google_falso):
+    url, _ = google_falso
+    assert vg.main(["--arquivo", env(tmp_path, GOOGLE_CLIENT_SECRET="GOCSPX-deOutroCliente123456789")], url_token=url) == 1
+    assert "MAIS DE UM cliente" in capsys.readouterr().out

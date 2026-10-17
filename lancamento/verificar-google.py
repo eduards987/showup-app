@@ -65,6 +65,8 @@ def interpretar(status: int, resposta: dict) -> tuple[bool, str]:
                        "   1. Google Cloud > APIs e serviços > Credenciais > abra o cliente OAuth do tipo \"Aplicativo da Web\".\n"
                        "   2. Confira que o \"ID do cliente\" é o mesmo do GOOGLE_WEB_CLIENT_ID.\n"
                        "   3. Em \"Segredos do cliente\", crie um novo (ou use um ATIVO) e copie o valor NA HORA (ele só aparece inteiro uma vez).\n"
+                       "      ATENÇÃO: se o projeto tem MAIS DE UM cliente \"Aplicativo da Web\", o segredo precisa ser do MESMO cliente do ID. "
+                       "Segredo de um cliente não funciona com o ID de outro.\n"
                        "   4. Cole em GOOGLE_CLIENT_SECRET no Render (Environment) e use Save and deploy. Se você trocou o segredo no Google "
                        "e não no Render, é exatamente isto.")
     if erro == "redirect_uri_mismatch":
@@ -79,6 +81,7 @@ def main(argv=None, url_token: str = TOKEN_URL) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--arquivo", type=Path, default=RAIZ / "backend" / ".env")
     ap.add_argument("--perguntar", action="store_true", help="não usa arquivo: pergunta os valores aqui no terminal")
+    ap.add_argument("--app-env", type=Path, default=RAIZ / "frontend" / ".env", help="frontend/.env, para conferir se o app usa o MESMO ID")
     args = ap.parse_args(argv)
     cfg = _config()
     if args.perguntar:
@@ -106,9 +109,18 @@ def main(argv=None, url_token: str = TOKEN_URL) -> int:
     except OSError as e:
         print(f"[ERRO] Não consegui falar com o Google ({type(e).__name__}). Confira a internet e tente de novo.")
         return 1
+    # o app e o servidor precisam usar o MESMO cliente: confere o ID do app (frontend/.env), se existir
+    if args.app_env.exists():
+        id_app = cfg.ler_env(args.app_env).get("EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID", "")
+        if id_app and id_app != v["GOOGLE_WEB_CLIENT_ID"]:
+            print(f"[ATENÇÃO] O app (frontend/.env) usa OUTRO ID de cliente ({id_app.split('-')[0]}-{id_app.split('-')[1][:6]}…) "
+                  f"diferente do que você digitou ({v['GOOGLE_WEB_CLIENT_ID'].split('-')[0]}-{v['GOOGLE_WEB_CLIENT_ID'].split('-')[1][:6]}…). "
+                  "O login só funciona se app, Render e segredo forem do MESMO cliente.")
     ok, explicacao = interpretar(status, resposta)
     print(f"[{'OK' if ok else 'ERRO'}] {explicacao}")
     if ok:
+        print("\nAgora garanta que o MESMO ID e o MESMO segredo estejam em: Render (GOOGLE_WEB_CLIENT_ID e GOOGLE_CLIENT_SECRET) "
+              "e no app (frontend/.env: EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID).")
         print("\nSe o login ainda falhar com credenciais certas, o problema é outro: veja os logs do Render (linha com \"google/callback\") "
               "e o código entre parênteses que o app agora mostra na tela.")
     return 0 if ok else 1

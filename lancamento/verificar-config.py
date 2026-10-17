@@ -272,6 +272,12 @@ def verificar_backend(v: dict, modo: str, rel: Relatorio) -> None:
     if v.get("TESTING", "").lower() in ("1", "true", "yes"):
         (rel.erro if modo == "producao" else rel.atencao)("TESTING=1 desliga o limite de requisições (proteção contra força bruta). Só para rodar testes; remova do Render.")
 
+    lembrete = v.get("LEMBRETE_PROFISSIONAL_MIN", "")
+    if lembrete and not re.fullmatch(r"\d+", lembrete):
+        rel.erro("LEMBRETE_PROFISSIONAL_MIN precisa ser um número de minutos (ex.: 60; 0 desliga o lembrete do próximo atendimento).")
+    elif lembrete:
+        rel.ok(f"Lembrete do próximo atendimento: {'desligado' if int(lembrete) == 0 else str(int(lembrete)) + ' min antes'}.")
+
     recebimento = v.get("EXIGIR_RECEBIMENTO_ATIVO", "0") == "1"
     if modo == "producao" and not recebimento:
         rel.atencao("EXIGIR_RECEBIMENTO_ATIVO não está em 1: sem isso dá para agendar com profissional que ainda não recebe por Stripe "

@@ -2747,3 +2747,19 @@ Pedido: o cliente criar a conta sem depender do Gmail (ex.: Outlook). Guia compl
   esqueci / redefinir), `signInMicrosoft` e `signInWithToken` em `auth.tsx`, botões em `welcome.tsx`.
 - Testes: `test_senhas_e_email.py` (SMTP falso em socket real), `test_auth_email.py` (fluxos + ataques; mutação
   conferida em 7 proteções). Não testado em aparelho nem contra Microsoft/SMTP reais.
+
+## Avisos ao profissional: novo agendamento e próximo atendimento (17/10/2026)
+Guia: `lancamento/NOTIFICACOES.md`. Módulo novo `backend/notificacoes.py` (textos, fuso do profissional, "avisar uma vez").
+- **Novo agendamento**: `BackgroundTasks` depois de gravar a reserva nos dois fluxos por cartão (app e link); no Pix, quando o
+  webhook `payment_intent.succeeded` confirma (estado `pago_integral`). Marcação atômica `push_novo_enviado_em`.
+- **Próximo atendimento**: job de 5 min (`_enviar_lembretes_proximo`), `LEMBRETE_PROFISSIONAL_MIN` (padrão 60; 0 desliga),
+  marcação `push_lembrete_enviado_em`; só reservas confirmadas (`autorizado`/`pago_integral`, `agendado`); reserva feita
+  dentro da janela é marcada sem repetir o aviso.
+- **BUG achado e corrigido**: `_enviar_pushes_confirmacao` lia `ag['cliente_nome']`/`ag['servico_nome']`, campos que o registro
+  do banco NÃO tem (só existem na resposta montada por `_hydrate`) → KeyError depois de marcar o aviso como enviado: os avisos
+  "Compareceu?" e "Última chance" nunca saíam. Agora os nomes vêm de `dados_do_agendamento`.
+- **Teste de notificação**: `POST /me/notificacoes/teste` + botão em Configurações. Ticket "ok" só prova que a Expo recebeu o
+  pedido; erro de credencial do Firebase aparece no RECIBO, por isso o endpoint espera e consulta (`buscar_recibo`).
+- **Pré-requisito no Android**: chave de serviço FCM V1 enviada ao EAS (sem ela nenhuma notificação é entregue).
+- O registro do aparelho no app deixou de falhar calado (`registrarComDiagnostico`).
+- Testes: `tests/test_notificacoes.py` (49), mutação conferida em 7 proteções.

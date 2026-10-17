@@ -37,7 +37,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from google.auth.exceptions import GoogleAuthError
 from google.auth.transport import requests as google_requests
@@ -61,7 +61,8 @@ load_dotenv(ROOT_DIR / ".env")
 from security import require_service_token
 from payment_errors import CardDeclinedError, GatewayUnavailableError, InvalidPaymentRequestError, PaymentError
 from webhooks import router as webhooks_router
-from expo_push import is_device_not_registered, push_para_usuario, send_push
+from expo_push import buscar_recibo, is_device_not_registered, push_para_usuario, send_push
+from notificacoes import avisar_novo_agendamento, avisar_proximo_atendimento, dados_do_agendamento, explicar_erro_push
 from emailer import email_configurado, enviar_email
 from senhas import hash_falso, hash_senha, validar_senha, verificar_senha
 
@@ -211,6 +212,13 @@ EXIGIR_RECEBIMENTO_ATIVO = os.environ.get("EXIGIR_RECEBIMENTO_ATIVO", "0") == "1
 # (e pode cancelar). Tudo continua no código — é só religar com "1". Ver
 # lancamento/LANCAMENTO.md antes de decidir.
 PLANOS_COMPRA_HABILITADA = os.environ.get("PLANOS_COMPRA_HABILITADA", "1") == "1"
+# Quantos minutos ANTES do atendimento o profissional recebe o aviso "próximo atendimento". 0 desliga.
+try:
+    LEMBRETE_PROFISSIONAL_MIN = int(os.environ.get("LEMBRETE_PROFISSIONAL_MIN", "60"))
+except ValueError:
+    LEMBRETE_PROFISSIONAL_MIN = 60
+# Segundos que o teste de notificação espera pelo recibo da Expo (é ele que revela erro de credencial do Firebase).
+RECIBO_ESPERA_SEG = 4
 PIX_RESERVA_MINUTOS = 20  # tempo que um agendamento via Pix fica reservado esperando pagamento antes de liberar o horário sozinho
 
 
@@ -1439,6 +1447,53 @@ async def registrar_push_token(payload: PushTokenRequest, authorization: Optiona
     return {"ok": True}
 
 
+@api_router.post("/me/notificacoes/teste")
+@limiter.limit("6/minute")
+async def testar_notificacoes(request: Request, authorization: Optional[str] = Header(default=None)):
+    """Manda uma notificação de teste para o aparelho do profissional e diz, em português, por que NÃO chegou.
+    O "ticket" da Expo só prova que ela recebeu o pedido; erro de credencial do Firebase aparece no RECIBO, por isso
+    esperamos alguns segundos por ele."""
+    doc = await _current_user(authorization)
+    await _require_role(doc, "profissional")
+    tok = await db.device_tokens.find_one({"user_id": doc["user_id"]}, {"_id": 0})
+    if not tok:
+        raise HTTPException(409, "Este aparelho ainda não está registrado para receber notificações. "
+                                 "Abra o app no celular (não no emulador), permita as notificações e tente de novo.")
+    try:
+        ticket = await send_push(tok["expo_push_token"], "Teste do ShowUp",
+                                 "Se você está vendo isto, as notificações estão funcionando.", {"type": "teste"})
+    except Exception:
+        logging.exception("teste de notificação: falha falando com a Expo")
+        raise HTTPException(503, "Não consegui falar com o serviço de notificações agora. Tente de novo em instantes.")
+
+    def resposta(enviado: bool, recibo: str, mensagem: str, etapa: Optional[str] = None) -> dict:
+        # etapa: onde falhou — "ticket" (a Expo recusou o pedido) ou "recibo" (a Expo aceitou, mas o Firebase não entregou)
+        return {"enviado": enviado, "recibo": recibo, "mensagem": mensagem, "etapa": etapa}
+
+    if ticket.get("status") == "error":
+        codigo = (ticket.get("details") or {}).get("error")
+        if is_device_not_registered(ticket):
+            await db.device_tokens.delete_one({"user_id": doc["user_id"]})
+        return resposta(False, "erro", explicar_erro_push(codigo, ticket.get("message", "")), etapa="ticket")
+
+    recibo = None
+    if ticket.get("id"):
+        await asyncio.sleep(RECIBO_ESPERA_SEG)
+        try:
+            recibo = await buscar_recibo(ticket["id"])
+        except Exception:
+            logging.warning("teste de notificação: não consegui buscar o recibo", exc_info=True)
+    if recibo and recibo.get("status") == "error":
+        codigo = (recibo.get("details") or {}).get("error")
+        if codigo == "DeviceNotRegistered":
+            await db.device_tokens.delete_one({"user_id": doc["user_id"]})
+        return resposta(False, "erro", explicar_erro_push(codigo, recibo.get("message", "")), etapa="recibo")
+    if recibo and recibo.get("status") == "ok":
+        return resposta(True, "ok", "Notificação enviada. Ela deve aparecer no celular em instantes.")
+    return resposta(True, "pendente", "Enviamos o teste, mas a Expo ainda não confirmou a entrega. "
+                                      "Se não aparecer em 1 ou 2 minutos, siga lancamento/NOTIFICACOES.md.")
+
+
 @api_router.delete("/me/push-token")
 async def remover_push_token(authorization: Optional[str] = Header(default=None)):
     doc = await _current_user(authorization)
@@ -2168,7 +2223,7 @@ async def _hydrate(doc: dict) -> Agendamento:
 
 @api_router.post("/agendamentos", response_model=Agendamento)
 @limiter.limit("20/minute")
-async def criar_agendamento(request: Request, payload: AgendamentoCreate, authorization: Optional[str] = Header(default=None)):
+async def criar_agendamento(request: Request, background_tasks: BackgroundTasks, payload: AgendamentoCreate, authorization: Optional[str] = Header(default=None)):
     cliente = await _current_user(authorization)
     await _require_role(cliente, "cliente")
     card = await db.customer_cards.find_one({"user_id": cliente["user_id"]}, {"_id": 0})
@@ -2274,6 +2329,8 @@ async def criar_agendamento(request: Request, payload: AgendamentoCreate, author
         "gateway_object_id": doc["payment_intent_id"], "status": "requires_capture",
         "criado_em": _now(),
     })
+    # Depois da resposta (não atrasa a reserva): o profissional recebe "Novo agendamento".
+    background_tasks.add_task(avisar_novo_agendamento, db, agendamento_id)
     return await _hydrate(doc)
 
 
@@ -2298,7 +2355,7 @@ async def cartao_setup_intent_publico(request: Request, payload: CartaoSetupPubl
 
 @api_router.post("/public/agendamentos/cartao", response_model=Agendamento)
 @limiter.limit("10/minute")
-async def criar_agendamento_publico_cartao(request: Request, payload: AgendamentoPublicoCartaoRequest):
+async def criar_agendamento_publico_cartao(request: Request, background_tasks: BackgroundTasks, payload: AgendamentoPublicoCartaoRequest):
     """Mesmo fluxo de hold do endpoint autenticado, mas pro cliente que vem
     do link do WhatsApp (sem conta/sessão no app) — o cartão foi coletado
     na página web via Stripe.js Elements, não no Payment Sheet nativo."""
@@ -2377,6 +2434,7 @@ async def criar_agendamento_publico_cartao(request: Request, payload: Agendament
         "gateway_object_id": doc["payment_intent_id"], "status": "requires_capture",
         "criado_em": _now(),
     })
+    background_tasks.add_task(avisar_novo_agendamento, db, agendamento_id)
     return await _hydrate(doc)
 
 
@@ -2757,10 +2815,11 @@ async def _enviar_pushes_confirmacao() -> dict:
         )
         if claimed is None:
             continue  # outro tick do job já pegou este (não deveria acontecer com max_instances=1, mas é barato garantir)
+        nomes = await dados_do_agendamento(db, ag)   # o registro só tem ids; os nomes vêm das outras coleções
         await _push_para_usuario(
             ag["profissional_id"],
             title="Confirme o atendimento",
-            body=f"{ag['cliente_nome']} tinha horário de {ag['servico_nome']}. Compareceu?",
+            body=f"{nomes['cliente_nome']} tinha horário de {nomes['servico_nome']}. Compareceu?",
             data={"type": "confirmacao_pendente", "agendamento_id": ag["agendamento_id"]},
         )
         enviados_pergunta += 1
@@ -2779,15 +2838,53 @@ async def _enviar_pushes_confirmacao() -> dict:
         )
         if claimed is None:
             continue
+        nomes = await dados_do_agendamento(db, ag)
         await _push_para_usuario(
             ag["profissional_id"],
             title="Última chance para confirmar",
-            body=f"O horário de {ag['cliente_nome']} vai liberar sem cobrança em breve. Confirme agora.",
+            body=f"O horário de {nomes['cliente_nome']} vai liberar sem cobrança em breve. Confirme agora.",
             data={"type": "confirmacao_urgente", "agendamento_id": ag["agendamento_id"]},
         )
         enviados_urgencia += 1
 
     return {"pergunta": enviados_pergunta, "urgencia": enviados_urgencia}
+
+
+async def _enviar_lembretes_proximo() -> dict:
+    """Avisa o profissional que o PRÓXIMO atendimento está chegando (LEMBRETE_PROFISSIONAL_MIN antes).
+
+    Cada agendamento é avisado uma única vez (campo push_lembrete_enviado_em, reivindicado de forma atômica).
+    Só entram reservas confirmadas e ainda por acontecer: cartão autorizado ou Pix pago, não canceladas.
+    Reserva feita DENTRO da janela é só marcada: o aviso de "novo agendamento" acabou de dizer o horário."""
+    if LEMBRETE_PROFISSIONAL_MIN <= 0:
+        return {"lembretes": 0, "ignorados": 0}
+    now = _now()
+    antecedencia = timedelta(minutes=LEMBRETE_PROFISSIONAL_MIN)
+    cursor = db.agendamentos.find({
+        "status_agendamento": "agendado",
+        "hold_status": {"$in": ["autorizado", "pago_integral"]},
+        "horario_inicio": {"$gt": now, "$lte": now + antecedencia},
+        "push_lembrete_enviado_em": None,
+    }, {"_id": 0})
+    enviados = ignorados = 0
+    async for ag in cursor:
+        claimed = await db.agendamentos.find_one_and_update(
+            {"agendamento_id": ag["agendamento_id"], "push_lembrete_enviado_em": None},
+            {"$set": {"push_lembrete_enviado_em": now}},
+        )
+        if claimed is None:
+            continue
+        if _aware(ag["criado_em"]) >= _aware(ag["horario_inicio"]) - antecedencia:
+            ignorados += 1
+            continue
+        if await avisar_proximo_atendimento(db, ag, now):
+            enviados += 1
+    return {"lembretes": enviados, "ignorados": ignorados}
+
+
+@api_router.post("/internal/jobs/enviar-lembretes", dependencies=[Depends(require_service_token)])
+async def job_enviar_lembretes():
+    return await _enviar_lembretes_proximo()
 
 
 @api_router.post("/internal/jobs/enviar-pushes", dependencies=[Depends(require_service_token)])
@@ -2863,6 +2960,7 @@ async def lifespan(_: FastAPI):
     # que o horário termina, e aviso de urgência perto do hold expirar.
     _scheduler.add_job(_enviar_pushes_confirmacao, "interval", minutes=5, id="enviar_pushes", max_instances=1)
     _scheduler.add_job(_atualizar_connect_pendentes, "interval", minutes=10, id="connect_pendentes", max_instances=1)
+    _scheduler.add_job(_enviar_lembretes_proximo, "interval", minutes=5, id="lembretes_proximo", max_instances=1)
     _scheduler.start()
     logger.info("Scheduler iniciado: expirar-janela e enviar-pushes a cada 5min")
 

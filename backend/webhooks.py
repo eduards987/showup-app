@@ -19,6 +19,7 @@ import stripe
 from fastapi import APIRouter, Request, Response
 
 from expo_push import push_para_usuario
+from notificacoes import avisar_novo_agendamento
 
 log = logging.getLogger("webhooks")
 router = APIRouter(prefix="/api/webhooks")
@@ -168,6 +169,10 @@ async def _handle_pix_succeeded(db, payment_intent: dict) -> None:
     )
     if result.modified_count:
         log.info("Pix confirmado via webhook para payment_intent %s", pi_id)
+        # Só agora o horário está garantido: avisa o profissional (uma vez; falha aqui nunca derruba o webhook).
+        ag = await db.agendamentos.find_one({"payment_intent_id": pi_id}, {"_id": 0, "agendamento_id": 1})
+        if ag:
+            await avisar_novo_agendamento(db, ag["agendamento_id"])
 
 
 

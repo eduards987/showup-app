@@ -18,6 +18,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ConnectCard } from "@/src/components/connect-card";
+import { NotificacoesCard } from "@/src/components/notificacoes-card";
 import { api, ApiError } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import type { ConnectStatus } from "@/src/lib/connect-estado";
@@ -519,6 +520,9 @@ export default function Configuracoes() {
             )}
           </Pressable>
         </View>
+
+        <Text style={styles.sectionTitle}>NOTIFICAÇÕES</Text>
+        <NotificacoesCard />
 
         <Text style={styles.sectionTitle}>REPASSE AUTOMÁTICO (STRIPE CONNECT)</Text>
         <ConnectCard
