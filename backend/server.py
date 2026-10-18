@@ -39,7 +39,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from google.auth.exceptions import GoogleAuthError
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
@@ -63,7 +64,8 @@ from security import require_service_token
 from payment_errors import CardDeclinedError, GatewayUnavailableError, InvalidPaymentRequestError, PaymentError
 from webhooks import router as webhooks_router
 from expo_push import buscar_recibo, is_device_not_registered, push_para_usuario, send_push
-from agenda import MENSAGENS as MENSAGENS_AGENDA, janela_de_confirmacao, montar_janela
+from i18n_servidor import idioma_da_requisicao, traduzir
+from agenda import MENSAGENS as MENSAGENS_AGENDA, inicios_possiveis, janela_de_confirmacao, montar_janela
 from notificacoes import avisar_novo_agendamento, avisar_proximo_atendimento, dados_do_agendamento, explicar_erro_push
 from emailer import email_configurado, enviar_email
 from senhas import hash_falso, hash_senha, validar_senha, verificar_senha
@@ -91,6 +93,13 @@ _TESTING = os.environ.get("TESTING", "").lower() in ("1", "true", "yes")
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"], enabled=not _TESTING)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_traduzida(request: Request, exc: StarletteHTTPException):
+    """Mesmo formato de sempre ({"detail": ...}), mas a mensagem sai no idioma do cabeçalho Accept-Language (en/es) quando há tradução."""
+    detalhe = traduzir(exc.detail, idioma_da_requisicao(request.headers.get("accept-language")))
+    return JSONResponse({"detail": detalhe}, status_code=exc.status_code, headers=getattr(exc, "headers", None))
 app.add_middleware(SlowAPIMiddleware)
 
 # Login com o Google via navegador — GOOGLE_WEB_CLIENT_ID é o Client ID
@@ -174,21 +183,22 @@ DEFAULT_TIMEZONE = "America/Sao_Paulo"
 # O Stripe em si suporta 135+ moedas; esta lista cobre os mercados mais
 # prováveis pra expansão e pode crescer sem tocar em nenhuma outra parte do
 # código — tudo abaixo lê `moeda` do profissional/serviço, nunca assume BRL.
+# SEM moedas "sem centavos" do Stripe (CLP, JPY, KRW, VND, PYG...): o app guarda todo valor em centavos (x100) e o Stripe espera o
+# valor inteiro nessas moedas, então cobraria 100 vezes o valor digitado. O teste test_moedas.py impede que alguma volte à lista.
 MOEDAS_SUPORTADAS = [
-    "BRL", "USD", "EUR", "GBP", "MXN", "ARS", "COP", "CLP", "CAD", "AUD",
+    "BRL", "USD", "EUR", "GBP", "MXN", "ARS", "COP", "CAD", "AUD",
 ]
 DEFAULT_MOEDA = "BRL"
+# Moedas em que o Stripe DEPOSITA na conta do profissional, sem converter. Conta brasileira: só BRL (o repasse exige conta bancária em reais).
+# Cobrar em qualquer outra moeda funciona, mas o Stripe converte para reais e cobra taxa de conversão: o app AVISA o profissional.
+# Só acrescente outra moeda aqui depois que o Stripe liberar "liquidação em várias moedas" para a sua conta (veja lancamento/TAXAS-E-MOEDAS.md).
+MOEDAS_RECEBIMENTO = [m.strip().upper() for m in os.environ.get("MOEDAS_RECEBIMENTO", "BRL").split(",") if m.strip()]
 
-# Usado só pra abrir a conta Connect do profissional no país certo (Stripe
-# exige um país por conta Express) — heurística razoável a partir da moeda
-# que ele escolheu, não uma seleção de país explícita e independente. EUR é
-# a exceção real (vale pra ~20 países); DE como default é só um chute
-# defensável, não uma verdade fiscal — se isso importar de verdade um dia,
-# a coisa certa é um campo de país explícito, não inferir da moeda.
-MOEDA_PAIS_CONNECT = {
-    "BRL": "BR", "USD": "US", "EUR": "DE", "GBP": "GB", "MXN": "MX",
-    "ARS": "AR", "COP": "CO", "CLP": "CL", "CAD": "CA", "AUD": "AU",
-}
+# País da conta Stripe (Connect) do profissional. É SEMPRE o país da PLATAFORMA (Brasil): o Stripe só permite transferir entre contas
+# na mesma região (as exceções são entre EUA, Canadá, Reino Unido, Europa e Suíça), então uma plataforma brasileira não consegue
+# pagar uma conta conectada nos EUA ou na Alemanha. A MOEDA do preço é outra coisa (o cliente pode pagar em dólar, por exemplo; o
+# Stripe converte para real). Antes o país era inferido da moeda (USD -> EUA), o que quebraria o cadastro de quem escolhesse outra moeda.
+CONNECT_PAIS = os.environ.get("CONNECT_PAIS", "BR").upper()
 
 # Planos de assinatura do PROFISSIONAL — decrescem a taxa por agendamento
 # conforme a mensalidade sobe. fee_bps em pontos-base (1000 = 10%).
@@ -734,9 +744,14 @@ async def _exigir_horario_na_agenda(prof_id: str, horario: datetime, horario_fim
     A mesma regra filtra a lista de horários (/slots), mas é AQUI que vale: um pedido montado à mão não pode furá-la."""
     prof = await db.users.find_one({"user_id": prof_id}, {"_id": 0, "timezone": 1})
     weekly = await db.disponibilidade.find({"profissional_id": prof_id}, {"_id": 0}).to_list(200)
-    motivo = montar_janela(weekly, _now(), _tz_for(prof)).motivo_recusa(horario, horario_fim, reserva_no_cartao)
+    tz, agora = _tz_for(prof), _now()
+    motivo = montar_janela(weekly, agora, tz).motivo_recusa(horario, horario_fim, reserva_no_cartao)
     if motivo:
         raise HTTPException(422, MENSAGENS_AGENDA[motivo])
+    # Dentro da janela de dias, mas é um horário que o expediente realmente oferece? (um pedido montado à mão poderia
+    # reservar às 03:00, num dia de folga ou fora da grade do serviço). Mesma função que gera a lista de horários.
+    if horario not in set(inicios_possiveis(weekly, horario_fim - horario, agora, tz)):
+        raise HTTPException(422, MENSAGENS_AGENDA["fora_do_expediente"])
 
 
 async def _janela_de_confirmacao_ou_desfazer(hold: dict, horario_fim: datetime, agendamento_id: str) -> datetime:
@@ -1562,7 +1577,7 @@ async def set_timezone(payload: TimezoneRequest, authorization: Optional[str] = 
 
 @api_router.get("/moedas")
 async def listar_moedas():
-    return {"moedas": MOEDAS_SUPORTADAS}
+    return {"moedas": MOEDAS_SUPORTADAS, "moedas_de_recebimento": [m for m in MOEDAS_RECEBIMENTO if m in MOEDAS_SUPORTADAS] or [DEFAULT_MOEDA]}
 
 
 @api_router.put("/me/moeda", response_model=MeResponse)
@@ -1743,31 +1758,19 @@ async def slots_disponiveis(user_id: str, servico_id: str = Query(...)):
     # estar em dias de calendário diferentes no mesmo instante UTC.
     start_date_local = now.astimezone(tz).date()
 
-    for d in range(0, 14):
-        day_date = start_date_local + timedelta(days=d)
-        weekday = day_date.weekday()  # Python: Mon=0, consistente com o weekday salvo
-        day_slots = [s for s in weekly if s["weekday"] == weekday]
-        for s in day_slots:
-            slot_start_t = _parse_hhmm(s["hora_inicio"])
-            slot_end_t = _parse_hhmm(s["hora_fim"])
-            # combine com tzinfo=tz: o próprio ZoneInfo resolve o offset
-            # correto pra essa data específica (cobre DST se algum dia
-            # aplicável; hoje nenhum fuso brasileiro observa DST).
-            cursor = datetime.combine(day_date, slot_start_t, tzinfo=tz)
-            slot_end = datetime.combine(day_date, slot_end_t, tzinfo=tz)
-            while cursor + duracao <= slot_end:
-                if cursor > now + timedelta(minutes=15):
-                    overlap = any(
-                        cursor < _aware(b["horario_fim"]) and (cursor + duracao) > _aware(b["horario_inicio"])
-                        for b in busy
-                    )
-                    if not overlap and janela.motivo_recusa(cursor, cursor + duracao) is None:
-                        result.append(SlotDisponivel(
-                            iso=cursor.isoformat(),
-                            day_label=cursor.strftime("%a, %d %b"),
-                            time_label=cursor.strftime("%H:%M"),
-                        ))
-                cursor += step
+    # A grade de horários vem de agenda.inicios_possiveis — a MESMA função que o servidor usa para conferir o expediente
+    # na hora de reservar. Aqui só se tira o que já está ocupado e o que cai fora da janela de dias.
+    for cursor in sorted(inicios_possiveis(weekly, step, now, tz)):
+        overlap = any(
+            cursor < _aware(b["horario_fim"]) and (cursor + duracao) > _aware(b["horario_inicio"])
+            for b in busy
+        )
+        if not overlap and janela.motivo_recusa(cursor, cursor + duracao) is None:
+            result.append(SlotDisponivel(
+                iso=cursor.isoformat(),
+                day_label=cursor.strftime("%a, %d %b"),
+                time_label=cursor.strftime("%H:%M"),
+            ))
     return result[:200]
 
 
@@ -1965,7 +1968,7 @@ async def connect_onboarding(
     try:
         if not acct_id:
             acct_id = await gateway.create_connect_account(
-                doc["email"], doc["name"], country=MOEDA_PAIS_CONNECT.get(doc.get("moeda") or DEFAULT_MOEDA, "BR"),
+                doc["email"], doc["name"], country=CONNECT_PAIS,
                 **_connect_prefill(doc),
             )
             if not acct_id:
@@ -1986,7 +1989,7 @@ async def connect_onboarding(
             # live, depois trocamos pra chave de teste) — recria e tenta de novo.
             logging.warning("stripe_account_id %s não existe na conta/modo atual — recriando", acct_id)
             acct_id = await gateway.create_connect_account(
-                doc["email"], doc["name"], country=MOEDA_PAIS_CONNECT.get(doc.get("moeda") or DEFAULT_MOEDA, "BR"),
+                doc["email"], doc["name"], country=CONNECT_PAIS,
                 **_connect_prefill(doc),
             )
             if not acct_id:

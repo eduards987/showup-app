@@ -11,7 +11,7 @@ pouco o último dia (ele aparece aos poucos, conforme o tempo passa).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -24,7 +24,9 @@ MENSAGENS = {
     "sem_agenda": "Este profissional ainda não abriu horários para agendamento.",
     "fora_da_janela": "Esse horário ainda não está aberto para agendamento. Escolha um dos horários disponíveis.",
     "alem_da_validade": "Esse horário está distante demais: a reserva no cartão vale por 7 dias. Escolha um horário mais próximo.",
+    "fora_do_expediente": "Esse horário não está disponível. Escolha um dos horários mostrados.",
 }
+ANTECEDENCIA_MIN = 15        # o cliente não agenda para daqui a menos de 15 minutos
 
 
 def _minutos(hhmm: str) -> int:
@@ -55,6 +57,32 @@ def ultimo_dia_de_atendimento(weekly: list[dict], agora: datetime, tz: ZoneInfo)
                 return dia
         dia += timedelta(days=1)
     return None                              # inalcançável com dados válidos
+
+
+def inicios_possiveis(weekly: list[dict], duracao: timedelta, agora: datetime, tz: ZoneInfo, dias: int = 14) -> list[datetime]:
+    """Todos os inícios de atendimento que o EXPEDIENTE cadastrado oferece nos próximos `dias` (horário local do profissional).
+
+    A grade começa em cada `hora_inicio` e avança de `duracao` em `duracao` (serviço de 60 min = 11:00, 12:00, 13:00...), e o
+    atendimento inteiro tem que caber antes do `hora_fim`. É a ÚNICA fonte da lista de horários (/slots) e da conferência na
+    hora de reservar: o que a lista nunca oferece, o servidor também recusa. Não considera reservas já feitas nem a janela de
+    dias (isso é de quem chama)."""
+    local = agora.astimezone(tz)
+    minimo = agora + timedelta(minutes=ANTECEDENCIA_MIN)
+    saida: list[datetime] = []
+    for i in range(dias):
+        dia = local.date() + timedelta(days=i)
+        for s in weekly:
+            if s["weekday"] != dia.weekday():
+                continue
+            hi, mi = s["hora_inicio"].split(":")
+            hf, mf = s["hora_fim"].split(":")
+            cursor = datetime.combine(dia, time(int(hi), int(mi)), tzinfo=tz)
+            fim_expediente = datetime.combine(dia, time(int(hf), int(mf)), tzinfo=tz)
+            while cursor + duracao <= fim_expediente:
+                if cursor > minimo:
+                    saida.append(cursor)
+                cursor += duracao
+    return saida
 
 
 def limite_do_fim_do_atendimento(agora: datetime) -> datetime:

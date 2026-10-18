@@ -18,6 +18,8 @@ import { useAuth } from "@/src/lib/auth";
 import { formatMoney, TIMEZONE_LABELS } from "@/src/lib/format";
 import { Agendamento, Servico } from "@/src/lib/types";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
+import { t } from "@/src/i18n/core";
+import { useIdioma } from "@/src/i18n";
 
 type Slot = { iso: string; day_label: string; time_label: string };
 
@@ -108,6 +110,7 @@ const useStyles = makeStyles((c) => ({
 }));
 
 export default function Book() {
+  useIdioma();
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -135,7 +138,7 @@ export default function Book() {
         const s = detail.servicos.find((s) => s.servico_id === servicoId);
         if (s) return { servico: s, profissional_id: detail.user_id, timezone: detail.timezone ?? "America/Sao_Paulo" };
       }
-      throw new Error("Serviço não encontrado");
+      throw new Error(t("Serviço não encontrado"));
     },
     enabled: !!servicoId,
   });
@@ -172,7 +175,7 @@ export default function Book() {
       qc.invalidateQueries({ queryKey: ["agendamentos"] });
       router.replace(`/(app)/agendamento/${ag.agendamento_id}`);
     },
-    onError: (e: any) => setErr(e.message || "Falha ao reservar"),
+    onError: (e: any) => setErr(e.message || t("Falha ao reservar")),
   });
 
   if (svcQ.isLoading) {
@@ -193,34 +196,31 @@ export default function Book() {
           <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
         </Pressable>
       </View>
-      <Text style={styles.title}>Confirmar reserva</Text>
+      <Text style={styles.title}>{t("Confirmar reserva")}</Text>
       <Text style={styles.subtitle}>{s.nome}</Text>
 
       <ScrollView contentContainerStyle={{ paddingBottom: spacing.xxl }}>
         <View style={styles.card}>
           <Text style={styles.cardTitle}>{s.nome}</Text>
-          <Text style={styles.cardMeta}>{s.duracao_min} min</Text>
+          <Text style={styles.cardMeta}>{s.duracao_min}{" "}{t("min")}</Text>
           <View style={styles.rowBetween}>
-            <Text style={styles.cardMeta}>Valor</Text>
+            <Text style={styles.cardMeta}>{t("Valor")}</Text>
             <Text style={{ fontWeight: "700", color: colors.brandPrimary }}>
               {formatMoney(s.valor_centavos, s.moeda)}
             </Text>
           </View>
         </View>
 
-        <Text style={styles.sectionLabel}>Escolha o dia</Text>
+        <Text style={styles.sectionLabel}>{t("Escolha o dia")}</Text>
         {svcQ.data?.timezone ? (
-          <Text style={[styles.cardMeta, { paddingHorizontal: spacing.xl, marginBottom: spacing.sm }]}>
-            Horários no fuso de {TIMEZONE_LABELS[svcQ.data.timezone] ?? svcQ.data.timezone}
+          <Text style={[styles.cardMeta, { paddingHorizontal: spacing.xl, marginBottom: spacing.sm }]}>{t("Horários no fuso de")}{" "}{TIMEZONE_LABELS[svcQ.data.timezone] ?? svcQ.data.timezone}
           </Text>
         ) : null}
         {slotsQ.isLoading ? (
           <ActivityIndicator color={colors.brandPrimary} />
         ) : days.length === 0 ? (
           <View style={styles.emptySlots}>
-            <Text style={styles.emptySlotsText}>
-              Este profissional ainda não tem disponibilidade cadastrada.
-            </Text>
+            <Text style={styles.emptySlotsText}>{t("Este profissional ainda não tem disponibilidade cadastrada.")}</Text>
           </View>
         ) : (
           <>
@@ -251,7 +251,7 @@ export default function Book() {
               })}
             </ScrollView>
 
-            <Text style={styles.sectionLabel}>Horários</Text>
+            <Text style={styles.sectionLabel}>{t("Horários")}</Text>
             <View style={[styles.row, { paddingHorizontal: spacing.xl, marginBottom: spacing.lg }]}>
               {daySlots.map((sl) => {
                 const active = sl.iso === selectedIso;
@@ -273,17 +273,17 @@ export default function Book() {
         )}
 
         <View style={styles.breakdown}>
-          <Text style={styles.breakdownTitle}>RESUMO DO HOLD</Text>
+          <Text style={styles.breakdownTitle}>{t("RESUMO DO HOLD")}</Text>
           <View style={styles.breakdownRow}>
-            <Text style={styles.breakdownLabel}>Valor do serviço</Text>
+            <Text style={styles.breakdownLabel}>{t("Valor do serviço")}</Text>
             <Text style={styles.breakdownValue}>{formatMoney(s.valor_centavos, s.moeda)}</Text>
           </View>
           <View style={styles.breakdownRow}>
-            <Text style={styles.breakdownLabel}>Taxa em caso de no-show</Text>
+            <Text style={styles.breakdownLabel}>{t("Taxa em caso de no-show")}</Text>
             <Text style={styles.breakdownValue}>{formatMoney(s.taxa_no_show_centavos, s.moeda)}</Text>
           </View>
           <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>Pré-autorização</Text>
+            <Text style={styles.totalLabel}>{t("Pré-autorização")}</Text>
             <Text style={styles.totalValue}>{formatMoney(s.valor_centavos, s.moeda)}</Text>
           </View>
         </View>
@@ -300,9 +300,7 @@ export default function Book() {
             onPress={() => router.push("/(app)/perfil")}
             style={[styles.card, { alignItems: "center" }]}
           >
-            <Text style={{ fontSize: 13, color: colors.warning, fontWeight: "700" }}>
-              Cadastre um cartão em Perfil antes de reservar.
-            </Text>
+            <Text style={{ fontSize: 13, color: colors.warning, fontWeight: "700" }}>{t("Cadastre um cartão em Perfil antes de reservar.")}</Text>
           </Pressable>
         ) : null}
       </ScrollView>
@@ -324,8 +322,7 @@ export default function Book() {
           ) : (
             <>
               <Ionicons name="lock-closed" size={18} color={colors.onBrandPrimary} />
-              <Text style={styles.ctaText}>
-                Pré-autorizar {formatMoney(s.valor_centavos, s.moeda)}
+              <Text style={styles.ctaText}>{t("Pré-autorizar")}{" "}{formatMoney(s.valor_centavos, s.moeda)}
               </Text>
             </>
           )}

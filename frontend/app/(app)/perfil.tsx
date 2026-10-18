@@ -24,6 +24,9 @@ import { useAuth } from "@/src/lib/auth";
 import { URL_PRIVACIDADE, URL_SITE, URL_TERMOS } from "@/src/lib/legal";
 import { CardInfo } from "@/src/lib/types";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
+import { SeletorIdioma } from "@/src/components/seletor-idioma";
+import { t } from "@/src/i18n/core";
+import { useIdioma } from "@/src/i18n";
 
 // Página pública de agendamento (fora do app, funciona sem instalar nada), hospedada no Firebase. O link bonito
 // (/p/eduardo-cerqueira) vem do servidor; este endereço antigo só é usado se o servidor não responder.
@@ -159,6 +162,7 @@ const useStyles = makeStyles((c) => ({
 }));
 
 export default function Perfil() {
+  useIdioma();
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -199,7 +203,7 @@ export default function Perfil() {
     // Share.share() abre o menu nativo do celular — WhatsApp aparece como
     // uma das opções ali, sem precisar de nenhuma integração automática.
     Share.share({
-      message: `Agende seu horário com ${user.name} pelo ShowUp: ${bookingLink}`,
+      message: t("Agende seu horário com {{name}} pelo ShowUp: {{bookingLink}}", { name: user.name, bookingLink }),
     });
   };
 
@@ -207,7 +211,7 @@ export default function Perfil() {
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + spacing.xxl }}>
         <View style={styles.header}>
-          <Text style={styles.title}>Perfil</Text>
+          <Text style={styles.title}>{t("Perfil")}</Text>
         </View>
         <View style={styles.identity}>
           <View style={styles.avatar}>
@@ -226,7 +230,7 @@ export default function Perfil() {
 
         {isCliente ? (
           <>
-            <Text style={styles.sectionTitle}>MÉTODO DE PAGAMENTO</Text>
+            <Text style={styles.sectionTitle}>{t("MÉTODO DE PAGAMENTO")}</Text>
             <View style={styles.card}>
               {cardQ.data?.has_card ? (
                 <>
@@ -236,19 +240,14 @@ export default function Perfil() {
                       {cardQ.data.brand?.toUpperCase()} •••• {cardQ.data.last4}
                     </Text>
                   </View>
-                  <Text style={styles.cardMeta}>
-                    Expira {cardQ.data.exp_month}/{cardQ.data.exp_year}
+                  <Text style={styles.cardMeta}>{t("Expira")}{" "}{cardQ.data.exp_month}/{cardQ.data.exp_year}
                   </Text>
-                  <Text style={styles.note}>
-                    Cartão salvo com segurança pelo Stripe — nunca passa pelos nossos servidores.
-                  </Text>
+                  <Text style={styles.note}>{t("Cartão salvo com segurança pelo Stripe — nunca passa pelos nossos servidores.")}</Text>
                 </>
               ) : (
                 <>
-                  <Text style={styles.cardLabel}>Nenhum cartão cadastrado</Text>
-                  <Text style={styles.cardMeta}>
-                    Precisamos de um cartão para pré-autorizar o hold no ato do agendamento.
-                  </Text>
+                  <Text style={styles.cardLabel}>{t("Nenhum cartão cadastrado")}</Text>
+                  <Text style={styles.cardMeta}>{t("Precisamos de um cartão para pré-autorizar o hold no ato do agendamento.")}</Text>
                   <CardSetupButton
                     onSaved={() => {
                       qc.invalidateQueries({ queryKey: ["card"] });
@@ -263,7 +262,7 @@ export default function Perfil() {
 
         {!isCliente ? (
           <>
-            <Text style={styles.sectionTitle}>CONFIGURAÇÕES DO PROFISSIONAL</Text>
+            <Text style={styles.sectionTitle}>{t("CONFIGURAÇÕES DO PROFISSIONAL")}</Text>
             <Pressable
               testID="open-configuracoes"
               onPress={() => router.push("/(app)/configuracoes")}
@@ -271,7 +270,7 @@ export default function Perfil() {
             >
               <View style={styles.cardRow}>
                 <Ionicons name="settings-outline" size={20} color={colors.brandPrimary} />
-                <Text style={styles.cardLabel}>Categorias, disponibilidade e Stripe Connect</Text>
+                <Text style={styles.cardLabel}>{t("Categorias, disponibilidade e Stripe Connect")}</Text>
                 <Ionicons name="chevron-forward" size={18} color={colors.muted} />
               </View>
             </Pressable>
@@ -282,24 +281,21 @@ export default function Perfil() {
             >
               <View style={styles.cardRow}>
                 <Ionicons name="pricetag-outline" size={20} color={colors.brandPrimary} />
-                <Text style={styles.cardLabel}>Plano e taxa por agendamento</Text>
+                <Text style={styles.cardLabel}>{t("Plano e taxa por agendamento")}</Text>
                 <Ionicons name="chevron-forward" size={18} color={colors.muted} />
               </View>
             </Pressable>
 
-            <Text style={styles.sectionTitle}>NOTIFICAÇÕES</Text>
+            <Text style={styles.sectionTitle}>{t("NOTIFICAÇÕES")}</Text>
             <NotificacoesCard />
 
-            <Text style={styles.sectionTitle}>SEU LINK DE AGENDAMENTO</Text>
+            <Text style={styles.sectionTitle}>{t("SEU LINK DE AGENDAMENTO")}</Text>
             <View style={styles.card}>
               <View style={styles.cardRow}>
                 <Ionicons name="link-outline" size={20} color={colors.brandPrimary} />
-                <Text style={styles.cardLabel}>Compartilhe pra agendar sem app</Text>
+                <Text style={styles.cardLabel}>{t("Compartilhe pra agendar sem app")}</Text>
               </View>
-              <Text style={styles.note2}>
-                Envie esse link pro cliente pelo WhatsApp — ele agenda e paga (Pix) sem
-                precisar instalar nada.
-              </Text>
+              <Text style={styles.note2}>{t("Envie esse link pro cliente pelo WhatsApp — ele agenda e reserva com o cartão, sem precisar instalar nada.")}</Text>
               <Text style={styles.linkText} numberOfLines={1}>
                 {bookingLink}
               </Text>
@@ -310,29 +306,34 @@ export default function Perfil() {
                     size={16}
                     color={colors.brandPrimary}
                   />
-                  <Text style={styles.linkActionText}>{linkCopiado ? "Copiado!" : "Copiar"}</Text>
+                  <Text style={styles.linkActionText}>{linkCopiado ? t("Copiado!") : t("Copiar")}</Text>
                 </Pressable>
                 <Pressable testID="compartilhar-link" onPress={compartilharLink} style={styles.linkActionBtn}>
                   <Ionicons name="share-social-outline" size={16} color={colors.brandPrimary} />
-                  <Text style={styles.linkActionText}>Compartilhar</Text>
+                  <Text style={styles.linkActionText}>{t("Compartilhar")}</Text>
                 </Pressable>
               </View>
             </View>
           </>
         ) : null}
 
-        <Text style={styles.sectionTitle}>SOBRE</Text>
+        <Text style={styles.sectionTitle}>{t("IDIOMA")}</Text>
+        <View style={{ paddingHorizontal: spacing.xl, marginBottom: spacing.md }}>
+          <SeletorIdioma />
+        </View>
+
+        <Text style={styles.sectionTitle}>{t("SOBRE")}</Text>
         <Pressable testID="abrir-termos" onPress={() => Linking.openURL(URL_TERMOS)} style={styles.card}>
           <View style={styles.cardRow}>
             <Ionicons name="document-text-outline" size={20} color={colors.brandPrimary} />
-            <Text style={styles.cardLabel}>Termos de uso</Text>
+            <Text style={styles.cardLabel}>{t("Termos de uso")}</Text>
             <Ionicons name="open-outline" size={18} color={colors.muted} />
           </View>
         </Pressable>
         <Pressable testID="abrir-privacidade" onPress={() => Linking.openURL(URL_PRIVACIDADE)} style={styles.card}>
           <View style={styles.cardRow}>
             <Ionicons name="shield-checkmark-outline" size={20} color={colors.brandPrimary} />
-            <Text style={styles.cardLabel}>Política de privacidade</Text>
+            <Text style={styles.cardLabel}>{t("Política de privacidade")}</Text>
             <Ionicons name="open-outline" size={18} color={colors.muted} />
           </View>
         </Pressable>
@@ -342,10 +343,10 @@ export default function Perfil() {
           onPress={auth.signOut}
           style={styles.logout}
         >
-          <Text style={styles.logoutText}>Sair</Text>
+          <Text style={styles.logoutText}>{t("Sair")}</Text>
         </Pressable>
 
-        <Text style={styles.sectionTitle}>ZONA DE PERIGO</Text>
+        <Text style={styles.sectionTitle}>{t("ZONA DE PERIGO")}</Text>
         <ExcluirContaCard />
       </ScrollView>
     </View>

@@ -240,3 +240,67 @@ def test_rota_do_pix_aceita_horario_alem_do_prazo_do_cartao_mas_recusa_fora_da_j
     r = client.post("/api/public/agendamentos/pix", json=corpo_publico(loc(21, 12, mes=11)))
     assert r.status_code == 422 and "ainda não está aberto" in r.json()["detail"]
     assert len(gw.pix) == 1                                                       # nenhuma cobrança nova foi gerada
+
+
+# ------------------------------------------------------------------ expediente: pedido montado à mão NÃO fura o horário de atendimento
+FORA = "Esse horário não está disponível"
+
+
+@pytest.mark.parametrize("inicio,porque", [
+    (loc(22, 8), "antes do expediente (09-12)"),
+    (loc(22, 3), "madrugada"),
+    (loc(22, 12), "depois do expediente"),
+    (loc(22, 9, 17), "fora da grade de 60 em 60 min"),
+    (loc(22, 11, 30), "começa no expediente mas termina depois do fim (12:30)"),
+    (loc(24, 10), "sábado, dia de folga (dentro da janela de dias)"),
+])
+def test_reserva_forjada_fora_do_expediente_e_recusada_antes_do_cartao(loja, inicio, porque):
+    db, gw, _ = loja
+    client = TestClient(server.app)
+    r = client.post("/api/public/agendamentos/cartao", json=corpo_publico(inicio))
+    assert r.status_code == 422 and FORA in r.json()["detail"], porque
+    r = client.post("/api/agendamentos", json={"servico_id": "svc_1", "horario_inicio": inicio.isoformat()})
+    assert r.status_code == 422 and FORA in r.json()["detail"], porque
+    assert gw.autorizacoes == [] and db.agendamentos.docs == []                              # o cartão do cliente nunca foi consultado
+
+
+def test_reserva_de_horario_que_a_lista_oferece_continua_funcionando(loja):
+    db, gw, _ = loja
+    client = TestClient(server.app)
+    oferecidos = slots(client)
+    assert oferecidos, "sem horários oferecidos"
+    r = client.post("/api/public/agendamentos/cartao", json=corpo_publico(oferecidos[0]))
+    assert r.status_code == 200, r.text
+
+
+def test_servico_de_90_minutos_so_aceita_a_grade_de_90(loja):
+    db, gw, _ = loja
+    db.servicos.docs[0]["duracao_min"] = 90
+    client = TestClient(server.app)
+    assert client.post("/api/public/agendamentos/cartao", json=corpo_publico(loc(22, 10))).status_code == 422          # 09:00 e 10:30, não 10:00
+    assert client.post("/api/public/agendamentos/cartao", json=corpo_publico(loc(22, 10, 30))).status_code == 200
+
+
+def test_menos_de_15_minutos_de_antecedencia_e_recusado(loja, monkeypatch):
+    db, gw, _ = loja
+    monkeypatch.setattr(server, "_now", lambda: loc(22, 9, 50))                                  # 10:00 daqui a 10 minutos
+    r = TestClient(server.app).post("/api/public/agendamentos/cartao", json=corpo_publico(loc(22, 10)))
+    assert r.status_code == 422 and FORA in r.json()["detail"] and gw.autorizacoes == []
+
+
+def test_rota_do_pix_tambem_confere_o_expediente(loja, monkeypatch):
+    db, gw, _ = loja
+    monkeypatch.setattr(server, "GATEWAY_KIND", "stripe")
+    r = TestClient(server.app).post("/api/public/agendamentos/pix", json=corpo_publico(loc(22, 3)))
+    assert r.status_code == 422 and FORA in r.json()["detail"]
+    assert getattr(gw, "pix", []) == []                                                        # nenhuma cobrança Pix foi gerada
+
+
+def test_expediente_alterado_depois_de_listar_derruba_o_horario_antigo(loja):
+    """O cliente abriu a lista, o profissional mudou o expediente: o horário que sumiu é recusado, sem cobrar."""
+    db, gw, atende = loja
+    client = TestClient(server.app)
+    escolhido = slots(client)[0]
+    atende([0, 1, 2, 3, 4], "14:00", "18:00")
+    r = client.post("/api/public/agendamentos/cartao", json=corpo_publico(escolhido))
+    assert r.status_code == 422 and FORA in r.json()["detail"] and gw.autorizacoes == []

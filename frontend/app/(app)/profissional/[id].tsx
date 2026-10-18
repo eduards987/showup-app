@@ -16,6 +16,8 @@ import { api } from "@/src/lib/api";
 import { formatMoney } from "@/src/lib/format";
 import { ProfissionalDetail } from "@/src/lib/types";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
+import { t } from "@/src/i18n/core";
+import { useIdioma } from "@/src/i18n";
 
 const useStyles = makeStyles((c) => ({
   avisoIndisponivel: {
@@ -81,6 +83,7 @@ const useStyles = makeStyles((c) => ({
 }));
 
 export default function ProfissionalDetalhe() {
+  useIdioma();
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -117,16 +120,14 @@ export default function ProfissionalDetalhe() {
             <Text style={styles.avatarText}>{initials}</Text>
           </View>
           <Text style={styles.name}>{q.data.name}</Text>
-          <Text style={styles.sub}>{q.data.servicos.length} serviço(s)</Text>
+          <Text style={styles.sub}>{q.data.servicos.length}{" "}{t("serviço(s)")}</Text>
         </View>
 
         {q.data.aceita_agendamentos === false ? (
-          <Text style={styles.avisoIndisponivel} testID="aviso-indisponivel">
-            Este profissional ainda não está recebendo agendamentos pelo ShowUp. Tente de novo mais tarde.
-          </Text>
+          <Text style={styles.avisoIndisponivel} testID="aviso-indisponivel">{t("Este profissional ainda não está recebendo agendamentos pelo ShowUp. Tente de novo mais tarde.")}</Text>
         ) : null}
 
-        <Text style={styles.sectionTitle}>SERVIÇOS DISPONÍVEIS</Text>
+        <Text style={styles.sectionTitle}>{t("SERVIÇOS DISPONÍVEIS")}</Text>
 
         {q.data.servicos.map((s) => (
           <Pressable
@@ -140,10 +141,9 @@ export default function ProfissionalDetalhe() {
               <Text style={styles.servicoName}>{s.nome}</Text>
               <Text style={styles.servicoValue}>{formatMoney(s.valor_centavos, s.moeda)}</Text>
             </View>
-            <Text style={styles.servicoMeta}>{s.duracao_min} min</Text>
+            <Text style={styles.servicoMeta}>{s.duracao_min}{" "}{t("min")}</Text>
             {s.descricao ? <Text style={styles.servicoDesc}>{s.descricao}</Text> : null}
-            <Text style={styles.noShow}>
-              Taxa de no-show: {formatMoney(s.taxa_no_show_centavos, s.moeda)}
+            <Text style={styles.noShow}>{t("Taxa de no-show:")}{" "}{formatMoney(s.taxa_no_show_centavos, s.moeda)}
             </Text>
           </Pressable>
         ))}

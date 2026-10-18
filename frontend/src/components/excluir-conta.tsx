@@ -11,6 +11,8 @@ import { api, ApiError } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { URL_EXCLUSAO } from "@/src/lib/legal";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
+import { t } from "@/src/i18n/core";
+import { useIdioma } from "@/src/i18n";
 
 const useStyles = makeStyles((c) => ({
   card: {
@@ -29,6 +31,7 @@ const useStyles = makeStyles((c) => ({
 }));
 
 export function ExcluirContaCard() {
+  useIdioma();
   const styles = useStyles();
   const { colors } = useTheme();
   const auth = useAuth();
@@ -41,17 +44,17 @@ export function ExcluirContaCard() {
     // A mensagem do servidor é útil aqui: "você tem agendamentos pendentes",
     // "não conseguimos cancelar a cobrança do seu plano agora"...
     onError: (e: unknown) => {
-      Alert.alert("Não foi possível excluir", e instanceof ApiError ? e.message : "Tente novamente.");
+      Alert.alert(t("Não foi possível excluir"), e instanceof ApiError ? e.message : t("Tente novamente."));
     },
   });
 
   const confirmar = () => {
     Alert.alert(
-      "Excluir sua conta",
-      "Isso é permanente — seus dados pessoais serão apagados e você não vai conseguir desfazer isso depois. Se você tem um plano pago ou teste grátis, a cobrança será cancelada. Tem certeza?",
+      t("Excluir sua conta"),
+      t("Isso é permanente — seus dados pessoais serão apagados e você não vai conseguir desfazer isso depois. Se você tem um plano pago ou teste grátis, a cobrança será cancelada. Tem certeza?"),
       [
-        { text: "Cancelar", style: "cancel" },
-        { text: "Excluir conta", style: "destructive", onPress: () => excluirM.mutate() },
+        { text: t("Cancelar"), style: "cancel" },
+        { text: t("Excluir conta"), style: "destructive", onPress: () => excluirM.mutate() },
       ],
     );
   };
@@ -64,15 +67,12 @@ export function ExcluirContaCard() {
         ) : (
           <>
             <Ionicons name="trash-outline" size={18} color={colors.error} />
-            <Text style={styles.texto}>Excluir minha conta</Text>
+            <Text style={styles.texto}>{t("Excluir minha conta")}</Text>
           </>
         )}
       </Pressable>
-      <Text style={styles.nota}>
-        Remove seus dados pessoais permanentemente. Agendamentos pendentes ou futuros precisam ser resolvidos antes.{" "}
-        <Text style={styles.link} onPress={() => Linking.openURL(URL_EXCLUSAO)}>
-          Saiba mais
-        </Text>
+      <Text style={styles.nota}>{t("Remove seus dados pessoais permanentemente. Agendamentos pendentes ou futuros precisam ser resolvidos antes.")}{" "}
+        <Text style={styles.link} onPress={() => Linking.openURL(URL_EXCLUSAO)}>{t("Saiba mais")}</Text>
       </Text>
     </View>
   );

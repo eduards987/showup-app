@@ -68,6 +68,8 @@
   }
   .wrap { max-width: 480px; margin: 0 auto; padding: 28px 20px 48px; }
   .brand-row { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; }
+  .idioma-box { margin-left: auto; }
+  .idioma-box select { font: inherit; font-size: 13px; color: var(--ink-soft); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; }
   .brand-name { font-size: 14px; color: var(--ink-soft); letter-spacing: 0.02em; }
 
   .brand-logo { height: 34px; width: auto; display: block; }
@@ -186,6 +188,13 @@
   <div class="brand-row">
     <img class="brand-logo" src="/logo.png" alt="ShowUp" width="44" height="35">
     <div class="brand-name">ShowUp</div>
+    <div id="idiomaBox" class="idioma-box">
+      <select id="idiomaSelect" aria-label="Idioma / Language">
+        <option value="pt">Português</option>
+        <option value="en">English</option>
+        <option value="es">Español</option>
+      </select>
+    </div>
   </div>
 
   <div id="loadingProf">Carregando...</div>
@@ -322,6 +331,190 @@
   const PIX_DISPONIVEL = false;
   const STRIPE_PUBLISHABLE_KEY = "pk_test_51UGMv4Fl9Xrvr2JyV4mtBMqZ62J4Cu9vAtxl3R7SWrRnHhNXIQWUO4HE7QdZSIl9ziXInXMuMRX3YxSSNoKBDnFb00NYihUD6f";
 
+  // ---- Idioma (pt / en / es): vem do navegador; o visitante pode trocar na 1ª etapa e a escolha fica guardada neste aparelho ----
+  // A chave de cada tradução é o texto em PORTUGUÊS. Sem tradução, aparece o português. O teste test_site_publicacao.py confere que
+  // todo texto da página (do HTML e das chamadas a T() do JavaScript) existe em inglês e em espanhol.
+  const DICIONARIO = {
+    en: {
+      "Carregando...": "Loading...",
+      "Escolha o serviço, o horário, e finalize o pagamento — sem precisar instalar nada.": "Choose the service and time, and complete the payment — no app to install.",
+      "Este profissional ainda não está recebendo agendamentos pelo ShowUp. Tente de novo mais tarde.": "This professional is not accepting bookings through ShowUp yet. Please try again later.",
+      "1 · Escolha o serviço": "1 · Choose the service",
+      "Você informa o cartão só para garantir o horário. O valor fica reservado e": "You enter your card only to secure the time slot. The amount is held and",
+      "só é cobrado depois do atendimento": "is only charged after the appointment",
+      ". Pagamento seguro, processado pelo Stripe.": ". Secure payment, processed by Stripe.",
+      "‹ Trocar serviço": "‹ Change service",
+      "2 · Escolha a data e o horário": "2 · Choose the date and time",
+      "‹ Trocar horário": "‹ Change time",
+      "3 · Seus dados": "3 · Your details",
+      "Nome": "Name",
+      "Telefone (com DDD)": "Phone (with area code)",
+      "Continuar": "Continue",
+      "‹ Voltar": "‹ Back",
+      "4 · Pagamento": "4 · Payment",
+      "Como você prefere pagar?": "How would you like to pay?",
+      "Cartão de crédito": "Credit card",
+      "O valor fica reservado no cartão e só é cobrado depois do atendimento": "The amount is held on the card and only charged after the appointment",
+      "Pago agora, pelo valor total": "Paid now, for the full amount",
+      "Reservar com cartão": "Book with card",
+      "Pagar com Pix": "Pay with Pix",
+      "Copiar": "Copy",
+      "Aguardando confirmação do pagamento…": "Waiting for payment confirmation…",
+      "Agendamento confirmado!": "Booking confirmed!",
+      "Você vai receber a confirmação. Chegue com alguns minutos de antecedência.": "You'll receive the confirmation. Arrive a few minutes early.",
+      "Ao agendar, você concorda com os": "By booking, you agree to the",
+      "Termos de Uso": "Terms of Use",
+      "e a": "and the",
+      "Política de Privacidade": "Privacy Policy",
+      "Você é profissional?": "Are you a professional?",
+      "Conheça o ShowUp": "Meet ShowUp",
+      "Seu nome completo": "Your full name",
+      "Código Pix copia e cola": "Pix copy-and-paste code",
+      "Link inválido — falta identificar o profissional.": "Invalid link — the professional isn't identified.",
+      "Agendar com {{nome}} — ShowUp": "Book with {{nome}} — ShowUp",
+      "Não foi possível carregar esse profissional. Confira o link e tente de novo.": "Couldn't load this professional. Check the link and try again.",
+      "Carregando horários…": "Loading times…",
+      "Não foi possível carregar os horários.": "Couldn't load the times.",
+      "Sem horários livres nos próximos dias.": "No free times in the coming days.",
+      "Data": "Date",
+      "Horário": "Time",
+      "Selecione a data": "Select a date",
+      "Escolha a data primeiro": "Choose the date first",
+      "Selecione o horário": "Select a time",
+      "{{data}} às {{hora}}": "{{data}} at {{hora}}",
+      "Digita seu nome completo.": "Enter your full name.",
+      "Telefone inválido — inclui o DDD.": "Invalid phone number — include the area code.",
+      "Profissional": "Professional",
+      "Serviço": "Service",
+      "Valor do serviço": "Service price",
+      "Total (Pix)": "Total (Pix)",
+      "Taxa se faltar sem avisar": "Fee if you don't show up without notice",
+      "Algo deu errado. Tente de novo.": "Something went wrong. Please try again.",
+      "Não foi possível carregar o formulário de cartão. Recarregue a página e tente de novo.": "Couldn't load the card form. Reload the page and try again.",
+      "Reservando…": "Booking…",
+      "Não foi possível preparar o pagamento com cartão.": "Couldn't prepare the card payment.",
+      "Não foi possível validar o cartão.": "Couldn't validate the card.",
+      "Não foi possível concluir o agendamento.": "Couldn't complete the booking.",
+      "O valor ficou reservado no seu cartão e só será cobrado depois do atendimento.": "The amount is held on your card and will only be charged after the appointment.",
+      "Gerando cobrança…": "Creating charge…",
+      "Não foi possível gerar a cobrança.": "Couldn't create the charge.",
+      "O tempo pra pagar esse Pix expirou. Escolha o horário de novo.": "Time to pay this Pix expired. Choose the time again.",
+      "{{servico}} com {{prof}} — {{quando}}.": "{{servico}} with {{prof}} — {{quando}}.",
+    },
+    es: {
+      "Carregando...": "Cargando...",
+      "Escolha o serviço, o horário, e finalize o pagamento — sem precisar instalar nada.": "Elige el servicio y el horario, y finaliza el pago, sin instalar nada.",
+      "Este profissional ainda não está recebendo agendamentos pelo ShowUp. Tente de novo mais tarde.": "Este profesional aún no recibe reservas por ShowUp. Inténtalo de nuevo más tarde.",
+      "1 · Escolha o serviço": "1 · Elige el servicio",
+      "Você informa o cartão só para garantir o horário. O valor fica reservado e": "Ingresas la tarjeta solo para asegurar el horario. El valor queda reservado y",
+      "só é cobrado depois do atendimento": "solo se cobra después de la atención",
+      ". Pagamento seguro, processado pelo Stripe.": ". Pago seguro, procesado por Stripe.",
+      "‹ Trocar serviço": "‹ Cambiar servicio",
+      "2 · Escolha a data e o horário": "2 · Elige la fecha y el horario",
+      "‹ Trocar horário": "‹ Cambiar horario",
+      "3 · Seus dados": "3 · Tus datos",
+      "Nome": "Nombre",
+      "Telefone (com DDD)": "Teléfono (con código de área)",
+      "Continuar": "Continuar",
+      "‹ Voltar": "‹ Volver",
+      "4 · Pagamento": "4 · Pago",
+      "Como você prefere pagar?": "¿Cómo prefieres pagar?",
+      "Cartão de crédito": "Tarjeta de crédito",
+      "O valor fica reservado no cartão e só é cobrado depois do atendimento": "El valor queda reservado en la tarjeta y solo se cobra después de la atención",
+      "Pago agora, pelo valor total": "Pagado ahora, por el valor total",
+      "Reservar com cartão": "Reservar con tarjeta",
+      "Pagar com Pix": "Pagar con Pix",
+      "Copiar": "Copiar",
+      "Aguardando confirmação do pagamento…": "Esperando la confirmación del pago…",
+      "Agendamento confirmado!": "¡Reserva confirmada!",
+      "Você vai receber a confirmação. Chegue com alguns minutos de antecedência.": "Recibirás la confirmación. Llega unos minutos antes.",
+      "Ao agendar, você concorda com os": "Al reservar, aceptas los",
+      "Termos de Uso": "Términos de Uso",
+      "e a": "y la",
+      "Política de Privacidade": "Política de Privacidad",
+      "Você é profissional?": "¿Eres profesional?",
+      "Conheça o ShowUp": "Conoce ShowUp",
+      "Seu nome completo": "Tu nombre completo",
+      "Código Pix copia e cola": "Código Pix copia y pega",
+      "Link inválido — falta identificar o profissional.": "Enlace inválido: falta identificar al profesional.",
+      "Agendar com {{nome}} — ShowUp": "Reservar con {{nome}} — ShowUp",
+      "Não foi possível carregar esse profissional. Confira o link e tente de novo.": "No fue posible cargar a este profesional. Revisa el enlace e inténtalo de nuevo.",
+      "Carregando horários…": "Cargando horarios…",
+      "Não foi possível carregar os horários.": "No fue posible cargar los horarios.",
+      "Sem horários livres nos próximos dias.": "No hay horarios libres en los próximos días.",
+      "Data": "Fecha",
+      "Horário": "Horario",
+      "Selecione a data": "Selecciona la fecha",
+      "Escolha a data primeiro": "Elige primero la fecha",
+      "Selecione o horário": "Selecciona el horario",
+      "{{data}} às {{hora}}": "{{data}} a las {{hora}}",
+      "Digita seu nome completo.": "Ingresa tu nombre completo.",
+      "Telefone inválido — inclui o DDD.": "Teléfono inválido: incluye el código de área.",
+      "Profissional": "Profesional",
+      "Serviço": "Servicio",
+      "Valor do serviço": "Valor del servicio",
+      "Total (Pix)": "Total (Pix)",
+      "Taxa se faltar sem avisar": "Tarifa si no asistes sin avisar",
+      "Algo deu errado. Tente de novo.": "Algo salió mal. Inténtalo de nuevo.",
+      "Não foi possível carregar o formulário de cartão. Recarregue a página e tente de novo.": "No fue posible cargar el formulario de tarjeta. Recarga la página e inténtalo de nuevo.",
+      "Reservando…": "Reservando…",
+      "Não foi possível preparar o pagamento com cartão.": "No fue posible preparar el pago con tarjeta.",
+      "Não foi possível validar o cartão.": "No fue posible validar la tarjeta.",
+      "Não foi possível concluir o agendamento.": "No fue posible completar la reserva.",
+      "O valor ficou reservado no seu cartão e só será cobrado depois do atendimento.": "El valor quedó reservado en tu tarjeta y solo se cobrará después de la atención.",
+      "Gerando cobrança…": "Generando cobro…",
+      "Não foi possível gerar a cobrança.": "No fue posible generar el cobro.",
+      "O tempo pra pagar esse Pix expirou. Escolha o horário de novo.": "El tiempo para pagar este Pix venció. Elige el horario de nuevo.",
+      "{{servico}} com {{prof}} — {{quando}}.": "{{servico}} con {{prof}} — {{quando}}.",
+    },
+  };
+  const IDIOMAS_OK = ["pt", "en", "es"];
+  function detectarIdioma() {
+    try {
+      const salvo = localStorage.getItem("idioma");
+      if (IDIOMAS_OK.includes(salvo)) return salvo;
+    } catch (e) { /* navegação privada: segue sem guardar */ }
+    const lista = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || "pt-BR"];
+    for (const l of lista) {
+      const base = String(l).toLowerCase().split("-")[0];
+      if (IDIOMAS_OK.includes(base)) return base;
+    }
+    return /-br$/i.test(String(lista[0])) ? "pt" : "en";   // idioma sem tradução: inglês (ou português se a região for o Brasil)
+  }
+  const IDIOMA = detectarIdioma();
+  const LOCALE = { pt: "pt-BR", en: "en-US", es: "es" }[IDIOMA];
+  function T(chave, params) {
+    let r = (IDIOMA !== "pt" && DICIONARIO[IDIOMA][chave]) || chave;
+    if (params) Object.keys(params).forEach((k) => { r = r.split("{{" + k + "}}").join(params[k]); });
+    return r;
+  }
+  function traduzirDom() {
+    document.documentElement.lang = IDIOMA === "pt" ? "pt-BR" : IDIOMA;
+    if (IDIOMA === "pt") return;
+    const dic = DICIONARIO[IDIOMA];
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const nos = [];
+    while (walker.nextNode()) nos.push(walker.currentNode);
+    nos.forEach((no) => {
+      const pai = no.parentElement && no.parentElement.tagName;
+      if (pai === "SCRIPT" || pai === "STYLE" || pai === "OPTION") return;
+      const bruto = no.nodeValue, chave = bruto.trim();
+      if (chave && dic[chave]) no.nodeValue = bruto.replace(chave, () => dic[chave]);
+    });
+    document.querySelectorAll("[placeholder],[aria-label]").forEach((el) => {
+      ["placeholder", "aria-label"].forEach((a) => {
+        const v = el.getAttribute(a);
+        if (v && dic[v]) el.setAttribute(a, dic[v]);
+      });
+    });
+  }
+  function formatMoney(centavos, moeda) {
+    const v = centavos / 100;
+    try { return new Intl.NumberFormat(LOCALE, { style: "currency", currency: moeda }).format(v); }
+    catch (e) { return `${moeda} ${v.toFixed(2)}`; }
+  }
+  const CAB = { "Accept-Language": IDIOMA };   // o servidor devolve as mensagens de erro neste idioma
+
   const params = new URLSearchParams(window.location.search);
   // O profissional pode vir pelo endereço legível (/p/eduardo-cerqueira) ou pelo link antigo (?prof=user_xxx).
   // `identificador` serve para buscar o perfil; `profissionalId` é o id interno, definido depois que o perfil carrega.
@@ -345,13 +538,8 @@
   let cardElement = null;
   let cardMounted = false;
 
-  function formatMoney(centavos, moeda) {
-    const valor = (centavos / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const simbolo = moeda === "BRL" ? "R$" : moeda;
-    return `${simbolo} ${valor}`;
-  }
-
   function showStep(n) {
+    document.getElementById("idiomaBox").classList.toggle("hidden", n !== 1);
     [1, 2, 3, 4].forEach((i) => {
       document.getElementById("step" + i).classList.toggle("hidden", i !== n);
     });
@@ -371,18 +559,18 @@
 
   async function carregarProfissional() {
     if (!identificador) {
-      erroGeral("Link inválido — falta identificar o profissional.");
+      erroGeral(T("Link inválido — falta identificar o profissional."));
       return;
     }
     try {
-      const res = await fetch(`${BACKEND_URL}/profissionais/${encodeURIComponent(identificador)}`);
+      const res = await fetch(`${BACKEND_URL}/profissionais/${encodeURIComponent(identificador)}`, { headers: CAB });
       if (!res.ok) throw new Error("not_found");
       const data = await res.json();
       state.profissional = data;
       profissionalId = data.user_id;
       document.getElementById("profNome").textContent = data.name;
       document.getElementById("profAvatar").textContent = data.name.split(/\s+/).filter(Boolean).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
-      document.title = `Agendar com ${data.name} — ShowUp`;
+      document.title = T("Agendar com {{nome}} — ShowUp", { nome: data.name });
       renderServicos(data.servicos.filter((s) => s.ativo));
       document.getElementById("loadingProf").classList.add("hidden");
       document.getElementById("app").classList.remove("hidden");
@@ -395,7 +583,7 @@
       showStep(1);
     } catch (e) {
       document.getElementById("loadingProf").classList.add("hidden");
-      erroGeral("Não foi possível carregar esse profissional. Confira o link e tente de novo.");
+      erroGeral(T("Não foi possível carregar esse profissional. Confira o link e tente de novo."));
     }
   }
 
@@ -422,18 +610,18 @@
     document.querySelectorAll("#servicosList .option").forEach((el) => el.classList.remove("selected"));
     btnEl.classList.add("selected");
     showStep(2);
-    document.getElementById("slotsList").innerHTML = "Carregando horários…";
+    document.getElementById("slotsList").innerHTML = T("Carregando horários…");
     try {
-      const res = await fetch(`${BACKEND_URL}/profissionais/${profissionalId}/slots?servico_id=${servico.servico_id}`);
+      const res = await fetch(`${BACKEND_URL}/profissionais/${profissionalId}/slots?servico_id=${servico.servico_id}`, { headers: CAB });
       const slots = await res.json();
       renderSlots(slots);
     } catch (e) {
-      document.getElementById("slotsList").innerHTML = "Não foi possível carregar os horários.";
+      document.getElementById("slotsList").innerHTML = T("Não foi possível carregar os horários.");
     }
   }
 
   // ---- Passo 2: data -> horário (dois dropdowns encadeados) ----
-  const DIAS_SEMANA_PT = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+  const DIAS_SEMANA = { pt: ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"], en: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], es: ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"] };
 
   // O `iso` de cada slot vem do backend já no fuso do PROFISSIONAL
   // (ex: "2026-10-05T09:00:00-03:00"), então os 10 primeiros caracteres são a
@@ -451,7 +639,8 @@
     const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
     const dd = String(d).padStart(2, "0");
     const mm = String(m).padStart(2, "0");
-    return `${DIAS_SEMANA_PT[dow]}, ${dd}/${mm}/${y}`;
+    const dia = DIAS_SEMANA[IDIOMA][dow];
+    return IDIOMA === "en" ? `${dia}, ${mm}/${dd}/${y}` : `${dia}, ${dd}/${mm}/${y}`;
   }
 
   function renderSlots(slots) {
@@ -460,7 +649,7 @@
     state.slotIso = null;
     state.slotLabel = null;
     if (!slots.length) {
-      list.innerHTML = "<p style='color:var(--ink-soft); font-size:14px;'>Sem horários livres nos próximos dias.</p>";
+      list.innerHTML = `<p style='color:var(--ink-soft); font-size:14px;'>${T("Sem horários livres nos próximos dias.")}</p>`;
       return;
     }
 
@@ -477,19 +666,19 @@
 
     list.innerHTML = `
       <label class="field" for="selectData">
-        <span>Data</span>
+        <span>${T("Data")}</span>
         <select id="selectData" class="slot-select">
-          <option value="">Selecione a data</option>
+          <option value="">${T("Selecione a data")}</option>
           ${datas.map((ymd) => `<option value="${ymd}">${rotuloData(ymd)}</option>`).join("")}
         </select>
       </label>
       <label class="field" for="selectHora">
-        <span>Horário</span>
+        <span>${T("Horário")}</span>
         <select id="selectHora" class="slot-select" disabled>
-          <option value="">Escolha a data primeiro</option>
+          <option value="">${T("Escolha a data primeiro")}</option>
         </select>
       </label>
-      <button class="btn-primary" id="btnContinuarHorario" disabled>Continuar</button>
+      <button class="btn-primary" id="btnContinuarHorario" disabled>${T("Continuar")}</button>
     `;
 
     const selData = document.getElementById("selectData");
@@ -504,12 +693,12 @@
       btn.disabled = true;
       const ymd = selData.value;
       if (!ymd) {
-        selHora.innerHTML = '<option value="">Escolha a data primeiro</option>';
+        selHora.innerHTML = `<option value="">${T("Escolha a data primeiro")}</option>`;
         selHora.disabled = true;
         return;
       }
       selHora.innerHTML =
-        '<option value="">Selecione o horário</option>' +
+        `<option value="">${T("Selecione o horário")}</option>` +
         porDia.get(ymd).map((slot) => `<option value="${slot.iso}">${slot.time_label}</option>`).join("");
       selHora.disabled = false;
     });
@@ -524,7 +713,7 @@
       }
       const slot = porDia.get(selData.value).find((x) => x.iso === iso);
       state.slotIso = slot.iso;
-      state.slotLabel = `${rotuloData(selData.value)} às ${slot.time_label}`;
+      state.slotLabel = `${T("{{data}} às {{hora}}", { data: rotuloData(selData.value), hora: slot.time_label })}`;
       btn.disabled = false;
     });
 
@@ -536,8 +725,8 @@
   document.getElementById("btnContinuarDados").addEventListener("click", () => {
     const nome = document.getElementById("inputNome").value.trim();
     const telefone = document.getElementById("inputTelefone").value.trim();
-    if (nome.length < 2) { alert("Digita seu nome completo."); return; }
-    if (telefone.replace(/\D/g, "").length < 10) { alert("Telefone inválido — inclui o DDD."); return; }
+    if (nome.length < 2) { alert(T("Digita seu nome completo.")); return; }
+    if (telefone.replace(/\D/g, "").length < 10) { alert(T("Telefone inválido — inclui o DDD.")); return; }
     state.nome = nome;
     state.telefone = telefone;
     showStep(4);
@@ -548,13 +737,13 @@
     const s = state.servico;
     const ehCartao = state.metodo === "cartao";
     const notaNoShow = ehCartao
-      ? `<div class="summary-row note"><span>Taxa se faltar sem avisar</span><span>${formatMoney(s.taxa_no_show_centavos, s.moeda)}</span></div>`
+      ? `<div class="summary-row note"><span>${T("Taxa se faltar sem avisar")}</span><span>${formatMoney(s.taxa_no_show_centavos, s.moeda)}</span></div>`
       : "";
     document.getElementById("resumo").innerHTML = `
-      <div class="summary-row"><span>Profissional</span><span>${state.profissional.name}</span></div>
-      <div class="summary-row"><span>Serviço</span><span>${s.nome}</span></div>
-      <div class="summary-row"><span>Horário</span><span>${state.slotLabel}</span></div>
-      <div class="summary-row total"><span>${ehCartao ? "Valor do serviço" : "Total (Pix)"}</span><span>${formatMoney(s.valor_centavos, s.moeda)}</span></div>
+      <div class="summary-row"><span>${T("Profissional")}</span><span>${state.profissional.name}</span></div>
+      <div class="summary-row"><span>${T("Serviço")}</span><span>${s.nome}</span></div>
+      <div class="summary-row"><span>${T("Horário")}</span><span>${state.slotLabel}</span></div>
+      <div class="summary-row total"><span>${ehCartao ? T("Valor do serviço") : T("Total (Pix)")}</span><span>${formatMoney(s.valor_centavos, s.moeda)}</span></div>
       ${notaNoShow}
     `;
   }
@@ -604,7 +793,7 @@
 
   function mostrarErroPagamento(msg) {
     const el = document.getElementById("pagamentoErro");
-    el.textContent = msg || "Algo deu errado. Tente de novo.";
+    el.textContent = msg || T("Algo deu errado. Tente de novo.");
     el.classList.remove("hidden");
   }
 
@@ -621,21 +810,21 @@
     const btn = document.getElementById("btnPagarCartao");
     document.getElementById("pagamentoErro").classList.add("hidden");
     if (!stripe || !cardElement) {
-      mostrarErroPagamento("Não foi possível carregar o formulário de cartão. Recarregue a página e tente de novo.");
+      mostrarErroPagamento(T("Não foi possível carregar o formulário de cartão. Recarregue a página e tente de novo."));
       return;
     }
     btn.disabled = true;
-    btn.textContent = "Reservando…";
-    const restaurar = () => { btn.disabled = false; btn.textContent = "Reservar com cartão"; };
+    btn.textContent = T("Reservando…");
+    const restaurar = () => { btn.disabled = false; btn.textContent = T("Reservar com cartão"); };
     try {
       // 1) backend prepara o SetupIntent do cliente (identificado pelo telefone)
       const r1 = await fetch(`${BACKEND_URL}/public/cartao/setup-intent`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...CAB },
         body: JSON.stringify({ nome: state.nome, telefone: state.telefone }),
       });
       const d1 = await r1.json().catch(() => ({}));
-      if (!r1.ok) throw new Error(mensagemDoErro(d1, "Não foi possível preparar o pagamento com cartão."));
+      if (!r1.ok) throw new Error(mensagemDoErro(d1, T("Não foi possível preparar o pagamento com cartão.")));
 
       // 2) o número do cartão vai direto do navegador pro Stripe (nunca pelo nosso servidor)
       const { setupIntent, error } = await stripe.confirmCardSetup(d1.setup_intent_client_secret, {
@@ -644,12 +833,12 @@
           billing_details: { name: state.nome, phone: state.telefone },
         },
       });
-      if (error) throw new Error(error.message || "Não foi possível validar o cartão.");
+      if (error) throw new Error(error.message || T("Não foi possível validar o cartão."));
 
       // 3) backend reserva (hold) o valor no cartão e cria o agendamento
       const r2 = await fetch(`${BACKEND_URL}/public/agendamentos/cartao`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...CAB },
         body: JSON.stringify({
           profissional_id: profissionalId,
           servico_id: state.servico.servico_id,
@@ -660,10 +849,10 @@
         }),
       });
       const d2 = await r2.json().catch(() => ({}));
-      if (!r2.ok) throw new Error(mensagemDoErro(d2, "Não foi possível concluir o agendamento."));
+      if (!r2.ok) throw new Error(mensagemDoErro(d2, T("Não foi possível concluir o agendamento.")));
 
       state.agendamentoId = d2.agendamento_id;
-      mostrarSucesso("O valor ficou reservado no seu cartão e só será cobrado depois do atendimento.");
+      mostrarSucesso(T("O valor ficou reservado no seu cartão e só será cobrado depois do atendimento."));
     } catch (e) {
       restaurar();
       mostrarErroPagamento(e.message);
@@ -675,12 +864,12 @@
   async function pagarComPix() {
     const btn = document.getElementById("btnPagarPix");
     btn.disabled = true;
-    btn.textContent = "Gerando cobrança…";
+    btn.textContent = T("Gerando cobrança…");
     document.getElementById("pagamentoErro").classList.add("hidden");
     try {
       const res = await fetch(`${BACKEND_URL}/public/agendamentos/pix`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...CAB },
         body: JSON.stringify({
           profissional_id: profissionalId,
           servico_id: state.servico.servico_id,
@@ -690,7 +879,7 @@
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(mensagemDoErro(data, "Não foi possível gerar a cobrança."));
+      if (!res.ok) throw new Error(mensagemDoErro(data, T("Não foi possível gerar a cobrança.")));
       state.agendamentoId = data.agendamento_id;
       document.getElementById("pagamentoInicial").classList.add("hidden");
       document.getElementById("pixBox").classList.remove("hidden");
@@ -703,9 +892,9 @@
       iniciarPolling();
     } catch (e) {
       btn.disabled = false;
-      btn.textContent = "Pagar com Pix";
+      btn.textContent = T("Pagar com Pix");
       const el = document.getElementById("pagamentoErro");
-      el.textContent = e.message || "Algo deu errado. Tente de novo.";
+      el.textContent = e.message || T("Algo deu errado. Tente de novo.");
       el.classList.remove("hidden");
     }
   }
@@ -723,7 +912,7 @@
   function iniciarPolling() {
     state.pollTimer = setInterval(async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/public/agendamentos/${state.agendamentoId}/status`);
+        const res = await fetch(`${BACKEND_URL}/public/agendamentos/${state.agendamentoId}/status`, { headers: CAB });
         const data = await res.json();
         if (data.hold_status === "pago_integral") {
           clearInterval(state.pollTimer);
@@ -731,7 +920,7 @@
         } else if (data.hold_status === "expirado") {
           clearInterval(state.pollTimer);
           const el = document.getElementById("pagamentoErro");
-          el.textContent = "O tempo pra pagar esse Pix expirou. Escolha o horário de novo.";
+          el.textContent = T("O tempo pra pagar esse Pix expirou. Escolha o horário de novo.");
           el.classList.remove("hidden");
         }
       } catch (e) { /* tenta de novo no próximo ciclo */ }
@@ -739,10 +928,11 @@
   }
 
   function mostrarSucesso(complemento) {
+    document.getElementById("idiomaBox").classList.add("hidden");
     [1, 2, 3, 4].forEach((i) => document.getElementById("step" + i).classList.add("hidden"));
     document.querySelectorAll(".steps .dot").forEach((d) => d.classList.add("done"));
     document.getElementById("sucessoDetalhe").textContent =
-      `${state.servico.nome} com ${state.profissional.name} — ${state.slotLabel}.` +
+      T("{{servico}} com {{prof}} — {{quando}}.", { servico: state.servico.nome, prof: state.profissional.name, quando: state.slotLabel }) +
       (complemento ? ` ${complemento}` : "");
     document.getElementById("stepSucesso").classList.remove("hidden");
   }
@@ -760,6 +950,14 @@
   }
 
   carregarProfissional();
+  // idioma: seletor (recarrega a página, por isso só aparece antes de começar a reserva) e tradução do que já está na tela
+  const seletorIdioma = document.getElementById("idiomaSelect");
+  seletorIdioma.value = IDIOMA;
+  seletorIdioma.addEventListener("change", () => {
+    try { localStorage.setItem("idioma", seletorIdioma.value); } catch (e) { /* sem armazenamento: vale só até recarregar */ }
+    window.location.reload();
+  });
+  traduzirDom();
 })();
 </script>
 </body>

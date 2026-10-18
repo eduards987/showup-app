@@ -21,6 +21,9 @@ import { useAuth } from "@/src/lib/auth";
 import type { Metodos } from "@/src/lib/auth-email";
 import { URL_PRIVACIDADE, URL_TERMOS } from "@/src/lib/legal";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
+import { SeletorIdioma } from "@/src/components/seletor-idioma";
+import { t } from "@/src/i18n/core";
+import { useIdioma } from "@/src/i18n";
 
 const WELCOME_BG =
   "https://images.unsplash.com/photo-1698486617282-2c9a0e3193f7?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1OTV8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMHdlbGxuZXNzJTIwc2NoZWR1bGluZyUyMGJhY2tncm91bmR8ZW58MHx8fHwxNzg5NTc1NzM5fDA&ixlib=rb-4.1.0&q=85";
@@ -116,6 +119,7 @@ const useStyles = makeStyles((colors) => ({
 }));
 
 export default function Welcome() {
+  useIdioma();
   const auth = useAuth();
   const styles = useStyles();
   const { colors } = useTheme();
@@ -142,7 +146,7 @@ export default function Welcome() {
     try {
       setErro(await auth.signIn());
     } catch {
-      setErro("Não foi possível entrar com o Google. Tente de novo.");
+      setErro(t("Não foi possível entrar com o Google. Tente de novo."));
     } finally {
       setLoading(null);
     }
@@ -154,7 +158,7 @@ export default function Welcome() {
     try {
       setErro(await auth.signInMicrosoft());
     } catch {
-      setErro("Não foi possível entrar com a Microsoft. Tente de novo.");
+      setErro(t("Não foi possível entrar com a Microsoft. Tente de novo."));
     } finally {
       setLoading(null);
     }
@@ -173,17 +177,17 @@ export default function Welcome() {
         locations={[0, 0.55, 1]}
         style={styles.bg}
       />
+      <View style={{ position: "absolute", top: insets.top + spacing.md, right: spacing.lg, zIndex: 2 }}>
+        <SeletorIdioma variante="pilula" />
+      </View>
       <View style={{ flex: 1 }} />
       <View style={[styles.card, { paddingBottom: insets.bottom + spacing.xl }]}>
         <View style={styles.brandRow}>
           <View style={styles.brandDot} />
           <Text style={styles.brand}>SHOWUP</Text>
         </View>
-        <Text style={styles.title}>Agendamentos com garantia.</Text>
-        <Text style={styles.subtitle}>
-          Pré-autorização de pagamento na hora do agendamento. Sem no-show,
-          sem cobrança abusiva.
-        </Text>
+        <Text style={styles.title}>{t("Agendamentos com garantia.")}</Text>
+        <Text style={styles.subtitle}>{t("Pré-autorização de pagamento na hora do agendamento. Sem no-show, sem cobrança abusiva.")}</Text>
         <Pressable
           testID="google-signin-button"
           onPress={handleSignIn}
@@ -200,7 +204,7 @@ export default function Welcome() {
               <View style={styles.gLogo}>
                 <Text style={styles.gLogoText}>G</Text>
               </View>
-              <Text style={styles.googleText}>Continuar com Google</Text>
+              <Text style={styles.googleText}>{t("Continuar com Google")}</Text>
             </>
           )}
         </Pressable>
@@ -221,7 +225,7 @@ export default function Welcome() {
                   <View style={[styles.msQuad, { backgroundColor: "#00A4EF" }]} />
                   <View style={[styles.msQuad, { backgroundColor: "#FFB900" }]} />
                 </View>
-                <Text style={styles.outlineText}>Continuar com Microsoft</Text>
+                <Text style={styles.outlineText}>{t("Continuar com Microsoft")}</Text>
               </>
             )}
           </Pressable>
@@ -234,7 +238,7 @@ export default function Welcome() {
             style={({ pressed }) => [styles.outlineBtn, pressed && styles.googleBtnPressed]}
           >
             <Ionicons name="mail-outline" size={20} color={colors.onSurface} />
-            <Text style={styles.outlineText}>Continuar com e-mail</Text>
+            <Text style={styles.outlineText}>{t("Continuar com e-mail")}</Text>
           </Pressable>
         ) : null}
         {erro ? (
@@ -242,15 +246,9 @@ export default function Welcome() {
             {erro}
           </Text>
         ) : null}
-        <Text style={styles.legal}>
-          Ao continuar você concorda com os{" "}
-          <Text testID="link-termos" style={styles.legalLink} onPress={() => Linking.openURL(URL_TERMOS)}>
-            termos de uso
-          </Text>{" "}
-          e a{" "}
-          <Text testID="link-privacidade" style={styles.legalLink} onPress={() => Linking.openURL(URL_PRIVACIDADE)}>
-            política de privacidade
-          </Text>
+        <Text style={styles.legal}>{t("Ao continuar você concorda com os")}{" "}
+          <Text testID="link-termos" style={styles.legalLink} onPress={() => Linking.openURL(URL_TERMOS)}>{t("termos de uso")}</Text>{" "}{t("e a")}{" "}
+          <Text testID="link-privacidade" style={styles.legalLink} onPress={() => Linking.openURL(URL_PRIVACIDADE)}>{t("política de privacidade")}</Text>
           .
         </Text>
       </View>

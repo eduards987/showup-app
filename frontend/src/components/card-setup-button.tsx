@@ -9,6 +9,8 @@ import { ActivityIndicator, Pressable, Text } from "react-native";
 
 import { api } from "@/src/lib/api";
 import { makeStyles, useTheme } from "@/src/theme";
+import { t } from "@/src/i18n/core";
+import { useIdioma } from "@/src/i18n";
 
 const useStyles = makeStyles((c) => ({
   cta: {
@@ -26,6 +28,7 @@ const useStyles = makeStyles((c) => ({
 }));
 
 export function CardSetupButton({ onSaved }: { onSaved: () => void }) {
+  useIdioma();
   const styles = useStyles();
   const { colors } = useTheme();
   const { initPaymentSheet, presentPaymentSheet } = useStripe();
@@ -67,7 +70,7 @@ export function CardSetupButton({ onSaved }: { onSaved: () => void }) {
       });
       onSaved();
     } catch (e: any) {
-      setError(e?.message || "Falha ao salvar cartão");
+      setError(e?.message || t("Falha ao salvar cartão"));
     } finally {
       setLoading(false);
     }
@@ -81,7 +84,7 @@ export function CardSetupButton({ onSaved }: { onSaved: () => void }) {
         ) : (
           <>
             <Ionicons name="add-circle-outline" size={18} color={colors.onBrandPrimary} />
-            <Text style={styles.ctaText}>Adicionar cartão</Text>
+            <Text style={styles.ctaText}>{t("Adicionar cartão")}</Text>
           </>
         )}
       </Pressable>

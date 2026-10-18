@@ -18,26 +18,22 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ConnectCard } from "@/src/components/connect-card";
+import { SeletorMoeda } from "@/src/components/seletor-moeda";
+import { avisoDeConversao } from "@/src/lib/moedas";
 import { resumoJanelaAgenda } from "@/src/lib/agenda-janela";
 import { api, ApiError } from "@/src/lib/api";
+import { nomeDaCategoria } from "@/src/lib/categorias";
 import { useAuth } from "@/src/lib/auth";
 import type { ConnectStatus } from "@/src/lib/connect-estado";
 import { TIMEZONE_LABELS } from "@/src/lib/format";
 import { openExternalCheckout } from "@/src/lib/open-external-checkout";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
+import { t } from "@/src/i18n/core";
+import { useIdioma } from "@/src/i18n";
 
 type Slot = { weekday: number; hora_inicio: string; hora_fim: string };
 
-const WEEKDAYS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
-const CATEGORIAS_LABELS: Record<string, string> = {
-  fitness: "Fitness",
-  terapia: "Terapia",
-  consultoria: "Consultoria",
-  estetica: "Estética",
-  coaching: "Coaching",
-  nutricao: "Nutrição",
-};
-
+const diasDaSemana = () => [t("Seg"), t("Ter"), t("Qua"), t("Qui"), t("Sex"), t("Sáb"), t("Dom")];
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   headerRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
@@ -163,6 +159,7 @@ const useStyles = makeStyles((c) => ({
 }));
 
 export default function Configuracoes() {
+  useIdioma();
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -210,7 +207,7 @@ export default function Configuracoes() {
 
   const moedasQ = useQuery({
     queryKey: ["moedas-list"],
-    queryFn: () => api<{ moedas: string[] }>("/api/moedas"),
+    queryFn: () => api<{ moedas: string[]; moedas_de_recebimento?: string[] }>("/api/moedas"),
   });
 
   const dispQ = useQuery({
@@ -307,8 +304,8 @@ export default function Configuracoes() {
       // Antes essa falha ficava muda — o botão só voltava ao normal sem
       // dizer por quê. Mostra a mensagem real (do backend, se veio uma;
       // senão a mensagem genérica do erro), pra dar pra diagnosticar.
-      const msg = err instanceof ApiError ? err.message : "Não foi possível abrir o Stripe. Tente de novo.";
-      Alert.alert("Não foi possível conectar", msg);
+      const msg = err instanceof ApiError ? err.message : t("Não foi possível abrir o Stripe. Tente de novo.");
+      Alert.alert(t("Não foi possível conectar"), msg);
     },
   });
 
@@ -321,8 +318,8 @@ export default function Configuracoes() {
       await Linking.openURL(r.url);
     },
     onError: (err: unknown) => {
-      const msg = err instanceof ApiError ? err.message : "Não foi possível abrir o painel do Stripe. Tente de novo.";
-      Alert.alert("Não foi possível abrir o painel", msg);
+      const msg = err instanceof ApiError ? err.message : t("Não foi possível abrir o painel do Stripe. Tente de novo.");
+      Alert.alert(t("Não foi possível abrir o painel"), msg);
     },
   });
 
@@ -346,19 +343,17 @@ export default function Configuracoes() {
           <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
         </Pressable>
       </View>
-      <Text style={styles.title}>Meu perfil profissional</Text>
-      <Text style={styles.subtitle}>
-        Defina categorias, disponibilidade e ative repasses automáticos.
-      </Text>
+      <Text style={styles.title}>{t("Meu perfil profissional")}</Text>
+      <Text style={styles.subtitle}>{t("Defina categorias, disponibilidade e ative repasses automáticos.")}</Text>
 
       <ScrollView contentContainerStyle={{ paddingBottom: spacing.xxl }}>
         {saved ? (
           <View style={styles.saved}>
-            <Text style={styles.savedText}>Salvo ✓</Text>
+            <Text style={styles.savedText}>{t("Salvo ✓")}</Text>
           </View>
         ) : null}
 
-        <Text style={styles.sectionTitle}>CATEGORIAS (até 3)</Text>
+        <Text style={styles.sectionTitle}>{t("CATEGORIAS (até 3)")}</Text>
         <View style={styles.chipsRow}>
           {cats.map((c) => {
             const active = selectedCats.includes(c);
@@ -370,7 +365,7 @@ export default function Configuracoes() {
                 style={[styles.chip, active && styles.chipActive]}
               >
                 <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                  {CATEGORIAS_LABELS[c] ?? c}
+                  {nomeDaCategoria(c)}
                 </Text>
               </Pressable>
             );
@@ -390,15 +385,13 @@ export default function Configuracoes() {
             {saveCatsM.isPending ? (
               <ActivityIndicator color={colors.onBrandPrimary} />
             ) : (
-              <Text style={styles.ctaText}>Salvar categorias</Text>
+              <Text style={styles.ctaText}>{t("Salvar categorias")}</Text>
             )}
           </Pressable>
         </View>
 
-        <Text style={styles.sectionTitle}>FUSO HORÁRIO</Text>
-        <Text style={[styles.connectBody, { paddingHorizontal: spacing.xl, marginBottom: spacing.sm }]}>
-          Os horários que você cadastra em disponibilidade usam este fuso como referência.
-        </Text>
+        <Text style={styles.sectionTitle}>{t("FUSO HORÁRIO")}</Text>
+        <Text style={[styles.connectBody, { paddingHorizontal: spacing.xl, marginBottom: spacing.sm }]}>{t("Os horários que você cadastra em disponibilidade usam este fuso como referência.")}</Text>
         <View style={styles.chipsRow}>
           {(timezonesQ.data?.timezones ?? []).map((tz) => {
             const active = selectedTz === tz;
@@ -426,29 +419,20 @@ export default function Configuracoes() {
             {saveTzM.isPending ? (
               <ActivityIndicator color={colors.onBrandPrimary} />
             ) : (
-              <Text style={styles.ctaText}>Salvar fuso horário</Text>
+              <Text style={styles.ctaText}>{t("Salvar fuso horário")}</Text>
             )}
           </Pressable>
         </View>
 
-        <Text style={styles.sectionTitle}>MOEDA</Text>
-        <Text style={[styles.connectBody, { paddingHorizontal: spacing.xl, marginBottom: spacing.sm }]}>
-          Moeda em que você recebe. Só afeta serviços criados a partir de agora.
-        </Text>
-        <View style={styles.chipsRow}>
-          {(moedasQ.data?.moedas ?? []).map((m) => {
-            const active = selectedMoeda === m;
-            return (
-              <Pressable
-                key={m}
-                testID={`moeda-${m}`}
-                onPress={() => setSelectedMoeda(m)}
-                style={[styles.chip, active && styles.chipActive]}
-              >
-                <Text style={[styles.chipText, active && styles.chipTextActive]}>{m}</Text>
-              </Pressable>
-            );
-          })}
+        <Text style={styles.sectionTitle}>{t("MOEDA")}</Text>
+        <Text style={[styles.connectBody, { paddingHorizontal: spacing.xl, marginBottom: spacing.sm }]}>{t("Moeda em que você recebe. Só afeta serviços criados a partir de agora.")}</Text>
+        <View style={{ paddingHorizontal: spacing.xl, marginBottom: spacing.md }}>
+          <SeletorMoeda valor={selectedMoeda} moedas={moedasQ.data?.moedas ?? [selectedMoeda]} onChange={setSelectedMoeda} />
+          {avisoDeConversao(selectedMoeda, moedasQ.data?.moedas_de_recebimento) ? (
+            <Text testID="aviso-conversao" style={[styles.connectBody, { marginTop: spacing.sm, color: colors.warning }]}>
+              {avisoDeConversao(selectedMoeda, moedasQ.data?.moedas_de_recebimento)}
+            </Text>
+          ) : null}
         </View>
         <View style={{ paddingHorizontal: spacing.xl, marginBottom: spacing.md }}>
           <Pressable
@@ -460,12 +444,12 @@ export default function Configuracoes() {
             {saveMoedaM.isPending ? (
               <ActivityIndicator color={colors.onBrandPrimary} />
             ) : (
-              <Text style={styles.ctaText}>Salvar moeda</Text>
+              <Text style={styles.ctaText}>{t("Salvar moeda")}</Text>
             )}
           </Pressable>
         </View>
 
-        <Text style={styles.sectionTitle}>DISPONIBILIDADE SEMANAL</Text>
+        <Text style={styles.sectionTitle}>{t("DISPONIBILIDADE SEMANAL")}</Text>
         <Text testID="resumo-janela-agenda" style={[styles.connectBody, { paddingHorizontal: spacing.xl, marginBottom: spacing.sm }]}>
           {resumoJanelaAgenda(slots).texto}
         </Text>
@@ -476,7 +460,7 @@ export default function Configuracoes() {
               onPress={() => updateSlot(i, { weekday: (s.weekday + 1) % 7 })}
               style={{ minWidth: 52 }}
             >
-              <Text style={styles.slotDay}>{WEEKDAYS[s.weekday]}</Text>
+              <Text style={styles.slotDay}>{diasDaSemana()[s.weekday]}</Text>
             </Pressable>
             <TextInput
               testID={`slot-start-${i}`}
@@ -502,7 +486,7 @@ export default function Configuracoes() {
         ))}
         <Pressable testID="add-slot" onPress={addSlot} style={styles.addSlotBtn}>
           <Ionicons name="add" size={18} color={colors.brandPrimary} />
-          <Text style={styles.addSlotText}>Adicionar horário</Text>
+          <Text style={styles.addSlotText}>{t("Adicionar horário")}</Text>
         </Pressable>
         <View style={{ paddingHorizontal: spacing.xl, marginTop: spacing.md }}>
           <Pressable
@@ -514,12 +498,12 @@ export default function Configuracoes() {
             {saveDispM.isPending ? (
               <ActivityIndicator color={colors.onBrandPrimary} />
             ) : (
-              <Text style={styles.ctaText}>Salvar disponibilidade</Text>
+              <Text style={styles.ctaText}>{t("Salvar disponibilidade")}</Text>
             )}
           </Pressable>
         </View>
 
-        <Text style={styles.sectionTitle}>REPASSE AUTOMÁTICO (STRIPE CONNECT)</Text>
+        <Text style={styles.sectionTitle}>{t("REPASSE AUTOMÁTICO (STRIPE CONNECT)")}</Text>
         <ConnectCard
           status={connectQ.data}
           ocupado={connectM.isPending || painelM.isPending}

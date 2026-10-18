@@ -17,13 +17,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import {
-  CONFIRMACAO_LABELS,
-  HOLD_STATUS_LABELS,
+  infoHold,
+  rotuloConfirmacao,
   formatMoney,
   formatDateTime,
 } from "@/src/lib/format";
 import { Agendamento } from "@/src/lib/types";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
+import { t } from "@/src/i18n/core";
+import { useIdioma } from "@/src/i18n";
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
@@ -126,6 +128,7 @@ const KIND_COLORS = {
 };
 
 export default function AgendamentoDetalhe() {
+  useIdioma();
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -172,7 +175,7 @@ export default function AgendamentoDetalhe() {
   const a = q.data;
   const isProf = auth.status === "authenticated" && auth.user.role === "profissional";
   const isCli = auth.status === "authenticated" && auth.user.role === "cliente";
-  const holdMeta = HOLD_STATUS_LABELS[a.hold_status] ?? { label: a.hold_status, kind: "info" };
+  const holdMeta = infoHold(a.hold_status);
   const holdColor = KIND_COLORS[holdMeta.kind];
   const canConfirm =
     isProf && a.status_confirmacao === "pendente" && a.hold_status === "autorizado";
@@ -188,27 +191,27 @@ export default function AgendamentoDetalhe() {
       </View>
       <Text style={styles.title}>{a.servico_nome}</Text>
       <Text style={styles.subtitle}>
-        {isCli ? `com ${a.profissional_nome}` : `Cliente: ${a.cliente_nome}`}
+        {isCli ? t("com {{profissional_nome}}", { profissional_nome: a.profissional_nome }) : `Cliente: ${a.cliente_nome}`}
       </Text>
 
       <ScrollView contentContainerStyle={{ paddingBottom: spacing.xxl }}>
         <View style={styles.card}>
-          <Text style={styles.label}>Horário</Text>
+          <Text style={styles.label}>{t("Horário")}</Text>
           <Text style={styles.value}>{formatDateTime(a.horario_inicio, auth.user?.timezone)}</Text>
         </View>
 
         <View style={styles.card}>
           <View style={styles.row}>
-            <Text style={styles.label}>Valor pré-autorizado</Text>
+            <Text style={styles.label}>{t("Valor pré-autorizado")}</Text>
             <Text style={styles.bigValue}>{formatMoney(a.valor_total_centavos, a.moeda)}</Text>
           </View>
           <View style={styles.row}>
-            <Text style={styles.label}>Taxa em caso de no-show</Text>
+            <Text style={styles.label}>{t("Taxa em caso de no-show")}</Text>
             <Text style={styles.value}>{formatMoney(a.valor_no_show_centavos, a.moeda)}</Text>
           </View>
           {a.valor_capturado_centavos > 0 ? (
             <View style={styles.row}>
-              <Text style={styles.label}>Valor capturado</Text>
+              <Text style={styles.label}>{t("Valor capturado")}</Text>
               <Text style={[styles.value, { color: colors.success }]}>
                 {formatMoney(a.valor_capturado_centavos, a.moeda)}
               </Text>
@@ -217,16 +220,15 @@ export default function AgendamentoDetalhe() {
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.label}>Status do pagamento</Text>
+          <Text style={styles.label}>{t("Status do pagamento")}</Text>
           <View style={[styles.badge, { backgroundColor: holdColor.bg }]}>
             <Text style={[styles.badgeText, { color: holdColor.fg }]}>
               {holdMeta.label.toUpperCase()}
             </Text>
           </View>
-          <Text style={styles.label}>Confirmação</Text>
-          <Text style={styles.value}>{CONFIRMACAO_LABELS[a.status_confirmacao]}</Text>
-          <Text style={[styles.label, { fontSize: 12, marginTop: spacing.sm }]}>
-            Janela até {formatDateTime(a.janela_confirmacao_expira_em, auth.user?.timezone)}
+          <Text style={styles.label}>{t("Confirmação")}</Text>
+          <Text style={styles.value}>{rotuloConfirmacao(a.status_confirmacao)}</Text>
+          <Text style={[styles.label, { fontSize: 12, marginTop: spacing.sm }]}>{t("Janela até")}{" "}{formatDateTime(a.janela_confirmacao_expira_em, auth.user?.timezone)}
           </Text>
         </View>
       </ScrollView>
@@ -246,8 +248,7 @@ export default function AgendamentoDetalhe() {
                 ) : (
                   <>
                     <Ionicons name="checkmark-circle" size={20} color={colors.onBrandPrimary} />
-                    <Text style={styles.primaryText}>
-                      Compareceu · Capturar {formatMoney(a.valor_total_centavos, a.moeda)}
+                    <Text style={styles.primaryText}>{t("Compareceu · Capturar")}{" "}{formatMoney(a.valor_total_centavos, a.moeda)}
                     </Text>
                   </>
                 )}
@@ -259,8 +260,7 @@ export default function AgendamentoDetalhe() {
                 style={styles.danger}
               >
                 <Ionicons name="close-circle" size={20} color={colors.error} />
-                <Text style={styles.dangerText}>
-                  Não compareceu · Cobrar taxa {formatMoney(a.valor_no_show_centavos, a.moeda)}
+                <Text style={styles.dangerText}>{t("Não compareceu · Cobrar taxa")}{" "}{formatMoney(a.valor_no_show_centavos, a.moeda)}
                 </Text>
               </Pressable>
             </>
@@ -272,7 +272,7 @@ export default function AgendamentoDetalhe() {
               disabled={cancelM.isPending}
               style={styles.ghost}
             >
-              <Text style={styles.ghostText}>Cancelar reserva</Text>
+              <Text style={styles.ghostText}>{t("Cancelar reserva")}</Text>
             </Pressable>
           ) : null}
         </View>
@@ -281,12 +281,8 @@ export default function AgendamentoDetalhe() {
       <Modal transparent visible={confirmNoShow} animationType="slide" onRequestClose={() => setConfirmNoShow(false)}>
         <View style={styles.modalBackdrop}>
           <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.xl }]}>
-            <Text style={styles.sheetTitle}>Confirmar no-show?</Text>
-            <Text style={styles.sheetBody}>
-              Isso cobra {formatMoney(a.valor_no_show_centavos, a.moeda)} do cartão do cliente. O restante
-              do hold ({formatMoney(a.valor_total_centavos - a.valor_no_show_centavos, a.moeda)}) é liberado
-              automaticamente. Ação irreversível.
-            </Text>
+            <Text style={styles.sheetTitle}>{t("Confirmar no-show?")}</Text>
+            <Text style={styles.sheetBody}>{t("Isso cobra")}{" "}{formatMoney(a.valor_no_show_centavos, a.moeda)}{" "}{t("do cartão do cliente. O restante do hold (")}{formatMoney(a.valor_total_centavos - a.valor_no_show_centavos, a.moeda)}{t(") é liberado automaticamente. Ação irreversível.")}</Text>
             <Pressable
               testID="modal-confirm-noshow"
               onPress={() => confirmM.mutate("nao_compareceu")}
@@ -296,11 +292,11 @@ export default function AgendamentoDetalhe() {
               {confirmM.isPending ? (
                 <ActivityIndicator color={colors.error} />
               ) : (
-                <Text style={styles.dangerText}>Confirmar no-show</Text>
+                <Text style={styles.dangerText}>{t("Confirmar no-show")}</Text>
               )}
             </Pressable>
             <Pressable onPress={() => setConfirmNoShow(false)} style={styles.ghost}>
-              <Text style={styles.ghostText}>Cancelar</Text>
+              <Text style={styles.ghostText}>{t("Cancelar")}</Text>
             </Pressable>
           </View>
         </View>

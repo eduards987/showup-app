@@ -10,6 +10,8 @@ import { api } from "@/src/lib/api";
 import { formatMoney } from "@/src/lib/format";
 import { Servico } from "@/src/lib/types";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
+import { t } from "@/src/i18n/core";
+import { useIdioma } from "@/src/i18n";
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
@@ -66,6 +68,7 @@ const useStyles = makeStyles((c) => ({
 }));
 
 export default function Servicos() {
+  useIdioma();
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -85,14 +88,14 @@ export default function Servicos() {
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <Text style={styles.title}>Meus serviços</Text>
+        <Text style={styles.title}>{t("Meus serviços")}</Text>
         <Pressable
           testID="add-servico"
           onPress={() => router.push("/(app)/novo-servico")}
           style={styles.addBtn}
         >
           <Ionicons name="add" size={18} color={colors.onBrandPrimary} />
-          <Text style={styles.addText}>Novo</Text>
+          <Text style={styles.addText}>{t("Novo")}</Text>
         </Pressable>
       </View>
       {q.isLoading ? (
@@ -100,10 +103,8 @@ export default function Servicos() {
       ) : (q.data?.length ?? 0) === 0 ? (
         <View style={styles.empty}>
           <Ionicons name="briefcase-outline" size={28} color={colors.muted} />
-          <Text style={styles.emptyTitle}>Nenhum serviço</Text>
-          <Text style={styles.emptyBody}>
-            Cadastre um serviço para começar a receber reservas com garantia.
-          </Text>
+          <Text style={styles.emptyTitle}>{t("Nenhum serviço")}</Text>
+          <Text style={styles.emptyBody}>{t("Cadastre um serviço para começar a receber reservas com garantia.")}</Text>
         </View>
       ) : (
         <FlatList
@@ -117,7 +118,7 @@ export default function Servicos() {
                 <Text style={styles.value}>{formatMoney(item.valor_centavos, item.moeda)}</Text>
               </View>
               <Text style={styles.meta}>
-                {item.duracao_min} min · Taxa no-show {formatMoney(item.taxa_no_show_centavos, item.moeda)}
+                {item.duracao_min}{" "}{t("min · Taxa no-show")}{" "}{formatMoney(item.taxa_no_show_centavos, item.moeda)}
               </Text>
               {item.descricao ? <Text style={styles.desc}>{item.descricao}</Text> : null}
               <Pressable
@@ -126,7 +127,7 @@ export default function Servicos() {
                 style={styles.del}
               >
                 <Ionicons name="trash-outline" size={14} color={colors.error} />
-                <Text style={styles.delText}>Remover</Text>
+                <Text style={styles.delText}>{t("Remover")}</Text>
               </Pressable>
             </View>
           )}

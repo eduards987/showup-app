@@ -9,13 +9,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import {
-  CONFIRMACAO_LABELS,
-  HOLD_STATUS_LABELS,
+  infoHold,
+  rotuloConfirmacao,
   formatMoney,
   formatDateTime,
 } from "@/src/lib/format";
 import { Agendamento } from "@/src/lib/types";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
+import { t } from "@/src/i18n/core";
+import { useIdioma } from "@/src/i18n";
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
@@ -63,6 +65,7 @@ const KIND_COLORS = {
 };
 
 export default function Agendamentos() {
+  useIdioma();
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -78,13 +81,13 @@ export default function Agendamentos() {
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <Text style={styles.title}>{isCliente ? "Minhas reservas" : "Meus atendimentos"}</Text>
+        <Text style={styles.title}>{isCliente ? t("Minhas reservas") : t("Meus atendimentos")}</Text>
       </View>
       {(q.data?.length ?? 0) === 0 ? (
         <View style={styles.empty}>
           <Ionicons name="calendar-outline" size={28} color={colors.muted} />
-          <Text style={styles.emptyTitle}>Nada aqui ainda</Text>
-          <Text style={styles.emptyBody}>Suas reservas aparecerão nesta lista.</Text>
+          <Text style={styles.emptyTitle}>{t("Nada aqui ainda")}</Text>
+          <Text style={styles.emptyBody}>{t("Suas reservas aparecerão nesta lista.")}</Text>
         </View>
       ) : (
         <FlatList
@@ -94,7 +97,7 @@ export default function Agendamentos() {
           refreshing={q.isFetching}
           contentContainerStyle={{ paddingBottom: insets.bottom + spacing.xxl }}
           renderItem={({ item }) => {
-            const holdMeta = HOLD_STATUS_LABELS[item.hold_status] ?? { label: item.hold_status, kind: "info" };
+            const holdMeta = infoHold(item.hold_status);
             const holdColor = KIND_COLORS[holdMeta.kind];
             return (
               <Pressable
@@ -121,7 +124,7 @@ export default function Agendamentos() {
                   </View>
                   <View style={[styles.badge, { backgroundColor: colors.surfaceTertiary }]}>
                     <Text style={[styles.badgeText, { color: colors.onSurfaceTertiary }]}>
-                      {CONFIRMACAO_LABELS[item.status_confirmacao].toUpperCase()}
+                      {rotuloConfirmacao(item.status_confirmacao).toUpperCase()}
                     </Text>
                   </View>
                 </View>

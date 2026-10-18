@@ -16,17 +16,11 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/lib/api";
+import { nomeDaCategoria } from "@/src/lib/categorias";
 import { ProfissionalPublic } from "@/src/lib/types";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
-
-const CAT_LABEL: Record<string, string> = {
-  fitness: "Fitness",
-  terapia: "Terapia",
-  consultoria: "Consultoria",
-  estetica: "Estética",
-  coaching: "Coaching",
-  nutricao: "Nutrição",
-};
+import { t } from "@/src/i18n/core";
+import { useIdioma } from "@/src/i18n";
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
@@ -108,6 +102,7 @@ const useStyles = makeStyles((c) => ({
 const CATEGORIAS = ["fitness", "terapia", "consultoria", "estetica", "coaching", "nutricao"];
 
 export default function Search() {
+  useIdioma();
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -129,8 +124,8 @@ export default function Search() {
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <Text style={styles.title}>Buscar profissionais</Text>
-        <Text style={styles.subtitle}>Filtre por categoria ou nome.</Text>
+        <Text style={styles.title}>{t("Buscar profissionais")}</Text>
+        <Text style={styles.subtitle}>{t("Filtre por categoria ou nome.")}</Text>
       </View>
       <View style={styles.searchWrap}>
         <Ionicons name="search" size={18} color={colors.muted} />
@@ -138,7 +133,7 @@ export default function Search() {
           testID="search-input"
           value={q}
           onChangeText={setQ}
-          placeholder="Nome do profissional"
+          placeholder={t("Nome do profissional")}
           placeholderTextColor={colors.muted}
           style={styles.input}
           autoCorrect={false}
@@ -159,7 +154,7 @@ export default function Search() {
           onPress={() => setCat(null)}
           style={[styles.chip, !cat && styles.chipActive]}
         >
-          <Text style={[styles.chipText, !cat && styles.chipTextActive]}>Todos</Text>
+          <Text style={[styles.chipText, !cat && styles.chipTextActive]}>{t("Todos")}</Text>
         </Pressable>
         {CATEGORIAS.map((c) => (
           <Pressable
@@ -169,7 +164,7 @@ export default function Search() {
             style={[styles.chip, cat === c && styles.chipActive]}
           >
             <Text style={[styles.chipText, cat === c && styles.chipTextActive]}>
-              {CAT_LABEL[c]}
+              {nomeDaCategoria(c)}
             </Text>
           </Pressable>
         ))}
@@ -180,9 +175,9 @@ export default function Search() {
       ) : (listQ.data?.length ?? 0) === 0 ? (
         <View style={styles.empty} testID="search-empty">
           <Ionicons name="people-outline" size={28} color={colors.muted} />
-          <Text style={styles.emptyTitle}>Nenhum profissional</Text>
+          <Text style={styles.emptyTitle}>{t("Nenhum profissional")}</Text>
           <Text style={styles.emptyBody}>
-            {cat ? "Tente outra categoria." : "Nenhum profissional com serviços ativos."}
+            {cat ? t("Tente outra categoria.") : t("Nenhum profissional com serviços ativos.")}
           </Text>
         </View>
       ) : (
@@ -203,12 +198,12 @@ export default function Search() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.itemName}>{item.name}</Text>
-                <Text style={styles.itemMeta}>{item.servicos_count} serviço(s) disponíveis</Text>
+                <Text style={styles.itemMeta}>{item.servicos_count}{" "}{t("serviço(s) disponíveis")}</Text>
                 {item.categorias.length > 0 ? (
                   <View style={styles.catRow}>
                     {item.categorias.map((c) => (
                       <View key={c} style={styles.catTag}>
-                        <Text style={styles.catTagText}>{CAT_LABEL[c]?.toUpperCase() ?? c}</Text>
+                        <Text style={styles.catTagText}>{nomeDaCategoria(c).toUpperCase()}</Text>
                       </View>
                     ))}
                   </View>

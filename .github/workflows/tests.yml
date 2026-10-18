@@ -44,4 +44,7 @@ jobs:
           tests/test_link_publico.py
           tests/test_agenda.py
           tests/test_agenda_servidor.py
+          tests/test_moedas.py
+          tests/test_i18n_servidor.py
+          tests/test_i18n_app.py
           tests/test_trocar_dominio.py

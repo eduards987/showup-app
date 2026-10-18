@@ -2792,3 +2792,15 @@ Guia: `lancamento/NOTIFICACOES.md`. Módulo novo `backend/notificacoes.py` (text
 - **App**: `src/lib/agenda-janela.ts` mostra, na disponibilidade, "Seus clientes poderão agendar nos próximos N dias em que você atende (...)".
 - Ainda NÃO validado: o servidor aceita horário dentro da janela mas FORA do expediente cadastrado (só /slots filtra por hora): pedido forjado poderia reservar fora do expediente.
 - Testes: `test_agenda.py` (regra, 30), `test_agenda_servidor.py` (lista, 3 fluxos, cartão curto; 16). Mutação conferida em 10 proteções.
+
+## Idiomas (pt/en/es), moedas e fechamento do expediente (18/10/2026)
+- **Expediente**: `agenda.inicios_possiveis` é a ÚNICA fonte da grade de horários (lista `/slots` e conferência na reserva). O servidor recusa horário fora do
+  expediente/grade/15 min de antecedência nos 3 fluxos, antes do cartão (`fora_do_expediente`). Fecha o risco "pedido forjado fora do expediente".
+- **Idiomas**: `frontend/src/i18n/` (core puro + provider + `en.ts`/`es.ts` gerados; chave = texto em português); `t()` global, `useIdioma()` redesenha a tela;
+  detecção pelo idioma do aparelho (`Intl`, sem GPS), escolha guardada; `SeletorIdioma` (entrada e Perfil) e `SeletorMoeda` (dropdown). `format.ts` por idioma.
+  Página `agendar.html` trilíngue (dicionário embutido, seletor só na 1ª etapa, Accept-Language). Servidor: `i18n_servidor.py` + handler de HTTPException.
+  Push, legais e página inicial ficam em português. Conversão do app feita com o compilador do TypeScript (codemod): 285 trocas + ajustes manuais.
+- **Moedas**: CLP removido (zero-decimal no Stripe = cobraria 100x); `MOEDAS_SUPORTADAS` = BRL, USD, EUR, GBP, MXN, ARS, COP, CAD, AUD. `CONNECT_PAIS` (padrão BR) substitui
+  o mapa moeda->país (plataforma brasileira só tem contas conectadas no Brasil). Rótulos "Valor (R$)" agora usam a moeda do profissional; textos "Hold/Capturado" ficaram
+  "Reserva no cartão/Cobrado". Taxas x custo do Stripe: `lancamento/TAXAS-E-MOEDAS.md` (Ultra dá prejuízo até no cartão nacional).
+- Testes novos: `test_moedas.py`, `test_i18n_servidor.py`, `test_i18n_app.py` (+ Node via strip-types), e os de idioma em `test_site_publicacao.py`.

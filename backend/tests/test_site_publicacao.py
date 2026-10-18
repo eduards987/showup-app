@@ -273,3 +273,89 @@ def test_logo_do_site_e_a_mesma_imagem_do_app():
     site = site.resize((64, 51))
     diferenca = sum(abs(a - b) for pa, pb in zip(recorte.getdata(), site.getdata()) for a, b in zip(pa, pb)) / (64 * 51 * 4)
     assert diferenca < 6, f"a logo do site difere da do app (diferença média {diferenca:.1f})"
+
+
+# ------------------------------------------------------------------ página de agendamento em português, inglês e espanhol
+def _dicionarios_da_pagina():
+    import json
+    import re
+    html = _ler("agendar.html")
+    bloco = html[html.index("const DICIONARIO = {"):html.index("const IDIOMAS_OK")]
+    parte_en, parte_es = bloco.split("    es: {")
+    pares = lambda trecho: {json.loads(k): json.loads(v) for k, v in re.findall(r'^\s+("(?:[^"\\]|\\.)*"): ("(?:[^"\\]|\\.)*"),$', trecho, flags=re.M)}
+    return pares(parte_en), pares(parte_es)
+
+
+def _textos_estaticos_da_pagina():
+    """Todo texto visível no HTML (fora de script, style e option) e os placeholders/aria-label."""
+    import re
+    from html.parser import HTMLParser
+
+    class Coletor(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.pilha, self.textos, self.attrs, self.no_body = [], [], [], False
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "body":
+                self.no_body = True
+            if tag not in ("meta", "link", "br", "input", "img"):
+                self.pilha.append(tag)
+            for k, v in attrs:
+                if k in ("placeholder", "aria-label") and v:
+                    self.attrs.append(v)
+
+        def handle_endtag(self, tag):
+            if tag in self.pilha:
+                while self.pilha and self.pilha.pop() != tag:
+                    pass
+
+        def handle_data(self, data):
+            if self.no_body and not ({"script", "style", "option"} & set(self.pilha)):
+                t = re.sub(r"\s+", " ", data).strip()
+                if re.search(r"[A-Za-zÀ-ú]", t):                       # qualquer texto com letra (até "e a" entre dois links)
+                    self.textos.append(t)
+
+    c = Coletor()
+    c.feed(_ler("agendar.html"))
+    return c.textos, [a for a in c.attrs if a != "Idioma / Language" and re.search(r"[A-Za-zÀ-ú]", a)]
+
+
+def test_pagina_todo_texto_do_html_tem_traducao_em_ingles_e_espanhol():
+    en, es = _dicionarios_da_pagina()
+    estaticos, atributos = _textos_estaticos_da_pagina()
+    marcas = {"ShowUp", "Pix"}
+    faltam = sorted({t for t in estaticos + atributos if t not in marcas and (t not in en or t not in es)})
+    assert faltam == [], f"textos do HTML sem tradução: {faltam}"
+
+
+def test_pagina_todo_T_do_javascript_tem_traducao_em_ingles_e_espanhol():
+    import json
+    import re
+    en, es = _dicionarios_da_pagina()
+    usados = {json.loads(m) for m in re.findall(r'\bT\(\s*("(?:[^"\\]|\\.)*")', _ler("agendar.html"))}
+    assert len(usados) >= 25, "esperava achar os T(...) do JavaScript"
+    assert sorted(usados - set(en)) == [] and sorted(usados - set(es)) == []
+
+
+def test_pagina_dicionarios_sem_sobras_variaveis_iguais_e_sem_vazios():
+    import re
+    en, es = _dicionarios_da_pagina()
+    estaticos, atributos = _textos_estaticos_da_pagina()
+    import json
+    usados = {json.loads(m) for m in re.findall(r'\bT\(\s*("(?:[^"\\]|\\.)*")', _ler("agendar.html"))} | set(estaticos) | set(atributos)
+    assert set(en) == set(es), "inglês e espanhol com chaves diferentes"
+    assert sorted(set(en) - usados) == [], "tradução de um texto que não existe mais na página"
+    ph = lambda s: sorted(re.findall(r"\\{\\{\\w+\\}\\}", s))
+    for pt, tr_en in en.items():
+        for tr in (tr_en, es[pt]):
+            assert tr.strip() and ph(pt) == ph(tr), f"variáveis ou texto vazio em {pt!r}"
+
+
+def test_pagina_detecta_idioma_do_navegador_com_escolha_guardada_e_pede_erros_no_mesmo_idioma():
+    html = _ler("agendar.html")
+    for trecho in ('localStorage.getItem("idioma")', "navigator.languages", 'IDIOMAS_OK = ["pt", "en", "es"]', 'const CAB = { "Accept-Language": IDIOMA }',
+                   'id="idiomaSelect"', 'classList.toggle("hidden", n !== 1)', "new Intl.NumberFormat(LOCALE"):
+        assert trecho in html, trecho
+    assert html.count("...CAB") == 3 and html.count("{ headers: CAB }") == 3          # todas as chamadas ao servidor levam o idioma
+    assert 'toLocaleString("pt-BR"' not in html                                          # o valor não é mais sempre formatado em português

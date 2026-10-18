@@ -163,3 +163,44 @@ def test_confirmacao_impossivel_quando_a_reserva_vence_antes_do_atendimento_acab
     assert agenda.janela_de_confirmacao(FIM, FIM + timedelta(hours=1)) is None                           # sobraria 0
     assert agenda.janela_de_confirmacao(FIM, FIM - timedelta(hours=3)) is None
     assert agenda.janela_de_confirmacao(FIM, FIM + timedelta(hours=1, seconds=1)) == FIM + timedelta(seconds=1)
+
+
+# ------------------------------------------------------------------ grade de horários do expediente (única fonte da lista e da reserva)
+def horas(lista):
+    return [d.astimezone(SP).strftime("%d %H:%M") for d in lista]
+
+
+def test_grade_de_60_minutos_no_expediente_09_a_12():
+    agora = local(21, 8, 0)                                                    # quarta 08:00
+    r = agenda.inicios_possiveis(semana([QUA], "09:00", "12:00"), timedelta(minutes=60), agora, SP, dias=1)
+    assert horas(r) == ["21 09:00", "21 10:00", "21 11:00"]                    # 12:00 NÃO: o atendimento acabaria às 13:00
+
+
+def test_grade_so_oferece_inicios_em_que_o_atendimento_inteiro_cabe_no_expediente():
+    agora = local(21, 7, 0)
+    weekly = semana([QUA], "09:00", "12:00")
+    assert horas(agenda.inicios_possiveis(weekly, timedelta(minutes=60), agora, SP, dias=1)) == ["21 09:00", "21 10:00", "21 11:00"]
+    assert horas(agenda.inicios_possiveis(weekly, timedelta(minutes=90), agora, SP, dias=1)) == ["21 09:00", "21 10:30"]      # 10:30 + 90 = 12:00 cabe
+    assert horas(agenda.inicios_possiveis(weekly, timedelta(minutes=45), agora, SP, dias=1)) == ["21 09:00", "21 09:45", "21 10:30", "21 11:15"]
+    assert agenda.inicios_possiveis(weekly, timedelta(minutes=200), agora, SP, dias=1) == []                                 # serviço maior que o expediente
+
+
+def test_grade_com_dois_periodos_no_mesmo_dia_e_dia_de_folga():
+    agora = local(21, 7, 0)
+    weekly = [{"weekday": QUA, "hora_inicio": "08:00", "hora_fim": "10:00"}, {"weekday": QUA, "hora_inicio": "14:00", "hora_fim": "16:00"}]
+    assert sorted(horas(agenda.inicios_possiveis(weekly, timedelta(minutes=60), agora, SP, dias=2))) == ["21 08:00", "21 09:00", "21 14:00", "21 15:00"]   # quinta (22) é folga
+
+
+def test_grade_exige_15_minutos_de_antecedencia():
+    weekly = semana([QUA], "09:00", "12:00")
+    assert horas(agenda.inicios_possiveis(weekly, timedelta(minutes=60), local(21, 8, 40), SP, dias=1)) == ["21 09:00", "21 10:00", "21 11:00"]   # 20 min: pode
+    assert horas(agenda.inicios_possiveis(weekly, timedelta(minutes=60), local(21, 8, 45), SP, dias=1)) == ["21 10:00", "21 11:00"]               # exatamente 15 min: NÃO (precisa passar de 15)
+    assert horas(agenda.inicios_possiveis(weekly, timedelta(minutes=60), local(21, 8, 50), SP, dias=1)) == ["21 10:00", "21 11:00"]
+
+
+def test_grade_usa_o_horario_de_parede_do_profissional_nao_o_utc():
+    agora = datetime(2026, 10, 21, 10, 0, tzinfo=timezone.utc)                  # 07:00 em São Paulo
+    r = agenda.inicios_possiveis(semana([QUA], "09:00", "11:00"), timedelta(minutes=60), agora, SP, dias=1)
+    assert [d.astimezone(timezone.utc).strftime("%H:%M") for d in r] == ["12:00", "13:00"]                # 09:00 e 10:00 locais = 12:00 e 13:00 UTC
+    manaus = agenda.inicios_possiveis(semana([QUA], "09:00", "11:00"), timedelta(minutes=60), agora, ZoneInfo("America/Manaus"), dias=1)
+    assert [d.astimezone(timezone.utc).strftime("%H:%M") for d in manaus] == ["13:00", "14:00"]           # o mesmo "09:00" em Manaus é outro instante

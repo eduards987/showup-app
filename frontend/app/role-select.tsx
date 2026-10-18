@@ -13,6 +13,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Role, useAuth } from "@/src/lib/auth";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
+import { t } from "@/src/i18n/core";
+import { useIdioma } from "@/src/i18n";
 
 const useStyles = makeStyles((colors) => ({
   root: { flex: 1, backgroundColor: colors.surface },
@@ -92,6 +94,7 @@ const useStyles = makeStyles((colors) => ({
 }));
 
 export default function RoleSelect() {
+  useIdioma();
   const auth = useAuth();
   const router = useRouter();
   const styles = useStyles();
@@ -107,14 +110,14 @@ export default function RoleSelect() {
   const options: { role: Role; title: string; desc: string; letter: string }[] = [
     {
       role: "cliente",
-      title: "Sou Cliente",
-      desc: "Quero agendar sessões e serviços com prestadores.",
+      title: t("Sou Cliente"),
+      desc: t("Quero agendar sessões e serviços com prestadores."),
       letter: "C",
     },
     {
       role: "profissional",
-      title: "Sou Profissional",
-      desc: "Quero receber agendamentos e proteger minha agenda contra no-shows.",
+      title: t("Sou Profissional"),
+      desc: t("Quero receber agendamentos e proteger minha agenda contra no-shows."),
       letter: "P",
     },
   ];
@@ -139,11 +142,9 @@ export default function RoleSelect() {
       ]}
     >
       <View style={styles.header}>
-        <Text style={styles.hi}>Olá, {auth.user.name.split(" ")[0]}</Text>
-        <Text style={styles.title}>Como você vai usar o ShowUp?</Text>
-        <Text style={styles.subtitle}>
-          Escolha o papel principal. Você poderá ajustar depois.
-        </Text>
+        <Text style={styles.hi}>{t("Olá,")}{" "}{auth.user.name.split(" ")[0]}</Text>
+        <Text style={styles.title}>{t("Como você vai usar o ShowUp?")}</Text>
+        <Text style={styles.subtitle}>{t("Escolha o papel principal. Você poderá ajustar depois.")}</Text>
       </View>
       <View style={styles.cards}>
         {options.map((opt) => {
@@ -197,7 +198,7 @@ export default function RoleSelect() {
           {saving ? (
             <ActivityIndicator color={colors.onBrandPrimary} />
           ) : (
-            <Text style={styles.ctaText}>Continuar</Text>
+            <Text style={styles.ctaText}>{t("Continuar")}</Text>
           )}
         </Pressable>
       </View>

@@ -16,14 +16,15 @@ import {
   EstadoPasso,
   explicarFalhaDoToken,
   IdPasso,
-  MSG_EMULADOR,
-  MSG_PERMISSAO,
-  MSG_SEM_PROJECT_ID,
-  MSG_SEM_RECURSO_NO_SERVIDOR,
+  msgEmulador,
+  msgPermissao,
+  msgSemProjectId,
+  msgSemRecursoNoServidor,
   novoDiagnostico,
   ORDEM_PASSOS,
   PassoDiagnostico,
 } from "@/src/lib/notificacoes-erros";
+import { t } from "@/src/i18n/core";
 
 // Foreground behavior: show the alert + play sound even while the app is
 // open. Without this handler, Expo silently swallows foreground pushes.
@@ -50,7 +51,7 @@ export type RegistroPush = { token: string | null; erro: string | null };
  */
 export async function registrarComDiagnostico(): Promise<RegistroPush> {
   if (!Device.isDevice) {
-    return { token: null, erro: MSG_EMULADOR };
+    return { token: null, erro: msgEmulador() };
   }
 
   const { status: existing } = await Notifications.getPermissionsAsync();
@@ -60,7 +61,7 @@ export async function registrarComDiagnostico(): Promise<RegistroPush> {
     status = req.status;
   }
   if (status !== "granted") {
-    return { token: null, erro: MSG_PERMISSAO };
+    return { token: null, erro: msgPermissao() };
   }
 
   if (Platform.OS === "android") {
@@ -76,7 +77,7 @@ export async function registrarComDiagnostico(): Promise<RegistroPush> {
   const projectId =
     Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
   if (!projectId) {
-    return { token: null, erro: MSG_SEM_PROJECT_ID };
+    return { token: null, erro: msgSemProjectId() };
   }
 
   try {
@@ -124,13 +125,13 @@ export async function diagnosticarNotificacoes(
   };
 
   marcar("aparelho", "executando");
-  if (!Device.isDevice) return falhar("aparelho", MSG_EMULADOR);
+  if (!Device.isDevice) return falhar("aparelho", msgEmulador());
   marcar("aparelho", "ok");
 
   marcar("permissao", "executando");
   let { status } = await Notifications.getPermissionsAsync();
   if (status !== "granted") status = (await Notifications.requestPermissionsAsync()).status;
-  if (status !== "granted") return falhar("permissao", MSG_PERMISSAO);
+  if (status !== "granted") return falhar("permissao", msgPermissao());
   marcar("permissao", "ok");
 
   marcar("token", "executando");
@@ -142,7 +143,7 @@ export async function diagnosticarNotificacoes(
     });
   }
   const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
-  if (!projectId) return falhar("token", MSG_SEM_PROJECT_ID);
+  if (!projectId) return falhar("token", msgSemProjectId());
   let obtido: string;
   try {
     obtido = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
@@ -171,13 +172,13 @@ export async function diagnosticarNotificacoes(
       method: "POST",
     });
     if (r.etapa === "ticket") {
-      return falhar("envio", `${r.mensagem}\n\nProjeto Expo usado por este app: ${projeto}. A chave do Firebase precisa estar atribuída a ESSE projeto.`);
+      return falhar("envio", t("{{mensagem}}\n\nProjeto Expo usado por este app: {{projeto}}. A chave do Firebase precisa estar atribuída a ESSE projeto.", { mensagem: r.mensagem, projeto }));
     }
     marcar("envio", "ok");
     marcar("entrega", r.recibo === "ok" ? "ok" : r.recibo === "pendente" ? "pendente" : "falhou", r.mensagem);
   } catch (e) {
-    if (e instanceof ApiError && e.status === 404) return falhar("envio", MSG_SEM_RECURSO_NO_SERVIDOR);
-    return falhar("envio", e instanceof ApiError ? e.message : "Sem conexão com o servidor. Confira a internet e tente de novo.");
+    if (e instanceof ApiError && e.status === 404) return falhar("envio", msgSemRecursoNoServidor());
+    return falhar("envio", e instanceof ApiError ? e.message : t("Sem conexão com o servidor. Confira a internet e tente de novo."));
   }
   return { passos, token };
 }

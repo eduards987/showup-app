@@ -1,7 +1,7 @@
 // Profissional only: create a new service.
 
 import Ionicons from "@react-native-vector-icons/ionicons";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
@@ -17,7 +17,11 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/lib/api";
+import { useAuth } from "@/src/lib/auth";
+import { avisoDeConversao } from "@/src/lib/moedas";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
+import { t } from "@/src/i18n/core";
+import { useIdioma } from "@/src/i18n";
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
@@ -83,6 +87,12 @@ function reaisToCentavos(input: string): number {
 }
 
 export default function NovoServico() {
+  useIdioma();
+  const auth = useAuth();
+  // O valor é na moeda em que o profissional recebe (escolhida em Configurações), não sempre em reais.
+  const moeda = auth.status === "authenticated" ? (auth.user.moeda ?? "BRL") : "BRL";
+  const moedasQ = useQuery({ queryKey: ["moedas-list"], queryFn: () => api<{ moedas: string[]; moedas_de_recebimento?: string[] }>("/api/moedas") });
+  const aviso = avisoDeConversao(moeda, moedasQ.data?.moedas_de_recebimento);
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -112,7 +122,7 @@ export default function NovoServico() {
       qc.invalidateQueries({ queryKey: ["meus-servicos"] });
       router.back();
     },
-    onError: (e: any) => setErr(e.message || "Falha ao salvar"),
+    onError: (e: any) => setErr(e.message || t("Falha ao salvar")),
   });
 
   const valid =
@@ -133,35 +143,35 @@ export default function NovoServico() {
             <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
           </Pressable>
         </View>
-        <Text style={styles.title}>Novo serviço</Text>
-        <Text style={styles.subtitle}>Defina o valor total e a taxa em caso de no-show.</Text>
+        <Text style={styles.title}>{t("Novo serviço")}</Text>
+        <Text style={styles.subtitle}>{t("Defina o valor total e a taxa em caso de no-show.")}</Text>
 
         <ScrollView contentContainerStyle={{ paddingBottom: spacing.xl }}>
           <View style={styles.field}>
-            <Text style={styles.label}>Nome</Text>
+            <Text style={styles.label}>{t("Nome")}</Text>
             <TextInput
               testID="nome-input"
               value={nome}
               onChangeText={setNome}
-              placeholder="Sessão de personal training"
+              placeholder={t("Sessão de personal training")}
               placeholderTextColor={colors.muted}
               style={styles.input}
             />
           </View>
           <View style={styles.field}>
-            <Text style={styles.label}>Descrição (opcional)</Text>
+            <Text style={styles.label}>{t("Descrição (opcional)")}</Text>
             <TextInput
               value={descricao}
               onChangeText={setDescricao}
               multiline
-              placeholder="Detalhe o que está incluído..."
+              placeholder={t("Detalhe o que está incluído...")}
               placeholderTextColor={colors.muted}
               style={styles.textarea}
             />
           </View>
           <View style={styles.row2}>
             <View style={styles.cell}>
-              <Text style={styles.label}>Valor (R$)</Text>
+              <Text style={styles.label}>{t("Valor ({{moeda}})", { moeda })}</Text>
               <TextInput
                 testID="valor-input"
                 value={valor ? (reaisToCentavos(valor) / 100).toFixed(2) : ""}
@@ -173,7 +183,7 @@ export default function NovoServico() {
               />
             </View>
             <View style={styles.cell}>
-              <Text style={styles.label}>Taxa no-show (R$)</Text>
+              <Text style={styles.label}>{t("Taxa no-show ({{moeda}})", { moeda })}</Text>
               <TextInput
                 testID="taxa-input"
                 value={taxa ? (reaisToCentavos(taxa) / 100).toFixed(2) : ""}
@@ -185,8 +195,9 @@ export default function NovoServico() {
               />
             </View>
           </View>
+          {aviso ? <Text testID="aviso-conversao" style={{ color: colors.warning, fontSize: 13, marginBottom: spacing.md }}>{aviso}</Text> : null}
           <View style={styles.field}>
-            <Text style={styles.label}>Duração (min)</Text>
+            <Text style={styles.label}>{t("Duração (min)")}</Text>
             <TextInput
               testID="duracao-input"
               value={duracao}
@@ -216,7 +227,7 @@ export default function NovoServico() {
             {createM.isPending ? (
               <ActivityIndicator color={colors.onBrandPrimary} />
             ) : (
-              <Text style={styles.ctaText}>Salvar serviço</Text>
+              <Text style={styles.ctaText}>{t("Salvar serviço")}</Text>
             )}
           </Pressable>
         </View>

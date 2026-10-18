@@ -1,5 +1,6 @@
 // Minimal API client with Bearer token support.
 // The in-memory token is kept in sync by AuthProvider (see src/lib/auth.tsx).
+import { getIdioma } from "@/src/i18n/core";
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL ?? "";
 
@@ -25,6 +26,7 @@ export async function api<T = unknown>(
 ): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    "Accept-Language": getIdioma(),
     ...(init.headers as Record<string, string> | undefined),
   };
   if (inMemoryToken) headers.Authorization = `Bearer ${inMemoryToken}`;

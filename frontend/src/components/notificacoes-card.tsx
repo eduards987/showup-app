@@ -10,6 +10,8 @@ import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { acaoFinal, EstadoPasso, PassoDiagnostico } from "@/src/lib/notificacoes-erros";
 import { diagnosticarNotificacoes } from "@/src/lib/push-notifications";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
+import { t } from "@/src/i18n/core";
+import { useIdioma } from "@/src/i18n";
 
 const useStyles = makeStyles((c) => ({
   card: {
@@ -47,6 +49,7 @@ const useStyles = makeStyles((c) => ({
 }));
 
 export function NotificacoesCard() {
+  useIdioma();
   const styles = useStyles();
   const { colors } = useTheme();
   const [carregando, setCarregando] = useState(false);
@@ -63,7 +66,7 @@ export function NotificacoesCard() {
       setPassos(r.passos);
       setToken(r.token);
     } catch (e) {
-      setPassos([{ id: "envio", titulo: "Teste de notificação", estado: "falhou", detalhe: "Não foi possível fazer o teste agora. Tente de novo." }]);
+      setPassos([{ id: "envio", titulo: t("Teste de notificação"), estado: "falhou", detalhe: t("Não foi possível fazer o teste agora. Tente de novo.") }]);
     } finally {
       setCarregando(false);
     }
@@ -90,12 +93,12 @@ export function NotificacoesCard() {
     <View style={styles.card} testID="notificacoes-card">
       <View style={styles.row}>
         <Ionicons name="notifications-outline" size={22} color={colors.onSurfaceSecondary} />
-        <Text style={styles.titulo}>Avisos no celular</Text>
+        <Text style={styles.titulo}>{t("Avisos no celular")}</Text>
       </View>
-      <Text style={styles.corpo}>Você recebe uma notificação:</Text>
-      <Text style={styles.item}>• quando entra um novo agendamento;</Text>
-      <Text style={styles.item}>• pouco antes do próximo atendimento;</Text>
-      <Text style={styles.item}>• quando precisa confirmar se o cliente compareceu.</Text>
+      <Text style={styles.corpo}>{t("Você recebe uma notificação:")}</Text>
+      <Text style={styles.item}>{t("• quando entra um novo agendamento;")}</Text>
+      <Text style={styles.item}>{t("• pouco antes do próximo atendimento;")}</Text>
+      <Text style={styles.item}>{t("• quando precisa confirmar se o cliente compareceu.")}</Text>
 
       <Pressable testID="testar-notificacoes" onPress={testar} disabled={carregando} style={styles.btn}>
         {carregando ? (
@@ -103,7 +106,7 @@ export function NotificacoesCard() {
         ) : (
           <>
             <Ionicons name="paper-plane-outline" size={16} color={colors.onBrand} />
-            <Text style={styles.btnText}>Enviar notificação de teste</Text>
+            <Text style={styles.btnText}>{t("Enviar notificação de teste")}</Text>
           </>
         )}
       </Pressable>
@@ -131,7 +134,7 @@ export function NotificacoesCard() {
       {token && !carregando ? (
         <Pressable testID="copiar-token" onPress={copiarToken} style={styles.btnSecundario}>
           <Text style={styles.btnSecundarioTexto}>
-            {copiado ? "Copiado! Cole em expo.dev/notifications para testar direto na Expo." : "Copiar o código do aparelho (para testar pela Expo)"}
+            {copiado ? "Copiado! Cole em expo.dev/notifications para testar direto na Expo." : t("Copiar o código do aparelho (para testar pela Expo)")}
           </Text>
         </Pressable>
       ) : null}

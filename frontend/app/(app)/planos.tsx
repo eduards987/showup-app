@@ -16,6 +16,8 @@ import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { formatDateOnly, formatMoney } from "@/src/lib/format";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
+import { t } from "@/src/i18n/core";
+import { useIdioma } from "@/src/i18n";
 
 type Plano = {
   id: string;
@@ -74,13 +76,13 @@ type SubscriptionIntent = {
 // Texto de cada plano. Sem a conta do backend (carregando, ou outra moeda) cai
 // numa frase que não promete número nenhum; com ela, o ponto de equilíbrio real.
 function descricaoPlano(p: Plano, comp: Comparacao | undefined, moeda: string, compraHabilitada: boolean): string {
-  if (p.id === "free") return "Sem mensalidade. Você paga só a taxa por agendamento.";
-  if (!compraHabilitada) return "Taxa reduzida por agendamento. Chega em breve.";
+  if (p.id === "free") return t("Sem mensalidade. Você paga só a taxa por agendamento.");
+  if (!compraHabilitada) return t("Taxa reduzida por agendamento. Chega em breve.");
   const vsFree = comp?.equilibrio_vs_free_centavos;
   if (!vsFree) {
     return p.id === "ultra"
-      ? "Taxa mínima — pra quem tem volume alto de atendimentos."
-      : "Taxa reduzida — pra quem já atende com frequência.";
+      ? t("Taxa mínima — pra quem tem volume alto de atendimentos.")
+      : t("Taxa reduzida — pra quem já atende com frequência.");
   }
   let txt = `Compensa a partir de ${formatMoney(vsFree, moeda)}/mês em atendimentos, comparado ao Free.`;
   const vsAnterior = comp?.equilibrio_vs_anterior_centavos;
@@ -168,6 +170,7 @@ const useStyles = makeStyles((c) => ({
 }));
 
 export default function Planos() {
+  useIdioma();
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -219,7 +222,7 @@ export default function Planos() {
         ? await initPaymentSheet({
             ...base,
             setupIntentClientSecret: intent.setup_intent_client_secret,
-            primaryButtonLabel: "Começar teste grátis",
+            primaryButtonLabel: t("Começar teste grátis"),
           })
         : await initPaymentSheet({
             ...base,
@@ -257,52 +260,45 @@ export default function Planos() {
         <Pressable onPress={() => router.back()} style={styles.backBtn}>
           <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
         </Pressable>
-        <Text style={styles.title}>Plano</Text>
+        <Text style={styles.title}>{t("Plano")}</Text>
       </View>
 
       {planosQ.isLoading ? (
         <ActivityIndicator style={{ marginTop: spacing.xl }} color={colors.brandPrimary} />
       ) : (
         <ScrollView contentContainerStyle={styles.scroll}>
-          <Text style={styles.intro}>
-            A taxa por agendamento diminui conforme o plano sobe. Trocar de plano nunca afeta
-            agendamentos já criados, só os próximos.
-          </Text>
+          <Text style={styles.intro}>{t("A taxa por agendamento diminui conforme o plano sobe. Trocar de plano nunca afeta agendamentos já criados, só os próximos.")}</Text>
 
           {resumo ? (
             <View style={styles.resumoCard} testID="plano-resumo">
-              <Text style={styles.resumoTitulo}>Seus últimos {resumo.janela_dias} dias</Text>
+              <Text style={styles.resumoTitulo}>{t("Seus últimos")}{" "}{resumo.janela_dias}{" "}{t("dias")}</Text>
 
               {resumo.atendimentos_cobrados === 0 && resumo.faltas_cobradas_qtd === 0 ? (
-                <Text style={styles.resumoLinha}>
-                  Ainda não há atendimentos cobrados pelo app nesse período.
-                  {resumo.comparacao_disponivel && resumo.compra_habilitada
-                    ? " Quando houver, mostramos aqui quanto você pagaria em cada plano."
+                <Text style={styles.resumoLinha}>{t("Ainda não há atendimentos cobrados pelo app nesse período.")}{resumo.comparacao_disponivel && resumo.compra_habilitada
+                    ? t(" Quando houver, mostramos aqui quanto você pagaria em cada plano.")
                     : ""}
                 </Text>
               ) : (
                 <>
                   <Text style={styles.resumoLinha}>
-                    {plural(resumo.atendimentos_cobrados, "atendimento cobrado", "atendimentos cobrados")} pelo
-                    app · {formatMoney(resumo.servicos_cobrados_centavos, resumo.moeda)}
+                    {plural(resumo.atendimentos_cobrados, t("atendimento cobrado"), t("atendimentos cobrados"))}{" "}{t("pelo app ·")}{" "}{formatMoney(resumo.servicos_cobrados_centavos, resumo.moeda)}
                   </Text>
                   {resumo.faltas_cobradas_qtd > 0 ? (
                     <Text style={styles.resumoLinha}>
-                      {plural(resumo.faltas_cobradas_qtd, "falta cobrada", "faltas cobradas")} ·{" "}
-                      {formatMoney(resumo.faltas_cobradas_centavos, resumo.moeda)} que você teria perdido
-                    </Text>
+                      {plural(resumo.faltas_cobradas_qtd, t("falta cobrada"), t("faltas cobradas"))} ·{" "}
+                      {formatMoney(resumo.faltas_cobradas_centavos, resumo.moeda)}{" "}{t("que você teria perdido")}</Text>
                   ) : null}
                 </>
               )}
 
               {resumo.comparacao_disponivel && resumo.compra_habilitada && resumo.base_taxa_centavos > 0 ? (
                 <>
-                  <Text style={styles.resumoSub}>Quanto você pagaria (taxa + mensalidade)</Text>
+                  <Text style={styles.resumoSub}>{t("Quanto você pagaria (taxa + mensalidade)")}</Text>
                   {resumo.comparacao.map((c) => (
                     <View key={c.id} style={styles.tabelaLinha}>
                       <Text style={styles.tabelaNome}>
                         {c.nome}
-                        {c.id === resumo.plano_atual ? " (atual)" : ""}
+                        {c.id === resumo.plano_atual ? t(" (atual)") : ""}
                       </Text>
                       <Text style={styles.tabelaValor}>
                         {formatMoney(c.custo_total_centavos, resumo.moeda)}{" "}
@@ -319,20 +315,12 @@ export default function Planos() {
                     </View>
                   ))}
                   {resumo.recomendado ? (
-                    <Text style={styles.veredito}>
-                      Com esse movimento, o {comparacaoDe(resumo.recomendado)?.nome} teria custado{" "}
-                      {formatMoney(comparacaoDe(resumo.recomendado)?.economia_vs_atual_centavos ?? 0, resumo.moeda)} a
-                      menos.
-                    </Text>
+                    <Text style={styles.veredito}>{t("Com esse movimento, o")}{" "}{comparacaoDe(resumo.recomendado)?.nome}{" "}{t("teria custado")}{" "}
+                      {formatMoney(comparacaoDe(resumo.recomendado)?.economia_vs_atual_centavos ?? 0, resumo.moeda)}{" "}{t("a menos.")}</Text>
                   ) : (
-                    <Text style={styles.veredito}>
-                      Pro seu movimento, o plano atual já é o mais barato.
-                    </Text>
+                    <Text style={styles.veredito}>{t("Pro seu movimento, o plano atual já é o mais barato.")}</Text>
                   )}
-                  <Text style={styles.nota}>
-                    Estimativa com base nos últimos {resumo.janela_dias} dias — não garante o mesmo valor
-                    nos próximos. A taxa incide sobre o valor efetivamente cobrado em cada atendimento ou falta.
-                  </Text>
+                  <Text style={styles.nota}>{t("Estimativa com base nos últimos")}{" "}{resumo.janela_dias}{" "}{t("dias — não garante o mesmo valor nos próximos. A taxa incide sobre o valor efetivamente cobrado em cada atendimento ou falta.")}</Text>
                 </>
               ) : null}
             </View>
@@ -348,34 +336,28 @@ export default function Planos() {
                   <Text style={styles.planoNome}>{p.nome}</Text>
                   {isAtual ? (
                     <View style={styles.badge}>
-                      <Text style={styles.badgeText}>PLANO ATUAL</Text>
+                      <Text style={styles.badgeText}>{t("PLANO ATUAL")}</Text>
                     </View>
                   ) : p.id === resumo?.recomendado ? (
                     <View style={styles.badgeRecomendado}>
-                      <Text style={styles.badgeRecomendadoText}>MELHOR PRA VOCÊ</Text>
+                      <Text style={styles.badgeRecomendadoText}>{t("MELHOR PRA VOCÊ")}</Text>
                     </View>
                   ) : null}
                 </View>
 
                 <Text style={styles.preco}>
-                  {p.preco_centavos === 0 ? "Grátis" : formatMoney(p.preco_centavos, moeda)}
-                  {p.preco_centavos > 0 ? <Text style={styles.precoSufixo}> /mês</Text> : null}
+                  {p.preco_centavos === 0 ? t("Grátis") : formatMoney(p.preco_centavos, moeda)}
+                  {p.preco_centavos > 0 ? <Text style={styles.precoSufixo}>{" "}{t("/mês")}</Text> : null}
                 </Text>
-                <Text style={styles.taxa}>{p.fee_percent}% por agendamento</Text>
+                <Text style={styles.taxa}>{p.fee_percent}{t("% por agendamento")}</Text>
                 <Text style={styles.descricao}>{descricaoPlano(p, comparacaoDe(p.id), moeda, resumo?.compra_habilitada !== false)}</Text>
 
                 {isAtual && !isFree && resumo?.cobranca_pendente ? (
-                  <Text style={styles.cobrancaPendente} testID="cobranca-pendente">
-                    O Stripe não conseguiu cobrar a mensalidade do seu plano. Se o problema continuar, o plano volta
-                    para o Free. Para trocar o cartão, cancele o plano e assine de novo.
-                  </Text>
+                  <Text style={styles.cobrancaPendente} testID="cobranca-pendente">{t("O Stripe não conseguiu cobrar a mensalidade do seu plano. Se o problema continuar, o plano volta para o Free. Para trocar o cartão, cancele o plano e assine de novo.")}</Text>
                 ) : null}
 
                 {emTeste && resumo?.trial_termina_em ? (
-                  <Text style={styles.trialAtivo} testID="trial-ativo">
-                    Teste grátis até {formatDateOnly(resumo.trial_termina_em, timezone)}. Depois, {formatMoney(p.preco_centavos, moeda)}/mês —
-                    cancele antes disso se não quiser continuar.
-                  </Text>
+                  <Text style={styles.trialAtivo} testID="trial-ativo">{t("Teste grátis até")}{" "}{formatDateOnly(resumo.trial_termina_em, timezone)}{t(". Depois,")}{" "}{formatMoney(p.preco_centavos, moeda)}{t("/mês — cancele antes disso se não quiser continuar.")}</Text>
                 ) : null}
 
                 {!isAtual && !isFree && p.disponivel ? (
@@ -390,21 +372,18 @@ export default function Planos() {
                         <ActivityIndicator color={colors.onBrandPrimary} />
                       ) : (
                         <Text style={styles.ctaText}>
-                          {trialDisponivel ? `Testar ${resumo?.trial_dias} dias grátis` : `Assinar ${p.nome}`}
+                          {trialDisponivel ? t("Testar {{trial_dias}} dias grátis", { trial_dias: resumo?.trial_dias }) : `Assinar ${p.nome}`}
                         </Text>
                       )}
                     </Pressable>
                     {trialDisponivel ? (
-                      <Text style={styles.trialInfo}>
-                        Sem cobrança por {resumo?.trial_dias} dias; depois {formatMoney(p.preco_centavos, moeda)}/mês. Cancele
-                        antes e você não paga nada.
-                      </Text>
+                      <Text style={styles.trialInfo}>{t("Sem cobrança por")}{" "}{resumo?.trial_dias}{" "}{t("dias; depois")}{" "}{formatMoney(p.preco_centavos, moeda)}{t("/mês. Cancele antes e você não paga nada.")}</Text>
                     ) : null}
                   </>
                 ) : null}
 
                 {!isAtual && !isFree && !p.disponivel ? (
-                  <Text style={styles.emBreve}>Em breve</Text>
+                  <Text style={styles.emBreve}>{t("Em breve")}</Text>
                 ) : null}
 
                 {!isAtual && isFree ? (
@@ -417,9 +396,7 @@ export default function Planos() {
                     {cancelarM.isPending ? (
                       <ActivityIndicator color={colors.onSurface} />
                     ) : (
-                      <Text style={[styles.ctaText, styles.ctaTextSecundario]}>
-                        Cancelar assinatura e voltar ao Free
-                      </Text>
+                      <Text style={[styles.ctaText, styles.ctaTextSecundario]}>{t("Cancelar assinatura e voltar ao Free")}</Text>
                     )}
                   </Pressable>
                 ) : null}

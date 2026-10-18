@@ -1,13 +1,12 @@
 // Small helpers used across screens.
+import { getIdioma, type Idioma, localeAtual, t } from "@/src/i18n/core";
 
 export function formatMoney(centavos: number, moeda: string = "BRL"): string {
   const v = centavos / 100;
   try {
-    // Locale indefinido de propósito: deixa o dispositivo decidir convenção
-    // de formatação (separador decimal, posição do símbolo), só a MOEDA
-    // vem do dado (serviço/agendamento) — é isso que torna isto correto
-    // pra qualquer país, em vez de assumir pt-BR/BRL como antes.
-    return v.toLocaleString(undefined, { style: "currency", currency: moeda });
+    // O formato (separador decimal, posição do símbolo) segue o IDIOMA ESCOLHIDO no app; só a MOEDA vem do dado
+    // (serviço/agendamento) — é isso que torna isto correto pra qualquer país.
+    return v.toLocaleString(localeAtual(), { style: "currency", currency: moeda });
   } catch {
     // moeda fora do que o Intl reconhece — não deveria acontecer, já que o
     // backend só aceita moedas de MOEDAS_SUPORTADAS, mas nunca quebra a UI.
@@ -38,8 +37,16 @@ const OFFSET_MINUTOS: Record<string, number> = {
   "America/Noronha": -120,
 };
 
-const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
-const DIAS_SEMANA = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+const MESES: Record<Idioma, string[]> = {
+  "pt-BR": ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"],
+  en: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+  es: ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"],
+};
+const DIAS_SEMANA: Record<Idioma, string[]> = {
+  "pt-BR": ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"],
+  en: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+  es: ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"],
+};
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -64,14 +71,25 @@ function partesNoFuso(iso: string, timezone?: string) {
   };
 }
 
+// A ordem muda por idioma: "15 de out, 09:00" (pt), "Oct 15, 09:00" (en), "15 oct, 09:00" (es).
 export function formatDateTime(iso: string, timezone?: string): string {
   const p = partesNoFuso(iso, timezone);
-  return `${pad2(p.dia)} de ${MESES[p.mes]}, ${pad2(p.hora)}:${pad2(p.minuto)}`;
+  const idioma = getIdioma();
+  const mes = MESES[idioma][p.mes];
+  const hora = `${pad2(p.hora)}:${pad2(p.minuto)}`;
+  if (idioma === "en") return `${mes} ${p.dia}, ${hora}`;
+  if (idioma === "es") return `${pad2(p.dia)} ${mes}, ${hora}`;
+  return `${pad2(p.dia)} de ${mes}, ${hora}`;
 }
 
 export function formatDateOnly(iso: string, timezone?: string): string {
   const p = partesNoFuso(iso, timezone);
-  return `${DIAS_SEMANA[p.diaSemana]}, ${pad2(p.dia)} de ${MESES[p.mes]}`;
+  const idioma = getIdioma();
+  const mes = MESES[idioma][p.mes];
+  const dia = DIAS_SEMANA[idioma][p.diaSemana];
+  if (idioma === "en") return `${dia}, ${mes} ${p.dia}`;
+  if (idioma === "es") return `${dia}, ${pad2(p.dia)} ${mes}`;
+  return `${dia}, ${pad2(p.dia)} de ${mes}`;
 }
 
 export function formatTimeOnly(iso: string, timezone?: string): string {
@@ -79,20 +97,29 @@ export function formatTimeOnly(iso: string, timezone?: string): string {
   return `${pad2(p.hora)}:${pad2(p.minuto)}`;
 }
 
-export const HOLD_STATUS_LABELS: Record<string, { label: string; kind: "info" | "success" | "warning" | "error" }> = {
-  autorizado: { label: "Hold autorizado", kind: "info" },
-  capturado_total: { label: "Capturado (100%)", kind: "success" },
-  capturado_taxa: { label: "Taxa de no-show", kind: "warning" },
-  expirado: { label: "Hold expirado", kind: "error" },
-  cancelado: { label: "Cancelado", kind: "error" },
-};
+type KindStatus = "info" | "success" | "warning" | "error";
 
-export const CONFIRMACAO_LABELS: Record<string, string> = {
-  pendente: "Aguardando",
-  compareceu: "Compareceu",
-  nao_compareceu: "Não compareceu",
-  sem_resposta: "Sem resposta",
-};
+/** Rótulo e cor do estado da reserva no cartão, no idioma atual (é função, não constante: o idioma pode mudar com o app aberto). */
+export function infoHold(status: string): { label: string; kind: KindStatus } {
+  switch (status) {
+    case "autorizado": return { label: t("Reserva no cartão"), kind: "info" };
+    case "capturado_total": return { label: t("Cobrado (100%)"), kind: "success" };
+    case "capturado_taxa": return { label: t("Taxa de falta"), kind: "warning" };
+    case "expirado": return { label: t("Reserva expirada"), kind: "error" };
+    case "cancelado": return { label: t("Cancelado"), kind: "error" };
+    default: return { label: status, kind: "info" };
+  }
+}
+
+export function rotuloConfirmacao(status: string): string {
+  switch (status) {
+    case "pendente": return t("Aguardando");
+    case "compareceu": return t("Compareceu");
+    case "nao_compareceu": return t("Não compareceu");
+    case "sem_resposta": return t("Sem resposta");
+    default: return status;
+  }
+}
 
 export const TIMEZONE_LABELS: Record<string, string> = {
   "America/Sao_Paulo": "Brasília (UTC-3)",

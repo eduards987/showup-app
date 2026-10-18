@@ -26,6 +26,8 @@ import { api, ApiError, setAuthToken } from "@/src/lib/api";
 import { mensagemErroLoginSocial } from "@/src/lib/auth-email";
 import { unregisterPushToken } from "@/src/lib/push-notifications";
 import { storage } from "@/src/utils/storage";
+import { t } from "@/src/i18n/core";
+import { useIdioma } from "@/src/i18n";
 
 export type Role = "cliente" | "profissional";
 
@@ -93,6 +95,7 @@ function sleep(ms: number) {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  useIdioma();
   const [state, setState] = useState<AuthState>({ status: "loading", user: null });
 
   useEffect(() => {
@@ -214,14 +217,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (e) {
       console.warn("[auth] Não consegui concluir o login com o token recebido:", e);
       return e instanceof ApiError
-        ? `O servidor recusou a sessão (erro ${e.status}). Tente de novo.`
-        : "Sem conexão com o servidor. Confira a internet e tente de novo.";
+        ? t("O servidor recusou a sessão (erro {{status}}). Tente de novo.", { status: e.status })
+        : t("Sem conexão com o servidor. Confira a internet e tente de novo.");
     }
     return null;
   }, [signInWithToken]);
 
   const signInMicrosoft = useCallback(async (): Promise<string | null> => {
-    if (!backendUrl) return "O endereço do servidor não está configurado.";
+    if (!backendUrl) return t("O endereço do servidor não está configurado.");
     if (backendWakeUpPromise) {
       await Promise.race([backendWakeUpPromise, sleep(3000)]);
     }
@@ -236,7 +239,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       await signInWithToken(sessionToken);
     } catch {
-      return "Não foi possível concluir o login. Tente de novo.";
+      return t("Não foi possível concluir o login. Tente de novo.");
     }
     return null;
   }, [signInWithToken]);

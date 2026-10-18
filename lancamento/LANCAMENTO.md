@@ -84,7 +84,9 @@ atendimento, confirmação) e site com Termos, Privacidade e exclusão de conta.
    semana cadastrados: seg a sex = 5, seg a dom = 7), e nenhum atendimento pode terminar depois de agora + 7 dias - 24 h - 2 h (prazo da reserva
    no cartão). O servidor recusa horários fora da regra nos 3 fluxos (app, link com cartão, link com Pix) antes de tocar no cartão. Se o Stripe
    informar uma validade menor que 7 dias, o prazo de confirmação encurta (ou a reserva é desfeita e recusada). Detalhes em `backend/agenda.py`.
-2. **Moeda.** O app aceita 10 moedas; só BRL funciona de ponta a ponta com a conta Stripe brasileira. *Correção: travar em BRL.*
+2. ~~**Moeda.**~~ **Decidido: o app continua aberto a várias moedas e idiomas** (dropdown de moeda; português, inglês e espanhol). Corrigido: o **CLP saiu**
+   da lista (o Stripe o trata sem centavos e cobraria 100x) e a conta Stripe do profissional passou a ser sempre no país da plataforma (Brasil). **Pendente: revisar as
+   faixas de taxa**, porque o custo do Stripe (cartão internacional + conversão) supera a taxa do plano Ultra e do Profissional: veja `TAXAS-E-MOEDAS.md`.
 3. **Stripe em modo real.** Ativar a conta, trocar as chaves (`sk_`, `pk_`, `whsec_`, `price_`), refazer os 2 webhooks no modo real e ligar
    `EXIGIR_RECEBIMENTO_ATIVO=1`. Só depois de validar tudo em teste. Veja `CHAVES-PRODUCAO.md`. **A chave `pk_test_` está dentro de `agendar.html`**: trocar também lá.
 4. **Segredos que apareceram em conversas.** Confirme que foram trocados: segredo do Google (feito), senha do MongoDB (feito), `INTERNAL_SERVICE_TOKEN`, segredos dos webhooks.

@@ -6,6 +6,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/src/components/error-boundary";
 import { MaybeStripeProvider } from "@/src/components/stripe-app-provider";
+import { IdiomaProvider } from "@/src/i18n";
 import { AuthProvider } from "@/src/lib/auth";
 import { queryClient } from "@/src/query-client";
 
@@ -16,17 +17,19 @@ LogBox.ignoreAllLogs(true);
 export default function RootLayout() {
   return (
     <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <SafeAreaProvider>
-          <KeyboardProvider>
-            <MaybeStripeProvider>
-              <AuthProvider>
-                <Stack screenOptions={{ headerShown: false }} />
-              </AuthProvider>
-            </MaybeStripeProvider>
-          </KeyboardProvider>
-        </SafeAreaProvider>
-      </QueryClientProvider>
+      <IdiomaProvider>
+        <QueryClientProvider client={queryClient}>
+          <SafeAreaProvider>
+            <KeyboardProvider>
+              <MaybeStripeProvider>
+                <AuthProvider>
+                  <Stack screenOptions={{ headerShown: false }} />
+                </AuthProvider>
+              </MaybeStripeProvider>
+            </KeyboardProvider>
+          </SafeAreaProvider>
+        </QueryClientProvider>
+      </IdiomaProvider>
     </ErrorBoundary>
   );
 }

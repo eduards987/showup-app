@@ -15,9 +15,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
-import { CONFIRMACAO_LABELS, formatMoney, formatDateTime } from "@/src/lib/format";
+import { formatMoney, formatDateTime, rotuloConfirmacao } from "@/src/lib/format";
 import { Agendamento, CardInfo } from "@/src/lib/types";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
+import { t } from "@/src/i18n/core";
+import { useIdioma } from "@/src/i18n";
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
@@ -116,6 +118,7 @@ const useStyles = makeStyles((c) => ({
 }));
 
 export default function Home() {
+  useIdioma();
   const auth = useAuth();
   const styles = useStyles();
   const { colors } = useTheme();
@@ -178,7 +181,7 @@ export default function Home() {
       >
         <View style={styles.header}>
           <View>
-            <Text style={styles.hi}>Bem-vindo,</Text>
+            <Text style={styles.hi}>{t("Bem-vindo,")}</Text>
             <Text style={styles.name}>{user.name.split(" ")[0]}</Text>
           </View>
           <View style={styles.avatar} testID="home-avatar">
@@ -193,10 +196,8 @@ export default function Home() {
             style={styles.banner}
           >
             <Ionicons name="card-outline" size={22} color={colors.onWarning} />
-            <Text style={styles.bannerText}>
-              Cadastre um cartão para reservar profissionais.
-            </Text>
-            <Text style={styles.bannerCta}>Cadastrar →</Text>
+            <Text style={styles.bannerText}>{t("Cadastre um cartão para reservar profissionais.")}</Text>
+            <Text style={styles.bannerCta}>{t("Cadastrar →")}</Text>
           </Pressable>
         ) : null}
 
@@ -208,17 +209,15 @@ export default function Home() {
           >
             <Ionicons name="alarm-outline" size={22} color={colors.onError} />
             <Text style={[styles.bannerText, { color: colors.onError }]}>
-              {remindersQ.data!.count} atendimento(s) com janela terminando em menos de 6h.
-              Confirme antes que o hold expire.
-            </Text>
-            <Text style={[styles.bannerCta, { color: colors.onError }]}>Ver →</Text>
+              {remindersQ.data!.count}{" "}{t("atendimento(s) com janela terminando em menos de 6h. Confirme antes que o hold expire.")}</Text>
+            <Text style={[styles.bannerCta, { color: colors.onError }]}>{t("Ver →")}</Text>
           </Pressable>
         ) : null}
 
         {!isCliente && needsAction.length > 0 ? (
           <View style={styles.section}>
             <View style={styles.sectionRow}>
-              <Text style={styles.sectionTitle}>PRECISAM DE CONFIRMAÇÃO</Text>
+              <Text style={styles.sectionTitle}>{t("PRECISAM DE CONFIRMAÇÃO")}</Text>
             </View>
             {needsAction.map((a) => (
               <Pressable
@@ -237,9 +236,7 @@ export default function Home() {
                   <Text style={styles.cardValue}>{formatMoney(a.valor_total_centavos, a.moeda)}</Text>
                 </View>
                 <View style={[styles.badge, { backgroundColor: colors.warning }]}>
-                  <Text style={[styles.badgeText, { color: colors.onWarning }]}>
-                    AGUARDANDO SUA CONFIRMAÇÃO
-                  </Text>
+                  <Text style={[styles.badgeText, { color: colors.onWarning }]}>{t("AGUARDANDO SUA CONFIRMAÇÃO")}</Text>
                 </View>
               </Pressable>
             ))}
@@ -249,10 +246,10 @@ export default function Home() {
         <View style={styles.section}>
           <View style={styles.sectionRow}>
             <Text style={styles.sectionTitle}>
-              {isCliente ? "PRÓXIMOS AGENDAMENTOS" : "PRÓXIMOS ATENDIMENTOS"}
+              {isCliente ? t("PRÓXIMOS AGENDAMENTOS") : t("PRÓXIMOS ATENDIMENTOS")}
             </Text>
             <Pressable onPress={() => router.push("/(app)/agendamentos")}>
-              <Text style={styles.sectionLink}>Ver todos</Text>
+              <Text style={styles.sectionLink}>{t("Ver todos")}</Text>
             </Pressable>
           </View>
         </View>
@@ -263,12 +260,12 @@ export default function Home() {
           <View style={styles.empty} testID="home-empty">
             <Ionicons name="calendar-clear-outline" size={28} color={colors.muted} />
             <Text style={styles.emptyTitle}>
-              {isCliente ? "Nenhum agendamento" : "Agenda livre"}
+              {isCliente ? t("Nenhum agendamento") : t("Agenda livre")}
             </Text>
             <Text style={styles.emptyBody}>
               {isCliente
-                ? "Encontre profissionais na aba Buscar e reserve seu horário."
-                : "Adicione serviços em Serviços e compartilhe seu perfil."}
+                ? t("Encontre profissionais na aba Buscar e reserve seu horário.")
+                : t("Adicione serviços em Serviços e compartilhe seu perfil.")}
             </Text>
           </View>
         ) : (
@@ -293,7 +290,7 @@ export default function Home() {
                 </View>
                 <View style={styles.badge}>
                   <Text style={styles.badgeText}>
-                    {CONFIRMACAO_LABELS[a.status_confirmacao].toUpperCase()}
+                    {rotuloConfirmacao(a.status_confirmacao).toUpperCase()}
                   </Text>
                 </View>
               </Pressable>
@@ -314,7 +311,7 @@ export default function Home() {
             color={colors.onBrandPrimary}
           />
           <Text style={styles.ctaText}>
-            {isCliente ? "Buscar profissionais" : "Gerenciar serviços"}
+            {isCliente ? t("Buscar profissionais") : t("Gerenciar serviços")}
           </Text>
         </Pressable>
       </ScrollView>
