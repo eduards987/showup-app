@@ -13,7 +13,7 @@ spec = importlib.util.spec_from_file_location("verificar_producao", RAIZ / "lanc
 vp = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(vp)
 
-AGENDAR_NOVO = '<select id="selectData"></select><select id="selectHora"></select><p id="versaoPagina">v2026.10.15</p>'
+AGENDAR_NOVO = '<meta name="versao-da-pagina" content="v2026.10.15"><select id="selectData"></select><select id="selectHora"></select>'
 AGENDAR_ANTIGO = '<div class="slot-grid"></div>'
 
 
@@ -49,9 +49,13 @@ def servidores():
                    ("GET", "/api/auth/metodos"): (200, json.dumps({"google": True, "microsoft": True, "email": True})),
                    ("POST", "/api/me/connect/painel"): (401, "{}"),
                    ("POST", "/api/me/notificacoes/teste"): (401, "{}"),
+                   ("GET", "/api/me/link-publico"): (401, "{}"),
                    ("POST", "/api/webhooks/stripe"): (400, "{}")}
         b_rotas.update(backend or {})
         s_rotas = {("GET", "/agendar"): (200, AGENDAR_NOVO), ("GET", "/termos"): (200, "Termos completos"),
+                   ("GET", "/"): (200, '<main id="conteudo">ShowUp</main>'), ("GET", "/p/verificacao-showup"): (200, AGENDAR_NOVO),
+                   ("GET", "/pagina-que-nao-existe-showup"): (404, "Página não encontrada — ShowUp"),
+                   ("GET", "/robots.txt"): (200, "User-agent: *\nSitemap: https://x/sitemap.xml"),
                    ("GET", "/privacidade"): (200, "Privacidade completa"), ("GET", "/excluir-conta"): (200, "Exclusão")}
         s_rotas.update(site or {})
         sb, ub = _servidor(b_rotas)
@@ -156,3 +160,46 @@ def test_backend_com_os_avisos_por_notificacao_passa(servidores, capsys):
     ub, us = servidores()
     assert _rodar(ub, us) == 0
     assert "avisos por notificação (novo agendamento e próximo atendimento)" in capsys.readouterr().out
+
+
+# ------------------------------------------------------------------ site novo: início, /p/, 404, robots
+def test_backend_sem_o_link_legivel_falha_e_manda_publicar(servidores, capsys):
+    ub, us = servidores(backend={("GET", "/api/me/link-publico"): (404, "{}")})
+    assert _rodar(ub, us) == 1
+    saida = capsys.readouterr().out
+    assert "NÃO tem o link de agendamento legível" in saida and "git push" in saida
+
+
+def test_endereco_legivel_que_nao_abre_falha_porque_o_link_do_app_daria_erro(servidores, capsys):
+    ub, us = servidores(site={("GET", "/p/verificacao-showup"): (404, "nao existe")})
+    assert _rodar(ub, us) == 1
+    assert "/p/nome NÃO abre a página de agendamento" in capsys.readouterr().out
+
+
+def test_pagina_inicial_ausente_so_avisa_no_modo_normal_e_falha_no_completo(servidores, capsys):
+    rotas = {("GET", "/"): (404, "nao existe")}
+    ub, us = servidores(site=rotas)
+    assert _rodar(ub, us) == 0
+    assert "página inicial do site não está publicada" in capsys.readouterr().out
+    ub, us = servidores(site=rotas)
+    assert _rodar(ub, us, completo=True) == 1
+    assert "página inicial do site não está publicada" in capsys.readouterr().out
+
+
+def test_pagina_inicial_com_campo_em_branco_falha(servidores, capsys):
+    ub, us = servidores(site={("GET", "/"): (200, '<main id="conteudo">{{EMAIL_CONTATO}}</main>')})
+    assert _rodar(ub, us) == 1
+    assert "Página inicial publicada COM campo em branco" in capsys.readouterr().out
+
+
+def test_404_padrao_do_firebase_e_robots_ausente_sao_avisos_nao_falhas(servidores, capsys):
+    ub, us = servidores(site={("GET", "/pagina-que-nao-existe-showup"): (404, "Site Not Found"), ("GET", "/robots.txt"): (404, "x")})
+    assert _rodar(ub, us) == 0
+    saida = capsys.readouterr().out
+    assert "página de erro padrão do Firebase" in saida and "robots.txt não está publicado" in saida
+
+
+def test_a_versao_da_pagina_continua_verificada_pela_meta_tag_sem_aparecer_na_tela(servidores, capsys):
+    ub, us = servidores(site={("GET", "/agendar"): (200, AGENDAR_NOVO.replace("v2026.10.15", "v2025.01.01"))})
+    assert _rodar(ub, us) == 1
+    assert "não aparece na página" in capsys.readouterr().out

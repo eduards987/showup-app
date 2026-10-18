@@ -18,7 +18,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ConnectCard } from "@/src/components/connect-card";
-import { NotificacoesCard } from "@/src/components/notificacoes-card";
+import { resumoJanelaAgenda } from "@/src/lib/agenda-janela";
 import { api, ApiError } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import type { ConnectStatus } from "@/src/lib/connect-estado";
@@ -466,11 +466,9 @@ export default function Configuracoes() {
         </View>
 
         <Text style={styles.sectionTitle}>DISPONIBILIDADE SEMANAL</Text>
-        {slots.length === 0 ? (
-          <Text style={[styles.connectBody, { paddingHorizontal: spacing.xl, marginBottom: spacing.sm }]}>
-            Nenhum horário. Clientes não poderão reservar até você adicionar.
-          </Text>
-        ) : null}
+        <Text testID="resumo-janela-agenda" style={[styles.connectBody, { paddingHorizontal: spacing.xl, marginBottom: spacing.sm }]}>
+          {resumoJanelaAgenda(slots).texto}
+        </Text>
         {slots.map((s, i) => (
           <View key={i} style={styles.slotRow}>
             <Pressable
@@ -520,9 +518,6 @@ export default function Configuracoes() {
             )}
           </Pressable>
         </View>
-
-        <Text style={styles.sectionTitle}>NOTIFICAÇÕES</Text>
-        <NotificacoesCard />
 
         <Text style={styles.sectionTitle}>REPASSE AUTOMÁTICO (STRIPE CONNECT)</Text>
         <ConnectCard

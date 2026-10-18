@@ -7,6 +7,8 @@
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 
+import { URL_SITE } from "@/src/lib/legal";
+
 // O AccountLink do Stripe (usado pro onboarding do Connect) só aceita
 // return_url/refresh_url http(s) de verdade — recusa esquemas customizados
 // tipo "showup://" com 400 "Not a valid URL" (confirmado testando; é uma
@@ -15,7 +17,7 @@ import * as WebBrowser from "expo-web-browser";
 // pro nosso deep link de verdade assim que carrega no navegador do
 // celular — o expo-web-browser intercepta esse redirect final e fecha a
 // sessão sozinho, exatamente como faria com o deep link direto.
-const STRIPE_BOUNCE_URL = "https://showup-509120.web.app/stripe-bounce";
+const STRIPE_BOUNCE_URL = `${URL_SITE}/stripe-bounce`;
 
 /**
  * @param fetchUrl recebe (returnUrl, cancelUrl) já prontas pro deep link de

@@ -17,12 +17,30 @@
           {
             "key": "Cache-Control",
             "value": "no-cache"
+          },
+          {
+            "key": "X-Frame-Options",
+            "value": "DENY"
+          },
+          {
+            "key": "Referrer-Policy",
+            "value": "strict-origin-when-cross-origin"
+          },
+          {
+            "key": "Permissions-Policy",
+            "value": "camera=(), microphone=(), geolocation=()"
           }
         ]
       }
     ],
     "predeploy": [
       "node verificar-antes-de-publicar.js"
+    ],
+    "rewrites": [
+      {
+        "source": "/p/**",
+        "destination": "/agendar.html"
+      }
     ]
   }
 }

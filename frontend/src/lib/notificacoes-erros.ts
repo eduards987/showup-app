@@ -12,8 +12,8 @@ export function explicarFalhaDoToken(mensagem: string): string {
   const m = mensagem.toLowerCase();
   if (m.includes("firebaseapp") || m.includes("google-services") || m.includes("fcm")) {
     return (
-      "O app foi compilado sem a configuração do Firebase (google-services.json). Confira o arquivo em frontend/ e recompile com " +
-      "`npx expo run:android`."
+      "O app instalado foi compilado sem a configuração do Firebase (google-services.json). No computador, na pasta frontend, rode " +
+      "`npx expo prebuild --platform android --clean` e depois `npx expo run:android` (só rodar o run:android não basta)."
     );
   }
   if (m.includes("service_not_available") || m.includes("timeout") || m.includes("network") || m.includes("unable to resolve")) {

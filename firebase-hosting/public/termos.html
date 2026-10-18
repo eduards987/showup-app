@@ -4,18 +4,29 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Termos de Uso — ShowUp</title>
+<meta name="description" content="Regras de uso do ShowUp: agendamentos, cobrança, taxa de falta, cancelamentos e responsabilidades." />
+<meta name="theme-color" content="#4C97C1" />
+<link rel="icon" href="/favicon.ico" sizes="any" />
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="ShowUp" />
+<meta property="og:locale" content="pt_BR" />
+<meta property="og:title" content="Termos de Uso — ShowUp" />
+<meta property="og:description" content="Regras de uso do ShowUp: agendamentos, cobrança, taxa de falta, cancelamentos e responsabilidades." />
+<meta property="og:image" content="https://showup-509120.web.app/og.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #F5F1E8; --surface: #FFFFFF; --ink: #1C2E22; --ink-soft: #5B6B60;
-    --brand: #345940; --brand-dark: #213B29; --line: #E1DACB;
+    --bg: #F7F6F2; --surface: #FFFFFF; --ink: #1A1C1A; --ink-soft: #5A5E5B;
+    --brand: #2F7BA6; --brand-dark: #2A6F98; --line: #E5E3DF;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #16211A; --surface: #1D2A21; --ink: #F1EFE6; --ink-soft: #A8B5AC;
-      --brand: #6FA482; --brand-dark: #8FBBA0; --line: #33443A;
+      --bg: #111517; --surface: #1A2124; --ink: #ECEFEE; --ink-soft: #A7B1B4;
+      --brand: #6DB1D6; --brand-dark: #8CC4E4; --line: #2B363B;
     }
   }
   * { box-sizing: border-box; }
@@ -42,10 +53,13 @@
     margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--line);
   }
   .nav { margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 13px; color: var(--ink-soft); }
+  .topbrand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); font-weight: 600; margin-bottom: 22px; }
+  .topbrand img { height: 32px; width: auto; display: block; }
 </style>
 </head>
 <body>
 <div class="wrap">
+  <a class="topbrand" href="/"><img src="/logo.png" alt="" width="40" height="32"><span>ShowUp</span></a>
   <h1>Termos de Uso</h1>
   <p class="updated">Última atualização: 13 de outubro de 2026</p>
 
@@ -55,8 +69,7 @@
 
   <h2>1. Quem é o ShowUp</h2>
   <p>O ShowUp é uma plataforma de agendamento com proteção contra falta (no-show) para
-  profissionais autônomos e seus clientes. É operado por <strong>{{RESPONSAVEL}}</strong>
-  ({{DOCUMENTO}}). O ShowUp <strong>não presta os serviços agendados</strong>: quem presta, e
+  profissionais autônomos e seus clientes. É operado por <strong>Show Up</strong>. O ShowUp <strong>não presta os serviços agendados</strong>: quem presta, e
   responde por eles, é o profissional.</p>
 
   <h2>2. Conta e requisitos</h2>
@@ -147,7 +160,7 @@
   <div class="contact">
     <h2>Contato</h2>
     <p>Dúvidas sobre estes termos? Escreva para
-    <a href="mailto:{{EMAIL_CONTATO}}">{{EMAIL_CONTATO}}</a>.</p>
+    <a href="mailto:supportshowup@gmail.com">supportshowup@gmail.com</a>.</p>
   </div>
   <p class="nav"><a href="/termos">Termos de Uso</a> · <a href="/privacidade">Política de Privacidade</a> · <a href="/excluir-conta">Excluir conta e dados</a></p>
 </div>

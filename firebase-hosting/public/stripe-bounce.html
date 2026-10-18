@@ -3,13 +3,25 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Voltando ao ShowUp…</title>
+<title>ShowUp</title>
+<meta name="description" content="Página de retorno do ShowUp." />
+<meta name="theme-color" content="#4C97C1" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" href="/favicon.ico" sizes="any" />
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="ShowUp" />
+<meta property="og:locale" content="pt_BR" />
+<meta property="og:title" content="ShowUp" />
+<meta property="og:description" content="Página de retorno do ShowUp." />
+<meta property="og:image" content="https://showup-509120.web.app/og.png" />
 <style>
   :root {
-    --bg: #F5F1E8; --ink: #1C2E22; --brand: #345940;
+    --bg: #F7F6F2; --ink: #1A1C1A; --brand: #2F7BA6;
   }
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) { --bg: #16211A; --ink: #F1EFE6; --brand: #6FA482; }
+    :root:not([data-theme="light"]) { --bg: #111517; --ink: #ECEFEE; --brand: #6DB1D6; }
   }
   * { box-sizing: border-box; }
   body {
@@ -32,6 +44,7 @@
 </head>
 <body>
   <div>
+    <img src="/logo.png" alt="ShowUp" width="70" height="56" style="height:56px;width:auto;margin-bottom:18px">
     <div class="spinner"></div>
     <p>Voltando pro app…</p>
     <a class="fallback hidden" id="fallbackLink" href="#">Toque aqui se não voltar sozinho</a>

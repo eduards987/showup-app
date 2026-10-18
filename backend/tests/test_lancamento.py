@@ -279,7 +279,7 @@ def _fakes_de_reserva(monkeypatch, prof):
     async def cliente(nome, tel):
         return {"user_id": "cli", "email": "c@x.com", "name": nome}
 
-    async def valida(servico_id, horario):
+    async def valida(servico_id, horario, reserva_no_cartao=True):
         svc = {"servico_id": "svc_1", "profissional_id": "u1", "valor_centavos": 12000,
                "moeda": "BRL", "taxa_no_show_centavos": 3000}
         return svc, prof, horario + timedelta(hours=1)

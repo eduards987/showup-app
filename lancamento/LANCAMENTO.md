@@ -71,3 +71,37 @@ O teste fechado de 14 dias é o que mais atrasa. Antes dele, nada de produção.
 - Exclusão de conta dentro do app para **todos** os usuários, cancelando assinatura e apagando token de push, cartão e cadastro no Stripe.
 - Termos, Privacidade e Exclusão de conta no site + links dentro do app + rodapé no link de agendamento.
 - Testes automáticos a cada push no GitHub (`.github/workflows/tests.yml`).
+
+---
+
+# Auditoria de 17/10/2026: o que falta, em ordem de importância
+
+Estado hoje: reserva pelo link e pelo app, pagamento com cartão (teste), avisos ao profissional (novo agendamento, próximo
+atendimento, confirmação) e site com Termos, Privacidade e exclusão de conta. **Nada abaixo impede o uso em teste.**
+
+## Bloqueia o lançamento para usuários reais
+1. ~~**Agenda x validade da reserva.**~~ **Resolvido em 17/10/2026.** O cliente vê os próximos N dias em que o profissional atende (N = dias da
+   semana cadastrados: seg a sex = 5, seg a dom = 7), e nenhum atendimento pode terminar depois de agora + 7 dias - 24 h - 2 h (prazo da reserva
+   no cartão). O servidor recusa horários fora da regra nos 3 fluxos (app, link com cartão, link com Pix) antes de tocar no cartão. Se o Stripe
+   informar uma validade menor que 7 dias, o prazo de confirmação encurta (ou a reserva é desfeita e recusada). Detalhes em `backend/agenda.py`.
+2. **Moeda.** O app aceita 10 moedas; só BRL funciona de ponta a ponta com a conta Stripe brasileira. *Correção: travar em BRL.*
+3. **Stripe em modo real.** Ativar a conta, trocar as chaves (`sk_`, `pk_`, `whsec_`, `price_`), refazer os 2 webhooks no modo real e ligar
+   `EXIGIR_RECEBIMENTO_ATIVO=1`. Só depois de validar tudo em teste. Veja `CHAVES-PRODUCAO.md`. **A chave `pk_test_` está dentro de `agendar.html`**: trocar também lá.
+4. **Segredos que apareceram em conversas.** Confirme que foram trocados: segredo do Google (feito), senha do MongoDB (feito), `INTERNAL_SERVICE_TOKEN`, segredos dos webhooks.
+5. **Revisão jurídica** dos Termos e da Privacidade (cobrança de taxa de falta, prazos, LGPD). Os textos são um modelo, não parecer jurídico.
+6. **Google Play.** Conta de desenvolvedor, ficha da loja, formulário de segurança de dados e **teste fechado com 12 testadores por 14 dias** (`PLAY-STORE.md`, `TESTADORES.md`). É o que mais atrasa: comece cedo.
+7. **Build de produção** (`.aab`) no projeto Expo novo: variáveis de produção no EAS, keystore gerado pelo EAS e **cópia de segurança** dele.
+
+## Fortemente recomendado antes de divulgar
+8. **Domínio próprio** (`DOMINIO.md`), de preferência antes da ficha da Play.
+9. **Servidor sempre acordado.** O Render gratuito dorme; lembretes e confirmações dependem dele. Plano pago antes de ter clientes.
+10. **Backup do banco.** O plano gratuito do MongoDB Atlas não tem backup automático: planeje um plano pago ou exportações periódicas.
+11. **Monitoramento.** Aviso quando o servidor cair (ex.: UptimeRobot, gratuito) e captura de erros (ex.: Sentry).
+12. **Suporte.** Um e-mail que você lê e responde (a página de exclusão promete resposta em até 15 dias).
+
+## Melhorias de produto (depois do lançamento)
+- **Lembrete ao CLIENTE** (WhatsApp/SMS/e-mail, ~24 h antes): costuma reduzir faltas mais do que qualquer outra coisa.
+- **Pré-visualização do link por profissional** no WhatsApp (nome dele na imagem): exige servidor gerando a página (Cloud Run/Functions).
+- **Pix**, quando o Stripe liberar para a conta (`PIX_DISPONIVEL` na página de agendamento).
+- Tela "o que você vai precisar" antes do cadastro no Stripe; avisos de fim do teste grátis dos planos pagos.
+- iPhone (exige conta paga da Apple e builds de iOS).

@@ -29,7 +29,7 @@ def test_site_do_repositorio_esta_com_os_campos_em_branco_de_proposito(pasta):
 
 def test_preencher_resolve_tudo_e_libera(pasta):
     trocas = ps.preencher(pasta, {"responsavel": "Ana Lima", "documento": "CPF 111.222.333-44", "email": "oi@ana.com"})
-    assert set(trocas) == {"termos.html", "excluir-conta.html", "privacidade.html"}
+    assert set(trocas) == {"termos.html", "excluir-conta.html", "privacidade.html", "index.html"}
     assert ps.verificar(pasta) == []
     termos = (pasta / "termos.html").read_text(encoding="utf-8")
     assert "Ana Lima" in termos and "CPF 111.222.333-44" in termos and 'mailto:oi@ana.com' in termos
@@ -105,3 +105,171 @@ def test_a_trava_cancela_o_deploy_com_campo_em_branco_e_libera_depois_de_preench
     ps.preencher(copia / "public", {"responsavel": "Ana Lima", "email": "oi@ana.com", "sem_documento": True})
     r = subprocess.run(["node", str(script)], capture_output=True, text=True, cwd=copia)
     assert r.returncode == 0 and "pode publicar" in r.stdout
+
+
+# ------------------------------------------------------------------ lembrar os dados e reaplicar depois de um zip novo
+@pytest.fixture
+def dados_locais(tmp_path, monkeypatch):
+    arquivo = tmp_path / "dados-site.local.json"
+    monkeypatch.setattr(ps, "DADOS_LOCAIS", arquivo)
+    return arquivo
+
+
+def test_preencher_guarda_os_dados_e_reaplicar_refaz_depois_de_um_zip_novo(pasta, dados_locais):
+    assert ps.main(["--responsavel", "Ana Lima", "--email", "oi@ana.com", "--sem-documento", "--pasta", str(pasta)]) == 0
+    import json
+    assert json.loads(dados_locais.read_text(encoding="utf-8")) == {"responsavel": "Ana Lima", "email": "oi@ana.com", "sem_documento": True}
+    # um zip novo devolve as páginas com os campos em branco...
+    shutil.rmtree(pasta)
+    shutil.copytree(SITE, pasta)
+    assert ps.verificar(pasta) != []
+    # ...e um comando só refaz tudo
+    assert ps.main(["--reaplicar", "--pasta", str(pasta)]) == 0
+    assert ps.verificar(pasta) == [] and "Ana Lima" in (pasta / "termos.html").read_text(encoding="utf-8")
+
+
+def test_reaplicar_sem_dados_guardados_orienta_e_nao_altera_nada(pasta, dados_locais, capsys):
+    antes = (pasta / "termos.html").read_text(encoding="utf-8")
+    assert ps.main(["--reaplicar", "--pasta", str(pasta)]) == 1
+    assert "Não há dados guardados" in capsys.readouterr().out
+    assert (pasta / "termos.html").read_text(encoding="utf-8") == antes
+
+
+def test_trocar_de_sem_documento_para_documento_atualiza_o_que_foi_guardado(pasta, dados_locais):
+    import json
+    ps.main(["--responsavel", "Ana", "--email", "a@b.co", "--sem-documento", "--pasta", str(pasta)])
+    shutil.rmtree(pasta); shutil.copytree(SITE, pasta)
+    ps.main(["--responsavel", "Ana", "--email", "a@b.co", "--documento", "CNPJ 1", "--pasta", str(pasta)])
+    guardado = json.loads(dados_locais.read_text(encoding="utf-8"))
+    assert guardado["documento"] == "CNPJ 1" and "sem_documento" not in guardado
+    shutil.rmtree(pasta); shutil.copytree(SITE, pasta)
+    assert ps.main(["--reaplicar", "--pasta", str(pasta)]) == 0 and "CNPJ 1" in (pasta / "termos.html").read_text(encoding="utf-8")
+
+
+def test_dados_guardados_nao_vao_para_o_git():
+    gitignore = (RAIZ / ".gitignore").read_text(encoding="utf-8")
+    assert "lancamento/dados-site.local.json" in gitignore
+
+
+# ------------------------------------------------------------------ site profissional: início, 404, link legível, pré-visualização
+def _ler(nome):
+    return (SITE / nome).read_text(encoding="utf-8")
+
+
+def test_arquivos_do_site_profissional_existem():
+    for nome in ("index.html", "404.html", "agendar.html", "logo.png", "favicon.ico", "favicon-32.png", "apple-touch-icon.png", "og.png", "robots.txt", "sitemap.xml"):
+        assert (SITE / nome).exists(), nome
+    assert (SITE / "og.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n" and (SITE / "og.png").stat().st_size > 5_000
+
+
+def test_pagina_inicial_tem_o_essencial_e_so_os_campos_que_o_script_preenche():
+    import re
+    html = _ler("index.html")
+    assert 'id="conteudo"' in html and "<h1>Cliente reservou? Então ele aparece.</h1>" in html
+    assert set(re.findall(r"\{\{[A-Z_]+\}\}", html)) == {"{{EMAIL_CONTATO}}", "{{RESPONSAVEL}}"}      # nenhum campo que o script não saiba preencher
+    for link in ('href="/termos"', 'href="/privacidade"', 'href="/excluir-conta"', "mailto:{{EMAIL_CONTATO}}"):
+        assert link in html
+    assert html.count("<details>") >= 5                                                                    # dúvidas frequentes
+
+
+def test_pagina_inicial_nao_promete_o_que_o_produto_nao_faz():
+    """Pix está desligado, o app é só Android e as taxas/planos podem mudar: a página não pode afirmar o contrário."""
+    import re
+    texto = re.sub(r"<style.*?</style>", "", _ler("index.html").lower(), flags=re.S)          # só o texto da página, sem o CSS
+    for proibido in (r"\bpix\b", r"\biphone\b", r"\bios\b", r"app store", r"\b\d{1,2}\s?%", r"r\$\s?(19|59)", r"grátis para sempre", r"garantimos"):
+        assert not re.search(proibido, texto), f"a página inicial menciona algo proibido: {proibido}"
+
+
+def test_pre_visualizacao_do_link_no_whatsapp_em_todas_as_paginas_publicas():
+    import re
+    for nome in ("index.html", "agendar.html", "termos.html", "privacidade.html", "excluir-conta.html"):
+        html = _ler(nome)
+        for tag in ('name="description"', 'property="og:title"', 'property="og:description"', 'property="og:image"', 'rel="icon"', 'name="theme-color"'):
+            assert tag in html, f"{nome} sem {tag}"
+        imagem = re.search(r'property="og:image" content="([^"]+)"', html).group(1)
+        assert imagem.startswith("https://") and imagem.endswith("/og.png")                                  # o WhatsApp exige endereço absoluto
+
+
+def test_pagina_de_agendamento_nao_e_indexada_e_nao_mostra_a_versao_ao_cliente():
+    html = _ler("agendar.html")
+    assert 'name="robots" content="noindex, nofollow"' in html
+    assert 'name="versao-da-pagina" content="v2026.10.15"' in html                                         # o verificador continua achando
+    assert 'id="versaoPagina"' not in html and ">v2026.10.15<" not in html                                  # mas o cliente não vê
+
+
+def test_pagina_de_agendamento_le_o_endereco_legivel_e_o_link_antigo():
+    html = _ler("agendar.html")
+    assert r"/^\/p\/([^/]+)\/?$/" in html and 'params.get("prof")' in html
+    assert "profissionalId = data.user_id" in html                      # depois de carregar, tudo usa o id interno
+    assert "/profissionais/${encodeURIComponent(identificador)}" in html
+    assert "/profissionais/${profissionalId}/slots" in html and html.count("profissional_id: profissionalId") == 2
+
+
+def test_pagina_de_agendamento_explica_a_garantia_antes_de_pedir_o_cartao():
+    html = _ler("agendar.html")
+    assert "só é cobrado depois do atendimento" in html and "processado pelo Stripe" in html
+
+
+def test_firebase_redireciona_p_para_a_pagina_de_agendamento_e_protege_a_pagina():
+    import json
+    h = json.loads((RAIZ / "firebase-hosting" / "firebase.json").read_text(encoding="utf-8"))["hosting"]
+    assert {"source": "/p/**", "destination": "/agendar.html"} in h["rewrites"]
+    cabecalhos = {c["key"]: c["value"] for bloco in h["headers"] for c in bloco["headers"]}
+    assert cabecalhos["X-Frame-Options"] == "DENY" and cabecalhos["X-Content-Type-Options"] == "nosniff"
+    assert "Referrer-Policy" in cabecalhos and cabecalhos["Cache-Control"] == "no-cache"
+
+
+def test_sitemap_so_lista_paginas_que_existem_e_o_robots_aponta_para_ele():
+    import re
+    paginas = {m.rsplit("/", 1)[-1] or "index" for m in re.findall(r"<loc>https://[^/<]+(/[^<]*)</loc>", _ler("sitemap.xml"))}
+    assert paginas == {"index", "termos", "privacidade", "excluir-conta"}
+    for p in paginas:
+        assert (SITE / f"{p}.html").exists()
+    robots = _ler("robots.txt")
+    assert "Sitemap: https://" in robots and "Disallow: /p/" in robots and "Disallow: /agendar" in robots
+
+
+def test_todo_endereco_absoluto_do_site_usa_o_mesmo_dominio():
+    """Se alguém digitar outro domínio numa página, o trocar-dominio.py não o encontraria: todas as páginas têm que concordar."""
+    import re
+    hosts = set()
+    for arq in list(SITE.glob("*.html")) + [SITE / "sitemap.xml", SITE / "robots.txt"]:
+        hosts |= set(re.findall(r"https://([a-z0-9.-]+\.(?:web\.app|com\.br|com|app))/(?:og\.png|sitemap\.xml|termos|privacidade|excluir-conta|\"|$)", arq.read_text(encoding="utf-8")))
+    assert hosts <= {"showup-509120.web.app"}, hosts
+
+
+# ------------------------------------------------------------------ a identidade do site é a MESMA do aplicativo
+def test_todas_as_paginas_usam_a_logo_do_app_e_nenhuma_marca_inventada():
+    for nome in ("index.html", "agendar.html", "404.html", "termos.html", "privacidade.html", "excluir-conta.html", "stripe-bounce.html"):
+        html = _ler(nome)
+        assert 'src="/logo.png"' in html, f"{nome} sem a logo do app"
+        assert "brand-mark" not in html and 'class="mark"' not in html, f"{nome} ainda tem a marca inventada"
+        assert "favicon.svg" not in html, nome
+
+
+def test_paleta_do_site_vem_do_tema_do_app():
+    """O azul de marca do app (frontend/src/theme.ts) é o theme-color do site, e nenhuma cor do tema antigo (verde/bege) sobrou."""
+    import re
+    tema = (RAIZ / "frontend" / "src" / "theme.ts").read_text(encoding="utf-8")
+    brand = re.search(r'brand:\s*"(#[0-9A-Fa-f]{6})"', tema).group(1).upper()
+    secundaria = re.search(r'brandSecondary:\s*"(#[0-9A-Fa-f]{6})"', tema).group(1).upper()
+    assert brand == "#4C97C1" and secundaria == "#7FB667"
+    for nome in ("index.html", "agendar.html", "404.html", "termos.html", "privacidade.html", "excluir-conta.html"):
+        assert f'name="theme-color" content="{brand}"' in _ler(nome), f"{nome}: theme-color diferente do azul do app"
+    for nome in ("index.html", "agendar.html", "404.html", "termos.html", "privacidade.html", "excluir-conta.html", "stripe-bounce.html"):
+        html = _ler(nome).upper()
+        for velha in ("#345940", "#213B29", "#F5F1E8", "#1C2E22", "#16211A", "#6FA482"):
+            assert velha not in html, f"{nome} ainda usa a cor antiga {velha}"
+
+
+def test_logo_do_site_e_a_mesma_imagem_do_app():
+    """Se alguém trocar a logo do app e esquecer o site, este teste avisa (precisa do Pillow; sem ele, é pulado)."""
+    PIL = pytest.importorskip("PIL.Image")
+    app = PIL.open(RAIZ / "frontend" / "assets" / "images" / "splash-image.png").convert("RGBA")
+    x0, y0, x1, y1 = app.getbbox()
+    recorte = app.crop((max(0, x0 - 16), max(0, y0 - 16), min(app.width, x1 + 16), min(app.height, y1 + 16))).resize((64, 51))
+    site = PIL.open(SITE / "logo.png").convert("RGBA")
+    assert site.mode == "RGBA" and site.getchannel("A").getextrema()[0] == 0                   # fundo transparente
+    site = site.resize((64, 51))
+    diferenca = sum(abs(a - b) for pa, pb in zip(recorte.getdata(), site.getdata()) for a, b in zip(pa, pb)) / (64 * 51 * 4)
+    assert diferenca < 6, f"a logo do site difere da do app (diferença média {diferenca:.1f})"

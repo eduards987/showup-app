@@ -97,6 +97,16 @@ def verificar_backend(base: str, rel: Relatorio) -> None:
     else:
         rel.atencao(f"Rota de teste de notificação respondeu {status} (esperado 401).")
 
+    # link de agendamento legível (/p/nome): rota que só existe na versão nova
+    status, _, _ = requisitar(f"{base}/api/me/link-publico")
+    if status in (401, 403):
+        rel.ok("Backend com o link de agendamento legível (/p/nome).")
+    elif status in (404, 405):
+        rel.falhou("O backend ainda NÃO tem o link de agendamento legível (rota /me/link-publico não existe). "
+                   "Falta publicar o código novo: git push e esperar o Render ficar Live.")
+    else:
+        rel.atencao(f"Rota do link de agendamento respondeu {status} (esperado 401).")
+
     # quais jeitos de entrar o servidor oferece (Microsoft e e-mail dependem de configuração)
     status, _, texto = requisitar(f"{base}/api/auth/metodos")
     if status == 200:
@@ -158,6 +168,36 @@ def verificar_site(site: str, completo: bool, rel: Relatorio) -> None:
                         "Publique também o firebase.json novo.")
         if so_html:
             rel.atencao("A página só abre com .html (URL limpa /agendar não funciona): confira o firebase.json.")
+
+    # página inicial (sem ela, quem abre o endereço do site vê o erro 404 padrão do Firebase)
+    status, _, texto = requisitar(f"{site}/", timeout=30)
+    if status != 200 or 'id="conteudo"' not in texto:
+        msg = f"A página inicial do site não está publicada (/ → {status}): quem abrir o endereço do site vê um erro."
+        (rel.falhou if completo else rel.atencao)(msg + " Publique o site (firebase deploy).")
+    elif "{{" in texto:
+        rel.falhou("Página inicial publicada COM campo em branco ({{...}}). Rode preencher-site.py --reaplicar e publique de novo.")
+    else:
+        rel.ok("Página inicial do site publicada.")
+
+    # endereço legível do profissional (/p/nome): o Firebase precisa redirecionar para a página de agendamento
+    status, _, texto = requisitar(f"{site}/p/verificacao-showup", timeout=30)
+    if status == 200 and 'id="selectData"' in texto:
+        rel.ok("Endereço legível do profissional (/p/nome) abre a página de agendamento.")
+    else:
+        rel.falhou(f"O endereço /p/nome NÃO abre a página de agendamento (→ {status}). O link novo que o app compartilha daria erro: "
+                   "publique o site com o firebase.json novo (firebase deploy).")
+
+    status, _, texto = requisitar(f"{site}/pagina-que-nao-existe-showup", timeout=30)
+    if status == 404 and "Página não encontrada" in texto:
+        rel.ok("Página de erro 404 personalizada.")
+    else:
+        rel.atencao("O site mostra a página de erro padrão do Firebase para endereços inexistentes (falta publicar o 404.html).")
+
+    status, _, texto = requisitar(f"{site}/robots.txt", timeout=30)
+    if status == 200 and "Sitemap" in texto:
+        rel.ok("robots.txt publicado.")
+    else:
+        rel.atencao("robots.txt não está publicado (não impede nada, só ajuda os buscadores).")
 
     for caminho, rotulo in (("termos", "Termos de Uso"), ("privacidade", "Política de Privacidade"),
                             ("excluir-conta", "Exclusão de conta")):

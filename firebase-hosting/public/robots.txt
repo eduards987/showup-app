@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /p/
+Disallow: /agendar
+Disallow: /stripe-bounce
+
+Sitemap: https://showup-509120.web.app/sitemap.xml

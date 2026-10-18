@@ -14,6 +14,11 @@ O app novo precisa do backend novo; por isso o backend vai antes.
 - [ ] Você tem à mão: acesso ao GitHub, ao Render, ao Stripe Dashboard e o `firebase` instalado e logado.
 
 ## Passo 1 — Atualizar o repositório
+
+> **O zip não traz mais** o `frontend/app.json`, o `package.json` nem os arquivos de versões (`package-lock.json`, `yarn.lock`): são os seus, e
+> extrair o zip por cima os sobrescrevia (foi assim que o `owner` e o `projectId` do Expo voltaram para os antigos). As **páginas legais do site**
+> (Termos, Privacidade, Exclusão) ainda vêm com os campos em branco: depois de extrair um zip, rode **`py lancamento\preencher-site.py --reaplicar`**
+> (na primeira vez, preencha com `--responsavel`, `--email` e `--documento`/`--sem-documento`; os dados ficam guardados só no seu computador).
 1. Extraia o `holdbooked-app-corrigido.zip` **por cima** da pasta do projeto (substituindo). Extrair não apaga arquivos
    antigos: se existirem, apague `frontend\cd` e `frontend\rmdir`.
 2. No terminal, na pasta do projeto: `git status`. **Não pode aparecer nenhum arquivo `.env`** na lista. Se aparecer, pare.
@@ -46,6 +51,11 @@ O app novo precisa do backend novo; por isso o backend vai antes.
    `whsec_` dele para `STRIPE_CONNECT_WEBHOOK_SECRET` no Render. Detalhes em `CHAVES-PRODUCAO.md`, seção 4.
 
 ## Passo 4 — Site no Firebase
+
+> **Ordem importante com o link novo (`/p/nome`):** publique o **site primeiro** (este passo) e só depois o servidor/app. Se o app passar a mostrar
+> o link `/p/nome` antes de o site ter o redirecionamento no ar, o cliente que abrir o link vê "página não encontrada".
+> Antes de publicar, rode `py lancamento\preencher-site.py --reaplicar` (a página inicial e as páginas legais voltam com os campos em branco a cada zip novo).
+> Depois confira com `verificar-producao.py ... --completo`: ele testa a página inicial, o `/p/...` e a página 404.
 
 > ⚠️ O `firebase deploy` publica **a pasta `public` inteira**, inclusive os Termos, a Privacidade e a Exclusão de conta. Desde esta
 > versão há uma **trava**: antes de publicar, o Firebase roda `verificar-antes-de-publicar.js` e **cancela o deploy** se alguma

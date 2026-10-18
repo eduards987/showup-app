@@ -18,15 +18,16 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { CardSetupButton } from "@/src/components/card-setup-button";
 import { ExcluirContaCard } from "@/src/components/excluir-conta";
+import { NotificacoesCard } from "@/src/components/notificacoes-card";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
-import { URL_PRIVACIDADE, URL_TERMOS } from "@/src/lib/legal";
+import { URL_PRIVACIDADE, URL_SITE, URL_TERMOS } from "@/src/lib/legal";
 import { CardInfo } from "@/src/lib/types";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
-// Página pública de agendamento (fora do app, funciona sem instalar nada) —
-// hospedada no Firebase, não no sistema de artefatos do Claude.
-const BOOKING_PAGE_BASE = "https://showup-509120.web.app/agendar";
+// Página pública de agendamento (fora do app, funciona sem instalar nada), hospedada no Firebase. O link bonito
+// (/p/eduardo-cerqueira) vem do servidor; este endereço antigo só é usado se o servidor não responder.
+const BOOKING_PAGE_BASE = `${URL_SITE}/agendar`;
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
@@ -168,6 +169,16 @@ export default function Perfil() {
 
   const isCliente = auth.status === "authenticated" && auth.user.role === "cliente";
 
+  // Link de agendamento do profissional, no formato legível (/p/eduardo-cerqueira). Vem do servidor, então trocar o
+  // domínio do site não exige recompilar o app.
+  const linkQ = useQuery({
+    // o id do usuário na chave: quem entra numa conta diferente no mesmo celular nunca vê o link da conta anterior
+    queryKey: ["link-publico", auth.status === "authenticated" ? auth.user.user_id : null],
+    queryFn: () => api<{ slug: string; url: string }>("/api/me/link-publico"),
+    enabled: auth.status === "authenticated" && !isCliente,
+    staleTime: Infinity,
+  });
+
   const cardQ = useQuery({
     queryKey: ["card"],
     queryFn: () => api<CardInfo>("/api/me/card"),
@@ -177,7 +188,7 @@ export default function Perfil() {
   if (auth.status !== "authenticated") return null;
   const user = auth.user;
   const initials = user.name.split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
-  const bookingLink = `${BOOKING_PAGE_BASE}?prof=${user.user_id}`;
+  const bookingLink = linkQ.data?.url ?? `${BOOKING_PAGE_BASE}?prof=${user.user_id}`;
 
   const copiarLink = async () => {
     await Clipboard.setStringAsync(bookingLink);
@@ -275,6 +286,9 @@ export default function Perfil() {
                 <Ionicons name="chevron-forward" size={18} color={colors.muted} />
               </View>
             </Pressable>
+
+            <Text style={styles.sectionTitle}>NOTIFICAÇÕES</Text>
+            <NotificacoesCard />
 
             <Text style={styles.sectionTitle}>SEU LINK DE AGENDAMENTO</Text>
             <View style={styles.card}>

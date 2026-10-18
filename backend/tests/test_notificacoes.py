@@ -100,7 +100,7 @@ class Col:
 
 class DB:
     def __init__(self):
-        for nome in ("users", "servicos", "agendamentos", "transacoes", "device_tokens", "customer_cards", "webhook_events"):
+        for nome in ("users", "servicos", "agendamentos", "transacoes", "device_tokens", "customer_cards", "webhook_events", "disponibilidade"):
             setattr(self, nome, Col())
 
 
@@ -133,6 +133,8 @@ def ctx(monkeypatch):
     db.servicos.docs.append({"servico_id": "svc_1", "profissional_id": "u1", "nome": "Personal Trainer", "ativo": True,
                              "duracao_min": 60, "valor_centavos": 12000, "taxa_no_show_centavos": 3000, "moeda": "BRL"})
     db.device_tokens.docs.append({"user_id": "u1", "expo_push_token": "ExponentPushToken[abc]"})
+    # atende todos os dias o dia inteiro: nestes testes a janela da agenda não pode ser o motivo de uma reserva falhar
+    db.disponibilidade.docs += [{"profissional_id": "u1", "weekday": d, "hora_inicio": "00:00", "hora_fim": "23:59"} for d in range(7)]
     enviados = []
 
     async def espiao(db_, user_id, title, body, data):
@@ -215,7 +217,7 @@ def _fakes_de_reserva(monkeypatch, db, autorizar_ok=True):
     async def cliente(nome, tel):
         return {"user_id": "cli1", "email": "m@x.com", "name": "Maria Souza"}
 
-    async def valida(servico_id, horario):
+    async def valida(servico_id, horario, reserva_no_cartao=True):
         return db.servicos.docs[0], db.users.docs[0], horario + timedelta(hours=1)
 
     class GW:

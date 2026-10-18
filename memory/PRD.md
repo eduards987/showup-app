@@ -2763,3 +2763,32 @@ Guia: `lancamento/NOTIFICACOES.md`. Módulo novo `backend/notificacoes.py` (text
 - **Pré-requisito no Android**: chave de serviço FCM V1 enviada ao EAS (sem ela nenhuma notificação é entregue).
 - O registro do aparelho no app deixou de falhar calado (`registrarComDiagnostico`).
 - Testes: `tests/test_notificacoes.py` (49), mutação conferida em 7 proteções.
+
+## Site profissional e link de agendamento legível (17/10/2026)
+- **Link legível**: `/p/<slug>` (ex.: `/p/eduardo-cerqueira`). O slug é gerado na primeira vez (`_garantir_slug`), nunca muda, é único (índice
+  `users.slug` unique+sparse; duplicata vira `-2`, `-3`). `GET /me/link-publico` devolve `{slug, url}` (o app NÃO tem mais o endereço do site
+  fixo no link). `GET /profissionais/{id|slug}` aceita os dois; o link antigo `/agendar?prof=user_xxx` continua valendo.
+- **Firebase**: rewrite `/p/**` → `/agendar.html`; cabeçalhos X-Frame-Options DENY, Referrer-Policy, Permissions-Policy.
+  ORDEM de publicação: site (firebase deploy) ANTES do servidor/app, senão o link novo dá 404.
+- **Site**: `index.html` (início), `404.html`, `favicon.svg`, `apple-touch-icon.png`, `og.png` (pré-visualização do WhatsApp), `robots.txt`,
+  `sitemap.xml`; todas as páginas com description/OG. `agendar.html`: noindex, versão só na meta tag `versao-da-pagina` (não aparece ao cliente),
+  avatar, aviso da garantia ("só é cobrado depois do atendimento"). Slug é público e adivinhável por nome (o id antigo não era): decisão aceita; a página é noindex.
+- **Domínio**: `lancamento/DOMINIO.md` + `lancamento/trocar-dominio.py --para <domínio>` (troca páginas, sitemap, app, servidor; lista o que ajustar
+  no Render/Expo). Ao trocar, `ALLOWED_ORIGINS` PRECISA incluir o domínio novo (senão a página de agendamento quebra).
+- **Zip**: não inclui mais `frontend/app.json`, `package.json`, lockfiles (eram sobrescritos). Páginas legais/índice voltam em branco a cada zip:
+  `preencher-site.py --reaplicar` (dados em `lancamento/dados-site.local.json`, fora do Git).
+- Testes: `test_link_publico.py`, `test_trocar_dominio.py`, e novos em `test_site_publicacao.py` / `test_verificar_producao.py`.
+
+## Janela da agenda: quantos dias o cliente pode agendar (17/10/2026)
+- **Regra do produto** (`backend/agenda.py`, pura): o cliente vê os próximos N dias EM QUE O PROFISSIONAL ATENDE, N = dias da semana distintos na
+  disponibilidade (seg-sex = 5; seg-dom = 7). "Hoje" só conta se ainda houver expediente. Calendário LOCAL do profissional (fuso).
+- **Limite técnico**: a reserva no cartão vale 7 dias e o profissional tem 24 h depois do fim para confirmar: nenhum atendimento no cartão termina
+  depois de agora + 7 d - 24 h - 2 h (`limite_do_fim_do_atendimento`). Corta um pouco o último dia de quem atende 7 dias (abre aos poucos). Pix (pago na
+  hora) não tem esse limite, mas respeita a janela de dias.
+- **Onde vale**: `/slots` (lista) E `_exigir_horario_na_agenda` (servidor), chamado em `_valida_servico_e_conflito` (link: cartão e Pix) e no fluxo do
+  app (que tem a própria cópia da validação). Recusa 422 ANTES de autorizar o cartão. Antes só a lista limitava (14 dias) e o servidor aceitava qualquer data.
+- **Vencimento real do cartão**: `janela_de_confirmacao` usa o `capture_before` que o Stripe informou (`hold_expira_em`): prazo = min(fim + 24 h, vencimento - 1 h);
+  se a reserva venceria antes de o atendimento acabar, `_janela_de_confirmacao_ou_desfazer` faz `gateway.void` (chave `void_curto_`) e responde 422.
+- **App**: `src/lib/agenda-janela.ts` mostra, na disponibilidade, "Seus clientes poderão agendar nos próximos N dias em que você atende (...)".
+- Ainda NÃO validado: o servidor aceita horário dentro da janela mas FORA do expediente cadastrado (só /slots filtra por hora): pedido forjado poderia reservar fora do expediente.
+- Testes: `test_agenda.py` (regra, 30), `test_agenda_servidor.py` (lista, 3 fluxos, cartão curto; 16). Mutação conferida em 10 proteções.

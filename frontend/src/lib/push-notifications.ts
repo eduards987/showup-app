@@ -150,7 +150,11 @@ export async function diagnosticarNotificacoes(
     return falhar("token", explicarFalhaDoToken(e instanceof Error ? e.message : String(e)));
   }
   token = obtido;
-  marcar("token", "ok", `${obtido.slice(0, 18)}…${obtido.slice(-4)}`);
+  // O projeto Expo que ESTE app usa. A chave do Firebase (FCM V1) tem que estar atribuída a esse mesmo projeto, senão a Expo
+  // recusa o envio com "falta a chave do Firebase". Mostrar o ID aqui permite comparar com o que está no expo.dev.
+  const owner = Constants.expoConfig?.owner ?? "?";
+  const projeto = `${String(projectId).slice(0, 8)}… (dono: ${owner})`;
+  marcar("token", "ok", `${obtido.slice(0, 18)}…${obtido.slice(-4)} · projeto ${projeto}`);
 
   marcar("registro", "executando");
   try {
@@ -166,7 +170,9 @@ export async function diagnosticarNotificacoes(
     const r = await api<{ enviado: boolean; recibo: string; mensagem: string; etapa?: string | null }>("/api/me/notificacoes/teste", {
       method: "POST",
     });
-    if (r.etapa === "ticket") return falhar("envio", r.mensagem);
+    if (r.etapa === "ticket") {
+      return falhar("envio", `${r.mensagem}\n\nProjeto Expo usado por este app: ${projeto}. A chave do Firebase precisa estar atribuída a ESSE projeto.`);
+    }
     marcar("envio", "ok");
     marcar("entrega", r.recibo === "ok" ? "ok" : r.recibo === "pendente" ? "pendente" : "falhou", r.mensagem);
   } catch (e) {

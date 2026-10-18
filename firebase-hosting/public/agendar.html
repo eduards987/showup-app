@@ -4,6 +4,22 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Agendar — ShowUp</title>
+<meta name="description" content="Escolha o serviço e o horário e reserve com o cartão. O valor fica reservado e só é cobrado depois do atendimento." />
+<meta name="robots" content="noindex, nofollow" />
+<meta name="theme-color" content="#4C97C1" />
+<meta name="versao-da-pagina" content="v2026.10.15" />
+<link rel="icon" href="/favicon.ico" sizes="any" />
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="ShowUp" />
+<meta property="og:locale" content="pt_BR" />
+<meta property="og:title" content="Agende seu horário — ShowUp" />
+<meta property="og:description" content="Escolha o serviço e o horário e reserve com o cartão. Você só paga depois do atendimento." />
+<meta property="og:image" content="https://showup-509120.web.app/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -11,32 +27,32 @@
 <script src="https://js.stripe.com/v3/"></script>
 <style>
   :root {
-    --bg: #F5F1E8;
+    --bg: #F7F6F2;
     --surface: #FFFFFF;
-    --ink: #1C2E22;
-    --ink-soft: #5B6B60;
-    --brand: #345940;
-    --brand-dark: #213B29;
-    --brand-tint: #E7EEE8;
-    --line: #E1DACB;
-    --success: #2F9E62;
+    --ink: #1A1C1A;
+    --ink-soft: #5A5E5B;
+    --brand: #2F7BA6;
+    --brand-dark: #2A6F98;
+    --brand-tint: #E4EFF6;
+    --line: #E5E3DF;
+    --success: #2A8A4A;
     --error: #B3432E;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #16211A;
-      --surface: #1D2A21;
-      --ink: #F1EFE6;
-      --ink-soft: #A8B5AC;
-      --brand: #6FA482;
-      --brand-dark: #8FBBA0;
-      --brand-tint: #26362C;
-      --line: #33443A;
+      --bg: #111517;
+      --surface: #1A2124;
+      --ink: #ECEFEE;
+      --ink-soft: #A7B1B4;
+      --brand: #6DB1D6;
+      --brand-dark: #8CC4E4;
+      --brand-tint: #1B2A33;
+      --line: #2B363B;
     }
   }
   :root[data-theme="dark"] {
-    --bg: #16211A; --surface: #1D2A21; --ink: #F1EFE6; --ink-soft: #A8B5AC;
-    --brand: #6FA482; --brand-dark: #8FBBA0; --brand-tint: #26362C; --line: #33443A;
+    --bg: #111517; --surface: #1A2124; --ink: #ECEFEE; --ink-soft: #A7B1B4;
+    --brand: #6DB1D6; --brand-dark: #8CC4E4; --brand-tint: #1B2A33; --line: #2B363B;
   }
   * { box-sizing: border-box; }
   html { scroll-padding-top: env(safe-area-inset-top, 0px); }
@@ -52,14 +68,16 @@
   }
   .wrap { max-width: 480px; margin: 0 auto; padding: 28px 20px 48px; }
   .brand-row { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; }
-  .brand-mark {
-    width: 30px; height: 30px; border-radius: 8px; background: var(--brand-dark);
-    display: flex; align-items: center; justify-content: center; color: var(--bg);
-    font-family: "Fraunces", serif; font-weight: 600; font-size: 15px; flex-shrink: 0;
-  }
   .brand-name { font-size: 14px; color: var(--ink-soft); letter-spacing: 0.02em; }
 
+  .brand-logo { height: 34px; width: auto; display: block; }
   .prof-header { margin-bottom: 26px; }
+  .prof-top { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
+  .avatar { width: 52px; height: 52px; border-radius: 50%; background: var(--brand-tint); color: var(--brand); display: flex; align-items: center;
+            justify-content: center; font-family: "Fraunces", Georgia, serif; font-weight: 600; font-size: 20px; flex-shrink: 0; }
+  .trust { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; padding: 12px 14px; background: var(--brand-tint); border-radius: 12px;
+           font-size: 13px; line-height: 1.45; color: var(--ink-soft); }
+  .trust svg { flex-shrink: 0; margin-top: 1px; }
   .prof-header h1 {
     font-family: "Fraunces", serif; font-weight: 600; font-size: 28px;
     margin: 0 0 4px; color: var(--ink); line-height: 1.15;
@@ -166,7 +184,7 @@
 <body>
 <div class="wrap">
   <div class="brand-row">
-    <div class="brand-mark">S</div>
+    <img class="brand-logo" src="/logo.png" alt="ShowUp" width="44" height="35">
     <div class="brand-name">ShowUp</div>
   </div>
 
@@ -174,7 +192,10 @@
 
   <div id="app" class="hidden">
     <div class="prof-header">
-      <h1 id="profNome">—</h1>
+      <div class="prof-top">
+        <div class="avatar" id="profAvatar" aria-hidden="true"></div>
+        <h1 id="profNome">—</h1>
+      </div>
       <p>Escolha o serviço, o horário, e finalize o pagamento — sem precisar instalar nada.</p>
     </div>
 
@@ -196,6 +217,10 @@
     <section id="step1" class="card">
       <p class="card-label">1 · Escolha o serviço</p>
       <div id="servicosList"></div>
+      <div class="trust">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+        <span>Você informa o cartão só para garantir o horário. O valor fica reservado e <b>só é cobrado depois do atendimento</b>. Pagamento seguro, processado pelo Stripe.</span>
+      </div>
     </section>
 
     <!-- Step 2: horário -->
@@ -279,7 +304,7 @@
 
   <p class="legal">Ao agendar, você concorda com os <a href="/termos">Termos de Uso</a> e a
   <a href="/privacidade">Política de Privacidade</a>.</p>
-  <p class="legal" id="versaoPagina" style="opacity:.55;margin-top:6px">v2026.10.15</p>
+  <p class="legal">Você é profissional? <a href="/">Conheça o ShowUp</a></p>
 </div>
 
 <script>
@@ -298,7 +323,11 @@
   const STRIPE_PUBLISHABLE_KEY = "pk_test_51UGMv4Fl9Xrvr2JyV4mtBMqZ62J4Cu9vAtxl3R7SWrRnHhNXIQWUO4HE7QdZSIl9ziXInXMuMRX3YxSSNoKBDnFb00NYihUD6f";
 
   const params = new URLSearchParams(window.location.search);
-  const profissionalId = params.get("prof");
+  // O profissional pode vir pelo endereço legível (/p/eduardo-cerqueira) ou pelo link antigo (?prof=user_xxx).
+  // `identificador` serve para buscar o perfil; `profissionalId` é o id interno, definido depois que o perfil carrega.
+  const porEndereco = window.location.pathname.match(/^\/p\/([^/]+)\/?$/);
+  const identificador = porEndereco ? decodeURIComponent(porEndereco[1]) : params.get("prof");
+  let profissionalId = null;
 
   const state = {
     profissional: null,
@@ -341,16 +370,19 @@
   }
 
   async function carregarProfissional() {
-    if (!profissionalId) {
+    if (!identificador) {
       erroGeral("Link inválido — falta identificar o profissional.");
       return;
     }
     try {
-      const res = await fetch(`${BACKEND_URL}/profissionais/${profissionalId}`);
+      const res = await fetch(`${BACKEND_URL}/profissionais/${encodeURIComponent(identificador)}`);
       if (!res.ok) throw new Error("not_found");
       const data = await res.json();
       state.profissional = data;
+      profissionalId = data.user_id;
       document.getElementById("profNome").textContent = data.name;
+      document.getElementById("profAvatar").textContent = data.name.split(/\s+/).filter(Boolean).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
+      document.title = `Agendar com ${data.name} — ShowUp`;
       renderServicos(data.servicos.filter((s) => s.ativo));
       document.getElementById("loadingProf").classList.add("hidden");
       document.getElementById("app").classList.remove("hidden");
@@ -532,8 +564,8 @@
     if (stripe || !window.Stripe) return;
     stripe = window.Stripe(STRIPE_PUBLISHABLE_KEY);
     const css = getComputedStyle(document.documentElement);
-    const ink = css.getPropertyValue("--ink").trim() || "#1C2E22";
-    const soft = css.getPropertyValue("--ink-soft").trim() || "#5B6B60";
+    const ink = css.getPropertyValue("--ink").trim() || "#1A1C1A";
+    const soft = css.getPropertyValue("--ink-soft").trim() || "#5A5E5B";
     cardElement = stripe.elements().create("card", {
       hidePostalCode: true,
       style: {

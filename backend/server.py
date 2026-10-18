@@ -27,6 +27,7 @@ import logging
 import os
 import re
 import secrets
+import unicodedata
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, time, timedelta, timezone
@@ -62,6 +63,7 @@ from security import require_service_token
 from payment_errors import CardDeclinedError, GatewayUnavailableError, InvalidPaymentRequestError, PaymentError
 from webhooks import router as webhooks_router
 from expo_push import buscar_recibo, is_device_not_registered, push_para_usuario, send_push
+from agenda import MENSAGENS as MENSAGENS_AGENDA, janela_de_confirmacao, montar_janela
 from notificacoes import avisar_novo_agendamento, avisar_proximo_atendimento, dados_do_agendamento, explicar_erro_push
 from emailer import email_configurado, enviar_email
 from senhas import hash_falso, hash_senha, validar_senha, verificar_senha
@@ -726,7 +728,32 @@ async def _find_or_create_cliente_por_telefone(nome: str, telefone: str) -> dict
     return doc
 
 
-async def _valida_servico_e_conflito(servico_id: str, horario_inicio: datetime) -> tuple[dict, dict, datetime]:
+async def _exigir_horario_na_agenda(prof_id: str, horario: datetime, horario_fim: datetime, reserva_no_cartao: bool = True) -> None:
+    """Recusa (422) horário fora da janela da agenda: o cliente só agenda nos próximos N dias em que o profissional atende
+    (N = dias da semana que ele cadastrou) e nunca num horário em que a reserva no cartão venceria antes da cobrança.
+    A mesma regra filtra a lista de horários (/slots), mas é AQUI que vale: um pedido montado à mão não pode furá-la."""
+    prof = await db.users.find_one({"user_id": prof_id}, {"_id": 0, "timezone": 1})
+    weekly = await db.disponibilidade.find({"profissional_id": prof_id}, {"_id": 0}).to_list(200)
+    motivo = montar_janela(weekly, _now(), _tz_for(prof)).motivo_recusa(horario, horario_fim, reserva_no_cartao)
+    if motivo:
+        raise HTTPException(422, MENSAGENS_AGENDA[motivo])
+
+
+async def _janela_de_confirmacao_ou_desfazer(hold: dict, horario_fim: datetime, agendamento_id: str) -> datetime:
+    """Prazo para o profissional confirmar o atendimento: normalmente fim + 24 h, mas nunca depois de o Stripe soltar a
+    reserva (alguns cartões vencem antes de 7 dias). Se a reserva venceria antes de o atendimento acabar, desfaz a
+    autorização (o cliente não fica com o limite preso) e recusa."""
+    janela = janela_de_confirmacao(horario_fim, _aware(hold["hold_expira_em"]))
+    if janela is not None:
+        return janela
+    try:
+        await gateway.void(hold["payment_intent_id"], idempotency_key=f"void_curto_{agendamento_id}")
+    except PaymentError:
+        logging.exception("Falha ao desfazer hold de validade curta p/ %s", agendamento_id)
+    raise HTTPException(422, "O seu cartão só permite reservar por poucos dias. Escolha um horário mais próximo.")
+
+
+async def _valida_servico_e_conflito(servico_id: str, horario_inicio: datetime, reserva_no_cartao: bool = True) -> tuple[dict, dict, datetime]:
     """Parte compartilhada entre o fluxo normal (app) e o público (link do
     WhatsApp): busca o serviço, calcula horário_fim, e checa sobreposição
     de agenda. Devolve (servico, profissional_doc, horario_fim)."""
@@ -737,6 +764,7 @@ async def _valida_servico_e_conflito(servico_id: str, horario_inicio: datetime) 
     if horario <= _now():
         raise HTTPException(422, "Horário deve ser futuro")
     horario_fim = horario + timedelta(minutes=svc["duracao_min"])
+    await _exigir_horario_na_agenda(svc["profissional_id"], horario, horario_fim, reserva_no_cartao)
     conflito = await db.agendamentos.find_one({
         "profissional_id": svc["profissional_id"],
         "hold_status": {"$in": ["autorizado", "cancelando", "capturado_total", "capturado_taxa", "pago_integral", "aguardando_pix"]},
@@ -1619,9 +1647,13 @@ async def listar_profissionais(
 
 @api_router.get("/profissionais/{user_id}", response_model=ProfissionalDetail)
 async def detalhe_profissional(user_id: str):
+    """Aceita o id interno (links antigos: /agendar?prof=user_xxx) OU o endereço legível (/p/eduardo-cerqueira)."""
     u = await db.users.find_one({"user_id": user_id, "role": "profissional"}, {"_id": 0})
     if not u:
+        u = await db.users.find_one({"slug": user_id.lower(), "role": "profissional"}, {"_id": 0})
+    if not u:
         raise HTTPException(404, "Não encontrado")
+    user_id = u["user_id"]
     servicos = await db.servicos.find({"profissional_id": user_id, "ativo": True}, {"_id": 0}).to_list(200)
     return ProfissionalDetail(
         user_id=u["user_id"], name=u["name"], picture=u.get("picture"),
@@ -1662,8 +1694,10 @@ def _parse_hhmm(hhmm: str) -> time:
 
 @api_router.get("/profissionais/{user_id}/slots", response_model=list[SlotDisponivel])
 async def slots_disponiveis(user_id: str, servico_id: str = Query(...)):
-    """Compute concrete slots for the next 14 days from weekly availability
-    minus already-booked appointments.
+    """Horários livres para o cliente escolher: a disponibilidade semanal menos o que já está reservado, limitado à
+    JANELA DA AGENDA (agenda.py): os próximos N dias em que o profissional atende (N = dias da semana que ele cadastrou;
+    seg a sex = 5, seg a dom = 7) e nunca depois do prazo em que a reserva no cartão ainda pode ser cobrada.
+    O servidor aplica a mesma regra ao reservar (_exigir_horario_na_agenda), então a lista e a reserva não divergem.
 
     Tudo é calculado no fuso horário LOCAL do profissional (campo
     `timezone`, default America/Sao_Paulo) — o HH:MM que ele cadastra em
@@ -1703,6 +1737,7 @@ async def slots_disponiveis(user_id: str, servico_id: str = Query(...)):
     step = duracao
     result: list[SlotDisponivel] = []
     now = _now()
+    janela = montar_janela(weekly, now, tz)
     # "Hoje" no calendário LOCAL do profissional — um profissional em
     # America/Noronha (UTC-2) e outro em America/Rio_Branco (UTC-5) podem
     # estar em dias de calendário diferentes no mesmo instante UTC.
@@ -1726,7 +1761,7 @@ async def slots_disponiveis(user_id: str, servico_id: str = Query(...)):
                         cursor < _aware(b["horario_fim"]) and (cursor + duracao) > _aware(b["horario_inicio"])
                         for b in busy
                     )
-                    if not overlap:
+                    if not overlap and janela.motivo_recusa(cursor, cursor + duracao) is None:
                         result.append(SlotDisponivel(
                             iso=cursor.isoformat(),
                             day_label=cursor.strftime("%a, %d %b"),
@@ -1854,6 +1889,48 @@ async def _atualizar_connect_pendentes() -> int:
 # Página web pública (Firebase Hosting) onde o cliente agenda pelo link do
 # profissional — é a mesma base que o app mostra em "Seu link de agendamento".
 PUBLIC_WEB_BASE_URL = os.environ.get("PUBLIC_WEB_BASE_URL", "https://showup-509120.web.app").rstrip("/")
+
+
+def _slugify(nome: str) -> str:
+    """"José da Conceição" -> "jose-da-conceicao": letras e números sem acento, separados por hífen (até 40 caracteres)."""
+    ascii_ = unicodedata.normalize("NFKD", nome or "").encode("ascii", "ignore").decode()
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_.lower()).strip("-")[:40].strip("-")
+    return slug or "profissional"
+
+
+async def _garantir_slug(u: dict) -> str:
+    """Endereço legível do profissional (/p/eduardo-cerqueira). Criado na primeira vez que é pedido e NUNCA muda depois
+    (os links já enviados pelo WhatsApp continuam valendo, mesmo se ele trocar de nome). Dois profissionais com o mesmo
+    nome ficam "maria-silva" e "maria-silva-2"; o índice único do banco evita duplicata mesmo em pedidos simultâneos."""
+    if u.get("slug"):
+        return u["slug"]
+    base = _slugify(u.get("name") or "")
+    for tentativa in range(30):
+        candidato = base if tentativa == 0 else f"{base}-{tentativa + 1}"
+        if await db.users.find_one({"slug": candidato}, {"_id": 1}):
+            continue
+        try:
+            res = await db.users.update_one({"user_id": u["user_id"], "slug": {"$exists": False}}, {"$set": {"slug": candidato}})
+        except DuplicateKeyError:
+            continue                      # outro profissional pegou o mesmo nome no mesmo instante
+        if res.modified_count:
+            return candidato
+        atual = await db.users.find_one({"user_id": u["user_id"]}, {"_id": 0, "slug": 1})
+        if atual and atual.get("slug"):
+            return atual["slug"]          # outra requisição do mesmo profissional já gravou
+    candidato = f"{base}-{uuid.uuid4().hex[:6]}"
+    await db.users.update_one({"user_id": u["user_id"]}, {"$set": {"slug": candidato}})
+    return candidato
+
+
+@api_router.get("/me/link-publico")
+async def link_publico(authorization: Optional[str] = Header(default=None)):
+    """O link de agendamento que o profissional compartilha. Vem do servidor (e não fixo no app) para que trocar o
+    domínio do site não exija recompilar o aplicativo."""
+    u = await _current_user(authorization)
+    await _require_role(u, "profissional")
+    slug = await _garantir_slug(u)
+    return {"slug": slug, "url": f"{PUBLIC_WEB_BASE_URL}/p/{slug}"}
 
 
 def _connect_prefill(doc: dict) -> dict:
@@ -2236,6 +2313,7 @@ async def criar_agendamento(request: Request, background_tasks: BackgroundTasks,
     if horario <= _now():
         raise HTTPException(422, "Horário deve ser futuro")
     horario_fim = horario + timedelta(minutes=svc["duracao_min"])
+    await _exigir_horario_na_agenda(svc["profissional_id"], horario, horario_fim)
 
     # --- Checagem de conflito (double-booking) ---
     # /profissionais/{id}/slots calcula os horários livres, mas nada aqui
@@ -2285,6 +2363,7 @@ async def criar_agendamento(request: Request, background_tasks: BackgroundTasks,
         logging.exception("hold falhou")
         raise HTTPException(402, "Falha ao autorizar cartão")
 
+    janela_conf = await _janela_de_confirmacao_ou_desfazer(hold, horario_fim, agendamento_id)
     doc = {
         "agendamento_id": agendamento_id,
         "profissional_id": svc["profissional_id"],
@@ -2298,7 +2377,7 @@ async def criar_agendamento(request: Request, background_tasks: BackgroundTasks,
         "payment_intent_id": hold["payment_intent_id"],
         "hold_status": "autorizado",
         "hold_expira_em": hold["hold_expira_em"],
-        "janela_confirmacao_expira_em": horario_fim + timedelta(hours=24),
+        "janela_confirmacao_expira_em": janela_conf,
         "valor_capturado_centavos": 0,
         "connect_destination": destination,
         # Percentual de taxa vigente NA ÉPOCA da reserva (plano de então). A
@@ -2394,6 +2473,7 @@ async def criar_agendamento_publico_cartao(request: Request, background_tasks: B
         logging.exception("hold falhou (link público)")
         raise HTTPException(402, "Falha ao autorizar cartão")
 
+    janela_conf = await _janela_de_confirmacao_ou_desfazer(hold, horario_fim, agendamento_id)
     doc = {
         "agendamento_id": agendamento_id,
         "profissional_id": svc["profissional_id"],
@@ -2407,7 +2487,7 @@ async def criar_agendamento_publico_cartao(request: Request, background_tasks: B
         "payment_intent_id": hold["payment_intent_id"],
         "hold_status": "autorizado",
         "hold_expira_em": hold["hold_expira_em"],
-        "janela_confirmacao_expira_em": horario_fim + timedelta(hours=24),
+        "janela_confirmacao_expira_em": janela_conf,
         "valor_capturado_centavos": 0,
         "connect_destination": destination,
         # Percentual de taxa vigente NA ÉPOCA da reserva (plano de então). A
@@ -2449,7 +2529,7 @@ async def criar_agendamento_publico_pix(request: Request, payload: AgendamentoPu
     if GATEWAY_KIND != "stripe":
         raise HTTPException(400, "Pix requer gateway Stripe real")
     cliente = await _find_or_create_cliente_por_telefone(payload.nome, payload.telefone)
-    svc, prof, horario_fim = await _valida_servico_e_conflito(payload.servico_id, payload.horario_inicio)
+    svc, prof, horario_fim = await _valida_servico_e_conflito(payload.servico_id, payload.horario_inicio, reserva_no_cartao=False)
     if svc["profissional_id"] != payload.profissional_id:
         raise HTTPException(400, "servico_id não pertence ao profissional_id informado")
     horario = _aware(payload.horario_inicio)
@@ -2913,6 +2993,7 @@ async def lifespan(_: FastAPI):
     await db.users.create_index("telefone", unique=True, sparse=True)
     await db.users.create_index("user_id", unique=True)
     await db.users.create_index("microsoft_id", unique=True, sparse=True)
+    await db.users.create_index("slug", unique=True, sparse=True)
     # expira_em: o Mongo apaga sozinho os códigos, os "state" do OAuth e os bloqueios de login
     await db.email_codes.create_index([("email", 1), ("finalidade", 1)], unique=True)
     await db.email_codes.create_index("expira_em", expireAfterSeconds=0)

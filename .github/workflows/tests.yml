@@ -41,3 +41,7 @@ jobs:
           tests/test_verificar_google.py
           tests/test_notificacoes.py
           tests/test_expo_push.py
+          tests/test_link_publico.py
+          tests/test_agenda.py
+          tests/test_agenda_servidor.py
+          tests/test_trocar_dominio.py

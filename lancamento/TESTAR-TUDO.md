@@ -276,7 +276,7 @@ A primeira chamada ao Render pode levar ~1 minuto se ele estiver dormindo.
 - [ ] Senha errada 5 vezes: bloqueia por 15 minutos e a mensagem é clara.
 
 **B. Profissional**
-- [ ] *Configurações > Notificações > Enviar notificação de teste*: a notificação chega no celular (se não, siga `NOTIFICACOES.md`).
+- [ ] *Perfil > NOTIFICAÇÕES > Enviar notificação de teste*: a notificação chega no celular (se não, siga `NOTIFICACOES.md`).
 - [ ] Cadastra serviço (valor e taxa de falta) e horários de atendimento.
 - [ ] *Perfil → link de agendamento*: copia o link.
 - [ ] *Configurações → Repasse automático*: **Conectar Stripe**. No modo teste o formulário do Stripe oferece dados de teste ou um

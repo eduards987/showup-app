@@ -55,3 +55,6 @@ yarn-error.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# Dados que você digitou no preencher-site.py (nome/e-mail do site): só seus, não vão para o Git
+lancamento/dados-site.local.json
