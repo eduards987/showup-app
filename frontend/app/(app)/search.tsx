@@ -16,7 +16,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/lib/api";
-import { nomeDaCategoria } from "@/src/lib/categorias";
+import { nomeDaCategoria, nomeDoGrupo } from "@/src/lib/categorias";
+import { DropdownGrupos } from "@/src/components/dropdown";
 import { ProfissionalPublic } from "@/src/lib/types";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 import { t } from "@/src/i18n/core";
@@ -99,8 +100,6 @@ const useStyles = makeStyles((c) => ({
   emptyBody: { fontSize: 13, color: c.muted, textAlign: "center" },
 }));
 
-const CATEGORIAS = ["fitness", "terapia", "consultoria", "estetica", "coaching", "nutricao"];
-
 export default function Search() {
   useIdioma();
   const styles = useStyles();
@@ -110,6 +109,12 @@ export default function Search() {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState<string | null>(null);
 
+  // A lista de categorias vem do servidor (a mesma da tela do profissional): uma cópia fixa aqui ficaria desatualizada.
+  const catsQ = useQuery({ queryKey: ["categorias-list"], queryFn: () => api<{ categorias: string[]; grupos?: { grupo: string; categorias: string[] }[] }>("/api/categorias"), staleTime: Infinity });
+  const secoesCats = (catsQ.data?.grupos ?? [{ grupo: "", categorias: catsQ.data?.categorias ?? [] }]).map((g) => ({
+    titulo: g.grupo ? nomeDoGrupo(g.grupo) : "",
+    opcoes: g.categorias.map((c) => ({ valor: c, rotulo: nomeDaCategoria(c) })),
+  }));
   const listQ = useQuery({
     queryKey: ["profissionais", q, cat],
     queryFn: () => {
@@ -140,35 +145,16 @@ export default function Search() {
         />
       </View>
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{
-          paddingHorizontal: spacing.xl,
-          paddingVertical: spacing.md,
-          gap: spacing.sm,
-        }}
-      >
-        <Pressable
-          testID="cat-all"
-          onPress={() => setCat(null)}
-          style={[styles.chip, !cat && styles.chipActive]}
-        >
-          <Text style={[styles.chipText, !cat && styles.chipTextActive]}>{t("Todos")}</Text>
-        </Pressable>
-        {CATEGORIAS.map((c) => (
-          <Pressable
-            key={c}
-            testID={`cat-chip-${c}`}
-            onPress={() => setCat(c === cat ? null : c)}
-            style={[styles.chip, cat === c && styles.chipActive]}
-          >
-            <Text style={[styles.chipText, cat === c && styles.chipTextActive]}>
-              {nomeDaCategoria(c)}
-            </Text>
-          </Pressable>
-        ))}
-      </ScrollView>
+      <View style={{ paddingHorizontal: spacing.xl, paddingVertical: spacing.md }}>
+        <DropdownGrupos
+          testID="seletor-categoria-busca"
+          icone="pricetags-outline"
+          titulo={t("Categoria")}
+          valor={cat ?? ""}
+          secoes={[{ titulo: "", opcoes: [{ valor: "", rotulo: t("Todos") }] }, ...secoesCats]}
+          onChange={(v) => setCat(v === "" ? null : v)}
+        />
+      </View>
 
       {listQ.isLoading ? (
         <ActivityIndicator style={{ marginTop: spacing.xl }} color={colors.brandPrimary} />

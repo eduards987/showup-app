@@ -15,7 +15,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
-import { formatMoney, TIMEZONE_LABELS } from "@/src/lib/format";
+import { formatMoney } from "@/src/lib/format";
+import { rotuloDoFuso } from "@/src/lib/fusos";
 import { Agendamento, Servico } from "@/src/lib/types";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 import { t } from "@/src/i18n/core";
@@ -213,7 +214,7 @@ export default function Book() {
 
         <Text style={styles.sectionLabel}>{t("Escolha o dia")}</Text>
         {svcQ.data?.timezone ? (
-          <Text style={[styles.cardMeta, { paddingHorizontal: spacing.xl, marginBottom: spacing.sm }]}>{t("Horários no fuso de")}{" "}{TIMEZONE_LABELS[svcQ.data.timezone] ?? svcQ.data.timezone}
+          <Text style={[styles.cardMeta, { paddingHorizontal: spacing.xl, marginBottom: spacing.sm }]}>{t("Horários no fuso de")}{" "}{rotuloDoFuso(svcQ.data.timezone)}
           </Text>
         ) : null}
         {slotsQ.isLoading ? (

@@ -85,6 +85,10 @@
   .sec-head { max-width: 640px; margin-bottom: 32px; }
   .sec-head h2 { font-size: clamp(28px, 3.6vw, 38px); }
   .sec-head p { color: var(--ink-soft); font-size: 17px; margin: 12px 0 0; }
+  .grupos { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+  .grupo h3 { font-size: 18px; margin-bottom: 4px; }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 12px 0 0; padding: 0; }
+  .pills li { background: var(--brand-tint); color: var(--brand-dark); font-size: 14px; font-weight: 500; padding: 6px 12px; border-radius: 999px; }
   .passos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
   .card { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 24px; }
   .num { width: 34px; height: 34px; border-radius: 50%; background: var(--brand-tint); color: var(--brand); font-weight: 700; display: flex; align-items: center; justify-content: center; margin-bottom: 14px; }
@@ -109,7 +113,7 @@
   @media (max-width: 820px) {
     nav.links a.sec { display: none; }
     .hero { grid-template-columns: 1fr; padding-top: 36px; gap: 36px; }
-    .passos, .grid3 { grid-template-columns: 1fr; }
+    .passos, .grid3, .grupos { grid-template-columns: 1fr; }
     .faixa { grid-template-columns: 1fr; padding: 28px 22px; }
   }
   @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
@@ -122,6 +126,7 @@
   <div class="wrap bar">
     <a class="brand" href="/" aria-label="ShowUp, página inicial"><img class="brand-logo" src="/logo.png" alt="" width="45" height="36">ShowUp</a>
     <nav class="links" aria-label="Principal">
+      <a class="sec" href="#para-quem">Para quem é</a>
       <a class="sec" href="#como-funciona">Como funciona</a>
       <a class="sec" href="#clientes">Para quem agenda</a>
       <a class="sec" href="#duvidas">Dúvidas</a>
@@ -158,6 +163,25 @@
     </div>
   </div>
 
+  <section id="para-quem">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2>Para quem é o ShowUp</h2>
+        <p>Para qualquer profissional que atende com hora marcada e perde dinheiro quando o cliente não aparece.</p>
+      </div>
+      <div class="grupos">
+        <div class="card grupo"><h3>Saúde</h3><ul class="pills"><li>Médico(a)</li><li>Dentista</li><li>Psicólogo(a)</li><li>Terapia</li><li>Fisioterapeuta</li><li>Fonoaudiólogo(a)</li><li>Nutrição</li><li>Acupuntura</li></ul></div>
+        <div class="card grupo"><h3>Beleza e estética</h3><ul class="pills"><li>Estética</li><li>Cabeleireiro(a)</li><li>Barbearia</li><li>Manicure e unhas</li><li>Maquiagem</li><li>Depilação</li><li>Tatuagem e piercing</li></ul></div>
+        <div class="card grupo"><h3>Bem-estar e esporte</h3><ul class="pills"><li>Fitness</li><li>Yoga e pilates</li><li>Massagem</li><li>Dança</li><li>Artes marciais</li><li>Aulas de esporte</li></ul></div>
+        <div class="card grupo"><h3>Educação</h3><ul class="pills"><li>Aulas particulares</li><li>Aulas de idiomas</li><li>Aulas de música</li></ul></div>
+        <div class="card grupo"><h3>Serviços profissionais</h3><ul class="pills"><li>Consultoria</li><li>Coaching</li><li>Advocacia</li><li>Contabilidade</li><li>Fotografia</li><li>Corretor(a) de imóveis</li></ul></div>
+        <div class="card grupo"><h3>Pets</h3><ul class="pills"><li>Veterinária</li><li>Banho e tosa</li><li>Adestramento</li></ul></div>
+        <div class="card grupo"><h3>Casa e automóveis</h3><ul class="pills"><li>Oficina e estética automotiva</li><li>Reparos e serviços técnicos</li></ul></div>
+      </div>
+      <p class="nota" style="margin-top:18px">E qualquer outro profissional que trabalhe com agenda.</p>
+    </div>
+  </section>
+  
   <section id="como-funciona">
     <div class="wrap">
       <div class="sec-head">

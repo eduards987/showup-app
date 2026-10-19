@@ -1,0 +1,11 @@
+import assert from "node:assert";
+import { alternarComLimite as a } from "./lib/selecao.ts";
+assert.deepStrictEqual(a([], "x", 3), { valores: ["x"], bloqueado: false });
+assert.deepStrictEqual(a(["x"], "y", 3), { valores: ["x", "y"], bloqueado: false });
+assert.deepStrictEqual(a(["x", "y"], "z", 3), { valores: ["x", "y", "z"], bloqueado: false }, "o terceiro ainda pode");
+assert.deepStrictEqual(a(["x", "y", "z"], "w", 3), { valores: ["x", "y", "z"], bloqueado: true }, "o quarto NÃO marca e avisa");
+assert.deepStrictEqual(a(["x", "y", "z"], "y", 3), { valores: ["x", "z"], bloqueado: false }, "desmarcar sempre pode, mesmo no limite");
+assert.deepStrictEqual(a(["x"], "x", 3), { valores: [], bloqueado: false }, "pode desmarcar o último (o botão Salvar é que exige ao menos 1)");
+assert.deepStrictEqual(a(["x"], "y", 1), { valores: ["x"], bloqueado: true }, "limite 1");
+const original = ["x", "y"]; a(original, "z", 3); assert.deepStrictEqual(original, ["x", "y"], "não altera a lista recebida");
+console.log("selecao: OK");

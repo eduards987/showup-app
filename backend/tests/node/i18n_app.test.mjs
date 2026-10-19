@@ -47,6 +47,7 @@ assert.strictEqual(core.t("Salvar serviço"), "Save service"); assert.strictEqua
 assert.strictEqual(core.t(" (atual)"), " (current)", "espaço do início é preservado");
 assert.strictEqual(core.t("Seus clientes poderão agendar {{quando}}. ", { quando: "x" }), "Your clients will be able to book x. ", "espaço do fim é preservado");
 assert.strictEqual(m.rotuloDaMoeda("BRL"), "BRL · Brazilian real"); assert.strictEqual(cat.nomeDaCategoria("estetica"), "Beauty");
+assert.strictEqual(cat.nomeDaCategoria("odontologia"), "Dentist"); assert.strictEqual(cat.nomeDoGrupo("bem_estar"), "Wellness & sports"); assert.strictEqual(cat.nomeDaCategoria("codigo_novo"), "codigo_novo");
 assert.strictEqual(f.infoHold("autorizado").label, "Card hold"); assert.strictEqual(ae.textosDoModo("entrar").botao, "Sign in");
 assert.strictEqual(ce.descreverConnect({ ...status, estado: "em_analise" }).titulo, "Stripe is reviewing your account");
 assert.deepStrictEqual(ce.resumirPendencias(["individual.address.city", "individual.id_number"]), ["Address", "CPF (Brazilian tax ID)"]);
@@ -59,11 +60,12 @@ assert.strictEqual(core.t("Texto inventado sem tradução"), "Texto inventado se
 core.setIdiomaAtual("es");
 assert.ok(m.avisoDeConversao("USD").startsWith("El valor cobrado en USD es convertido a reales"));
 assert.deepStrictEqual(em(ISO), ["21 oct, 10:30", "mié, 21 oct"]); assert.strictEqual(core.t("Sair"), "Cerrar sesión");
-assert.strictEqual(m.rotuloDaMoeda("USD"), "USD · Dólar estadounidense"); assert.strictEqual(f.rotuloConfirmacao("sem_resposta"), "Sin respuesta");
+assert.strictEqual(m.rotuloDaMoeda("USD"), "USD · Dólar estadounidense"); assert.strictEqual(f.rotuloConfirmacao("sem_resposta"), "Sin respuesta"); assert.strictEqual(cat.nomeDaCategoria("banho_tosa"), "Peluquería canina"); assert.strictEqual(cat.nomeDoGrupo("saude"), "Salud");
 assert.strictEqual(core.t("O login com {{provedor}} foi cancelado.", { provedor: "Google" }), "El inicio de sesión con Google fue cancelado.");
 
 // ---- o idioma é global e reversível; quem escuta é avisado só quando muda
 let avisos = 0; const sair = core.assinarIdioma(() => avisos++);
 core.setIdiomaAtual("es"); assert.strictEqual(avisos, 0); core.setIdiomaAtual("pt-BR"); assert.strictEqual(avisos, 1); sair();
 assert.strictEqual(core.t("Salvar serviço"), "Salvar serviço"); assert.deepStrictEqual(em(ISO), ["21 de out, 10:30", "qua, 21 de out"]);
+assert.strictEqual(cat.nomeDaCategoria("odontologia"), "Dentista"); assert.strictEqual(cat.nomeDoGrupo("casa_auto"), "Casa e automóveis");
 console.log("i18n do app: OK");

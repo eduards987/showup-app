@@ -1,6 +1,7 @@
 """Idiomas do app (português, inglês, espanhol): todo texto passado a t() tem tradução, e o comportamento real funciona."""
 import glob
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -61,16 +62,24 @@ def test_traducoes_mantem_variaveis_quebras_de_linha_e_espacos_das_pontas():
 
 
 # traduções que ficam IGUAIS ao português de propósito (nomes, siglas, palavras parecidas nas duas línguas)
-IGUAL_EN = {"Coaching", "Euro", "Fitness", "min"}
-IGUAL_ES = {"(código: {{codigo}})", "Agenda", "Buscar", "Cancelado", "Cancelar", "Cancelar reserva", "Coaching", "Cobrado (100%)", "Conectar Stripe",
+IGUAL_EN = {"Coaching", "Euro", "Fitness", "min", "Pets"}
+IGUAL_ES = {"Acupuntura", "Dentista", "Fisioterapeuta", "Fonoaudiólogo(a)", "Médico(a)", "Psicólogo(a)", "(código: {{codigo}})", "Agenda", "Buscar", "Cancelado", "Cancelar", "Cancelar reserva", "Coaching", "Cobrado (100%)", "Conectar Stripe",
             "Confirmar reserva", "Continuar", "Copiar", "Código de 6 dígitos", "Documento adicional", "Dom", "Dólar australiano", "Enviar código", "Estética",
             "Euro", "Fitness", "IDIOMA", "Idioma", "Libra esterlina", "Mínimo 8 caracteres", "Perfil", "Peso argentino", "Peso colombiano", "Peso mexicano",
             "Reservas", "Sáb", "Terapia", "Todos", "Valor", "Valor ({{moeda}})", "Ver todos", "Ver →", "min"}
 
 
+def _nomes_de_lugares() -> set[str]:
+    """Cidades e grupos de fusos (Paris, Lima, Denver...): nome próprio, pode ser igual nos três idiomas."""
+    ts = (FRONT / "src" / "lib" / "fusos.ts").read_text(encoding="utf-8")
+    return {json.loads(m) for m in re.findall(r'return t\(("(?:[^"\\]|\\.)*")\);', ts)}
+
+
 def test_nenhuma_traducao_ficou_igual_ao_portugues_sem_querer():
-    assert sorted(k.strip() for k in EN if EN[k] == k) == sorted(IGUAL_EN)
-    assert {k.strip() for k in ES if ES[k] == k} <= IGUAL_ES
+    lugares = _nomes_de_lugares()
+    assert len(lugares) >= 100
+    assert sorted(k.strip() for k in EN if EN[k] == k and k.strip() not in lugares) == sorted(IGUAL_EN)
+    assert {k.strip() for k in ES if ES[k] == k} - lugares <= IGUAL_ES
 
 
 def test_nao_ha_texto_solto_na_tela_sem_t():
@@ -113,14 +122,14 @@ def _node_novo_o_bastante() -> bool:
     return (int(versao[0]), int(versao[1])) >= (22, 6)
 
 
-@pytest.mark.skipif(not _node_novo_o_bastante(), reason="precisa de Node 22.6+ (executa TypeScript direto)")
+@pytest.mark.skipif(not _node_novo_o_bastante() and not os.environ.get("CI"), reason="precisa de Node 22.6+ (executa TypeScript direto)")
 def test_comportamento_real_em_portugues_ingles_e_espanhol(tmp_path):
     """Roda o código de verdade no Node: detecção do idioma, datas, moedas, estados do Stripe, mensagens (pt idêntico ao de antes)."""
     for pasta in ("i18n", "lib"):
         (tmp_path / pasta).mkdir()
     for arq in ("core", "en", "es"):
         shutil.copy(FRONT / "src" / "i18n" / f"{arq}.ts", tmp_path / "i18n" / f"{arq}.ts")
-    for arq in ("format", "moedas", "categorias", "auth-email", "connect-estado", "notificacoes-erros", "agenda-janela"):
+    for arq in ("format", "fusos", "moedas", "categorias", "auth-email", "connect-estado", "notificacoes-erros", "agenda-janela"):
         shutil.copy(FRONT / "src" / "lib" / f"{arq}.ts", tmp_path / "lib" / f"{arq}.ts")
     for arq in tmp_path.rglob("*.ts"):
         texto = arq.read_text(encoding="utf-8")

@@ -22,10 +22,11 @@ import { SeletorMoeda } from "@/src/components/seletor-moeda";
 import { avisoDeConversao } from "@/src/lib/moedas";
 import { resumoJanelaAgenda } from "@/src/lib/agenda-janela";
 import { api, ApiError } from "@/src/lib/api";
-import { nomeDaCategoria } from "@/src/lib/categorias";
+import { nomeDaCategoria, nomeDoGrupo } from "@/src/lib/categorias";
+import { nomeDoGrupoFuso, rotuloDoFuso } from "@/src/lib/fusos";
+import { DropdownGrupos, DropdownMultiGrupos } from "@/src/components/dropdown";
 import { useAuth } from "@/src/lib/auth";
 import type { ConnectStatus } from "@/src/lib/connect-estado";
-import { TIMEZONE_LABELS } from "@/src/lib/format";
 import { openExternalCheckout } from "@/src/lib/open-external-checkout";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 import { t } from "@/src/i18n/core";
@@ -197,12 +198,12 @@ export default function Configuracoes() {
 
   const catsQ = useQuery({
     queryKey: ["categorias-list"],
-    queryFn: () => api<{ categorias: string[] }>("/api/categorias"),
+    queryFn: () => api<{ categorias: string[]; grupos?: { grupo: string; categorias: string[] }[]; maximo?: number }>("/api/categorias"),
   });
 
   const timezonesQ = useQuery({
     queryKey: ["timezones-list"],
-    queryFn: () => api<{ timezones: string[] }>("/api/timezones"),
+    queryFn: () => api<{ timezones: string[]; grupos?: { grupo: string; timezones: string[] }[] }>("/api/timezones"),
   });
 
   const moedasQ = useQuery({
@@ -323,12 +324,16 @@ export default function Configuracoes() {
     },
   });
 
-  const cats = catsQ.data?.categorias ?? [];
-  const toggleCat = (c: string) => {
-    setSelectedCats((prev) =>
-      prev.includes(c) ? prev.filter((x) => x !== c) : prev.length >= 3 ? prev : [...prev, c],
-    );
-  };
+  // Listas por grupo vêm do servidor (sem `grupos`, um servidor antigo: tudo numa seção só).
+  const maxCats = catsQ.data?.maximo ?? 3;
+  const secoesCats = (catsQ.data?.grupos ?? [{ grupo: "", categorias: catsQ.data?.categorias ?? [] }]).map((g) => ({
+    titulo: g.grupo ? nomeDoGrupo(g.grupo) : "",
+    opcoes: g.categorias.map((c) => ({ valor: c, rotulo: nomeDaCategoria(c) })),
+  }));
+  const secoesTz = (timezonesQ.data?.grupos ?? [{ grupo: "", timezones: timezonesQ.data?.timezones ?? [] }]).map((g) => ({
+    titulo: g.grupo ? nomeDoGrupoFuso(g.grupo) : "",
+    opcoes: g.timezones.map((tz) => ({ valor: tz, rotulo: rotuloDoFuso(tz) })),
+  }));
 
   const addSlot = () =>
     setSlots((s) => [...s, { weekday: 0, hora_inicio: "09:00", hora_fim: "18:00" }]);
@@ -353,23 +358,21 @@ export default function Configuracoes() {
           </View>
         ) : null}
 
-        <Text style={styles.sectionTitle}>{t("CATEGORIAS (até 3)")}</Text>
-        <View style={styles.chipsRow}>
-          {cats.map((c) => {
-            const active = selectedCats.includes(c);
-            return (
-              <Pressable
-                key={c}
-                testID={`cat-${c}`}
-                onPress={() => toggleCat(c)}
-                style={[styles.chip, active && styles.chipActive]}
-              >
-                <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                  {nomeDaCategoria(c)}
-                </Text>
-              </Pressable>
-            );
-          })}
+        <Text style={styles.sectionTitle}>{t("CATEGORIAS (até {{max}})", { max: maxCats })}</Text>
+        <View style={{ paddingHorizontal: spacing.xl, marginBottom: spacing.md }}>
+          <DropdownMultiGrupos
+            testID="seletor-categorias"
+            icone="pricetags-outline"
+            titulo={t("Categoria")}
+            textoVazio={t("Escolher categorias")}
+            valores={selectedCats}
+            secoes={secoesCats}
+            maximo={maxCats}
+            onChange={setSelectedCats}
+            textoMaximo={t("Você pode escolher até {{max}} categorias. Desmarque uma para escolher outra.", { max: maxCats })}
+            rotuloContagem={(n) => t("{{n}} de {{max}} selecionadas", { n, max: maxCats })}
+            textoConcluir={t("Concluir")}
+          />
         </View>
         <View style={{ paddingHorizontal: spacing.xl, marginBottom: spacing.md }}>
           <Pressable
@@ -392,22 +395,8 @@ export default function Configuracoes() {
 
         <Text style={styles.sectionTitle}>{t("FUSO HORÁRIO")}</Text>
         <Text style={[styles.connectBody, { paddingHorizontal: spacing.xl, marginBottom: spacing.sm }]}>{t("Os horários que você cadastra em disponibilidade usam este fuso como referência.")}</Text>
-        <View style={styles.chipsRow}>
-          {(timezonesQ.data?.timezones ?? []).map((tz) => {
-            const active = selectedTz === tz;
-            return (
-              <Pressable
-                key={tz}
-                testID={`tz-${tz}`}
-                onPress={() => setSelectedTz(tz)}
-                style={[styles.chip, active && styles.chipActive]}
-              >
-                <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                  {TIMEZONE_LABELS[tz] ?? tz}
-                </Text>
-              </Pressable>
-            );
-          })}
+        <View style={{ paddingHorizontal: spacing.xl, marginBottom: spacing.md }}>
+          <DropdownGrupos testID="seletor-fuso" icone="time-outline" titulo={t("Fuso horário")} valor={selectedTz} secoes={secoesTz} onChange={setSelectedTz} />
         </View>
         <View style={{ paddingHorizontal: spacing.xl, marginBottom: spacing.md }}>
           <Pressable

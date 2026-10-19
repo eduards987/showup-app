@@ -21,6 +21,10 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements.txt
+      # Node 22+: vários testes executam o TypeScript do app de verdade (horário de verão dos fusos, idiomas, regras de seleção).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Instala as dependências
         run: pip install -r backend/requirements.txt
       - name: Testes offline
@@ -45,6 +49,8 @@ jobs:
           tests/test_agenda.py
           tests/test_agenda_servidor.py
           tests/test_moedas.py
+          tests/test_categorias.py
+          tests/test_fusos.py
           tests/test_i18n_servidor.py
           tests/test_i18n_app.py
           tests/test_trocar_dominio.py

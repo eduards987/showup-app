@@ -163,19 +163,141 @@ _AUTH_PEPPER = (os.environ.get("AUTH_CODE_PEPPER") or os.environ.get("INTERNAL_S
 
 Role = Literal["cliente", "profissional"]
 
-CATEGORIAS = ["fitness", "terapia", "consultoria", "estetica", "coaching", "nutricao"]
-Categoria = Literal["fitness", "terapia", "consultoria", "estetica", "coaching", "nutricao"]
+# Quem usa o ShowUp: qualquer profissional que atenda com hora marcada e sofra com falta de cliente. A ordem é a da tela. O CÓDIGO é o que fica gravado no
+# perfil (por isso os 6 originais — fitness, terapia, consultoria, estetica, coaching, nutricao — NUNCA mudam de código); o nome aparece traduzido no app
+# (frontend/src/lib/categorias.ts). Para acrescentar uma categoria: código aqui + nome em categorias.ts + tradução em en.ts/es.ts (test_categorias.py confere).
+CATEGORIAS_POR_GRUPO: dict[str, list[str]] = {
+    "saude": ["medicina", "odontologia", "psicologia", "terapia", "fisioterapia", "fonoaudiologia", "nutricao", "acupuntura"],
+    "beleza": ["estetica", "cabeleireiro", "barbearia", "unhas", "maquiagem", "depilacao", "tatuagem"],
+    "bem_estar": ["fitness", "yoga_pilates", "massagem", "danca", "artes_marciais", "esportes"],
+    "educacao": ["aulas_particulares", "idiomas", "musica"],
+    "profissionais": ["consultoria", "coaching", "advocacia", "contabilidade", "fotografia", "imobiliario"],
+    "pets": ["veterinaria", "banho_tosa", "adestramento"],
+    "casa_auto": ["automotivo", "reparos"],
+    "outros": ["outros"],
+}
+CATEGORIAS = [c for grupo in CATEGORIAS_POR_GRUPO.values() for c in grupo]
+MAX_CATEGORIAS_POR_PROFISSIONAL = 3
 
-# Fusos horários do Brasil (o app é BRL-only por enquanto — ver moeda fixa em
-# "BRL" nos agendamentos). Lista fechada em vez de aceitar qualquer IANA tz:
-# evita profissional digitar algo exótico por engano e reduz a superfície de
-# escolha na UI pra 4 opções reais.
-TIMEZONES_BR = [
-    "America/Sao_Paulo",   # UTC-3, a grande maioria do país
-    "America/Manaus",      # UTC-4 (AM, RR, parte de MT/RO)
-    "America/Rio_Branco",  # UTC-5 (AC, oeste do AM)
-    "America/Noronha",     # UTC-2 (Fernando de Noronha)
-]
+# Fusos horários que o profissional pode escolher (a mesma tabela do app: frontend/src/lib/fusos.ts, com as regras de horário de verão). O servidor aceita qualquer
+# fuso da base oficial (ZoneInfo), mas só estes aparecem na lista, para ninguém digitar algo exótico por engano. Para acrescentar um: aqui + fusos.ts + nome nas
+# traduções; test_fusos.py confere o horário de verão contra a base oficial e que o app conhece todos.
+TIMEZONES_POR_GRUPO: dict[str, list[str]] = {
+    "brasil": [
+        "America/Sao_Paulo",
+        "America/Manaus",
+        "America/Rio_Branco",
+        "America/Noronha",
+    ],
+    "america_sul": [
+        "America/Argentina/Buenos_Aires",
+        "America/Santiago",
+        "America/Montevideo",
+        "America/Asuncion",
+        "America/La_Paz",
+        "America/Bogota",
+        "America/Lima",
+        "America/Guayaquil",
+        "America/Caracas",
+    ],
+    "america_norte": [
+        "America/Mexico_City",
+        "America/Cancun",
+        "America/Tijuana",
+        "America/Guatemala",
+        "America/El_Salvador",
+        "America/Tegucigalpa",
+        "America/Managua",
+        "America/Costa_Rica",
+        "America/Panama",
+        "America/Jamaica",
+        "America/Santo_Domingo",
+        "America/Puerto_Rico",
+        "America/New_York",
+        "America/Chicago",
+        "America/Denver",
+        "America/Phoenix",
+        "America/Los_Angeles",
+        "America/Anchorage",
+        "Pacific/Honolulu",
+        "America/Toronto",
+        "America/Vancouver",
+        "America/Edmonton",
+        "America/Winnipeg",
+        "America/Regina",
+        "America/Halifax",
+        "America/St_Johns",
+    ],
+    "europa": [
+        "Europe/London",
+        "Europe/Dublin",
+        "Europe/Lisbon",
+        "Atlantic/Azores",
+        "Europe/Madrid",
+        "Europe/Paris",
+        "Europe/Berlin",
+        "Europe/Rome",
+        "Europe/Amsterdam",
+        "Europe/Brussels",
+        "Europe/Vienna",
+        "Europe/Zurich",
+        "Europe/Stockholm",
+        "Europe/Oslo",
+        "Europe/Copenhagen",
+        "Europe/Warsaw",
+        "Europe/Prague",
+        "Europe/Budapest",
+        "Europe/Athens",
+        "Europe/Helsinki",
+        "Europe/Bucharest",
+        "Europe/Kyiv",
+        "Europe/Istanbul",
+        "Europe/Moscow",
+    ],
+    "africa": [
+        "Africa/Johannesburg",
+        "Africa/Lagos",
+        "Africa/Nairobi",
+        "Africa/Accra",
+        "Africa/Luanda",
+        "Africa/Maputo",
+        "Africa/Algiers",
+        "Africa/Addis_Ababa",
+    ],
+    "asia": [
+        "Asia/Dubai",
+        "Asia/Riyadh",
+        "Asia/Tehran",
+        "Asia/Karachi",
+        "Asia/Kolkata",
+        "Asia/Colombo",
+        "Asia/Kathmandu",
+        "Asia/Dhaka",
+        "Asia/Bangkok",
+        "Asia/Jakarta",
+        "Asia/Ho_Chi_Minh",
+        "Asia/Shanghai",
+        "Asia/Hong_Kong",
+        "Asia/Singapore",
+        "Asia/Kuala_Lumpur",
+        "Asia/Manila",
+        "Asia/Taipei",
+        "Asia/Seoul",
+        "Asia/Tokyo",
+    ],
+    "oceania": [
+        "Australia/Perth",
+        "Australia/Darwin",
+        "Australia/Brisbane",
+        "Australia/Adelaide",
+        "Australia/Sydney",
+        "Australia/Melbourne",
+        "Australia/Hobart",
+        "Pacific/Auckland",
+        "Pacific/Guam",
+    ],
+}
+TIMEZONES = [z for zs in TIMEZONES_POR_GRUPO.values() for z in zs]
 DEFAULT_TIMEZONE = "America/Sao_Paulo"
 
 # Moedas suportadas — lista fechada (não qualquer código ISO 4217) pelo mesmo
@@ -385,7 +507,17 @@ class MeResponse(BaseModel):
 
 
 class CategoriasRequest(BaseModel):
-    categorias: list[Categoria] = Field(min_length=1, max_length=3)
+    categorias: list[str] = Field(min_length=1, max_length=MAX_CATEGORIAS_POR_PROFISSIONAL)
+
+    @field_validator("categorias")
+    @classmethod
+    def _so_categorias_conhecidas_e_sem_repeticao(cls, valores: list[str]) -> list[str]:
+        desconhecidas = [c for c in valores if c not in CATEGORIAS]
+        if desconhecidas:
+            raise ValueError(f"Categoria inválida: {', '.join(desconhecidas)}")
+        if len(set(valores)) != len(valores):
+            raise ValueError("Categorias repetidas")
+        return valores
 
 
 class TimezoneRequest(BaseModel):
@@ -394,8 +526,8 @@ class TimezoneRequest(BaseModel):
     @field_validator("timezone")
     @classmethod
     def _valida_timezone_suportada(cls, v: str) -> str:
-        if v not in TIMEZONES_BR:
-            raise ValueError(f"timezone não suportada — use uma de: {', '.join(TIMEZONES_BR)}")
+        if v not in TIMEZONES:
+            raise ValueError("timezone não suportada — escolha uma da lista (GET /api/timezones)")
         return v
 
 
@@ -1549,7 +1681,12 @@ async def remover_push_token(authorization: Optional[str] = Header(default=None)
 # ---------------------------------------------------------------------------
 @api_router.get("/categorias")
 async def listar_categorias():
-    return {"categorias": CATEGORIAS}
+    """`categorias` (lista plana, como sempre) + `grupos` (para a lista suspensa por grupo) + o máximo que cada profissional pode escolher."""
+    return {
+        "categorias": CATEGORIAS,
+        "grupos": [{"grupo": g, "categorias": cs} for g, cs in CATEGORIAS_POR_GRUPO.items()],
+        "maximo": MAX_CATEGORIAS_POR_PROFISSIONAL,
+    }
 
 
 @api_router.put("/me/categorias", response_model=MeResponse)
@@ -1563,7 +1700,7 @@ async def set_categorias(payload: CategoriasRequest, authorization: Optional[str
 
 @api_router.get("/timezones")
 async def listar_timezones():
-    return {"timezones": TIMEZONES_BR}
+    return {"timezones": TIMEZONES, "grupos": [{"grupo": g, "timezones": zs} for g, zs in TIMEZONES_POR_GRUPO.items()]}
 
 
 @api_router.put("/me/timezone", response_model=MeResponse)

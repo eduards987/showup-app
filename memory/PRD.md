@@ -2804,3 +2804,19 @@ Guia: `lancamento/NOTIFICACOES.md`. Módulo novo `backend/notificacoes.py` (text
   o mapa moeda->país (plataforma brasileira só tem contas conectadas no Brasil). Rótulos "Valor (R$)" agora usam a moeda do profissional; textos "Hold/Capturado" ficaram
   "Reserva no cartão/Cobrado". Taxas x custo do Stripe: `lancamento/TAXAS-E-MOEDAS.md` (Ultra dá prejuízo até no cartão nacional).
 - Testes novos: `test_moedas.py`, `test_i18n_servidor.py`, `test_i18n_app.py` (+ Node via strip-types), e os de idioma em `test_site_publicacao.py`.
+
+## Categorias de profissional (18/10/2026)
+- 35 categorias em 7 grupos + "outros" (saude, beleza, bem_estar, educacao, profissionais, pets, casa_auto): `server.CATEGORIAS_POR_GRUPO` é a ÚNICA fonte; `/api/categorias` devolve
+  `categorias` (plana, como antes), `grupos` e `maximo` (3). Os 6 códigos originais (fitness, terapia, consultoria, estetica, coaching, nutricao) NUNCA mudam (estão gravados nos perfis).
+- Validação por `field_validator` (códigos conhecidos, sem repetição, 1 a 3). Nomes e grupos no app em `src/lib/categorias.ts` (nomeDaCategoria/nomeDoGrupo) com tradução en/es.
+  A busca deixou de ter lista fixa (usa `/api/categorias`). Página inicial: seção "Para quem é o ShowUp" (gerada dos mesmos nomes). `test_categorias.py` amarra tudo.
+- Escolha das categorias com base em setores com hora marcada e falta de cliente (saúde, beleza, fitness/terapia, aulas, advocacia, imobiliário, pets, automotivo). Fontes de números
+  de no-show são blogs de fornecedores e variam muito: não usar os percentuais no produto.
+- PRÓXIMO: dropdown de seleção múltipla por grupo (até 3) e mais fusos horários (`TIMEZONE_LABELS`).
+
+## Dropdowns e fusos horários (18/10/2026)
+- `src/components/dropdown.tsx`: `DropdownGrupos` (escolha única, seções com título) e `DropdownMultiGrupos` (marcação múltipla, limite vindo do servidor, aviso no limite, "Concluir");
+  a regra do limite é `src/lib/selecao.ts` (pura, testada no Node). Usados em Configurações (categorias até 3, fuso) e no filtro de categoria da busca.
+- Fusos: 99 em 7 grupos (`TIMEZONES_POR_GRUPO` no servidor, tabela e regras em `src/lib/fusos.ts`). O app calcula horário de verão sem `Intl` (Hermes): regras us/eu/au/nz/cl/none + exceção
+  `permanenteDesde` (BC, Alberta, Manitoba, de 2026). `test_fusos.py` compara com o pacote `tzdata` em TODAS as trocas (2025-2032). `tzdata>=2026.5`. CI com Node 22; sem Node no CI o teste FALHA.
+- `/api/categorias` e `/api/timezones` devolvem `grupos` além da lista plana (apps antigos continuam funcionando).

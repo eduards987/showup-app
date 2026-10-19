@@ -1,5 +1,6 @@
 // Small helpers used across screens.
 import { getIdioma, type Idioma, localeAtual, t } from "@/src/i18n/core";
+import { offsetMinutos } from "@/src/lib/fusos";
 
 export function formatMoney(centavos: number, moeda: string = "BRL"): string {
   const v = centavos / 100;
@@ -21,21 +22,7 @@ export function formatBRL(centavos: number): string {
   return formatMoney(centavos, "BRL");
 }
 
-// O motor JS do React Native (Hermes) tem um histórico conhecido de bugs
-// com `Intl`/`toLocaleString` e fuso horário — passar `timeZone` explícito
-// nem sempre funciona (ex: facebook/hermes#431), e em algumas versões ele
-// ignora completamente a conversão e mostra tudo no fuso "errado". Por
-// isso as três funções abaixo NÃO dependem do Intl pra converter fuso —
-// calculam a hora/data manualmente a partir do offset fixo (em minutos)
-// de cada fuso que o app suporta. Todos são fusos SEM horário de verão
-// atualmente (o Brasil não observa DST desde 2019), então um offset fixo
-// é seguro — se isso mudar no futuro, precisa revisar.
-const OFFSET_MINUTOS: Record<string, number> = {
-  "America/Sao_Paulo": -180,
-  "America/Manaus": -240,
-  "America/Rio_Branco": -300,
-  "America/Noronha": -120,
-};
+// O app NÃO converte fuso com Intl (bugs do Hermes): o deslocamento vem de fusos.ts, que conhece o horário de verão de cada fuso.
 
 const MESES: Record<Idioma, string[]> = {
   "pt-BR": ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"],
@@ -59,8 +46,8 @@ function pad2(n: number): string {
  * cai no fuso do profissional ainda não ter sido carregado — usa
  * America/Sao_Paulo como piso razoável (é o default do backend também). */
 function partesNoFuso(iso: string, timezone?: string) {
-  const offset = OFFSET_MINUTOS[timezone ?? ""] ?? OFFSET_MINUTOS["America/Sao_Paulo"];
-  const comOffset = new Date(new Date(iso).getTime() + offset * 60_000);
+  const instante = new Date(iso).getTime();
+  const comOffset = new Date(instante + offsetMinutos(timezone ?? "", instante) * 60_000);
   return {
     ano: comOffset.getUTCFullYear(),
     mes: comOffset.getUTCMonth(),
@@ -120,10 +107,3 @@ export function rotuloConfirmacao(status: string): string {
     default: return status;
   }
 }
-
-export const TIMEZONE_LABELS: Record<string, string> = {
-  "America/Sao_Paulo": "Brasília (UTC-3)",
-  "America/Manaus": "Manaus (UTC-4)",
-  "America/Rio_Branco": "Rio Branco (UTC-5)",
-  "America/Noronha": "Fernando de Noronha (UTC-2)",
-};
