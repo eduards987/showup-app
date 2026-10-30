@@ -61,6 +61,16 @@ def test_telas_do_profissional_mostram_o_aviso_de_conversao():
     config = (front / "app/(app)/configuracoes.tsx").read_text(encoding="utf-8")
     servico = (front / "app/(app)/novo-servico.tsx").read_text(encoding="utf-8")
     # o aviso precisa estar ligado a uma condição VERDADEIRA de verdade (não "false", não só a palavra no arquivo)
-    assert re.search(r"\{avisoDeConversao\(selectedMoeda, moedasQ\.data\?\.moedas_de_recebimento\) \?", config) and 'testID="aviso-conversao"' in config
-    assert re.search(r"const aviso = avisoDeConversao\(moeda, moedasQ\.data\?\.moedas_de_recebimento\);", servico)
+    assert re.search(r"\{avisoDeConversao\(selectedMoeda, moedasQ\.data\?\.moedas_de_recebimento, moedasQ\.data\?\.adicional_conversao_bps\) \?", config) and 'testID="aviso-conversao"' in config
+    assert re.search(r"const aviso = avisoDeConversao\(moeda, moedasQ\.data\?\.moedas_de_recebimento, moedasQ\.data\?\.adicional_conversao_bps\);", servico)
     assert re.search(r"\{aviso \? <Text testID=\"aviso-conversao\"", servico)
+
+
+def test_o_padrao_do_adicional_no_app_e_o_mesmo_do_servidor():
+    """Enquanto o /api/moedas não responde, o app usa um padrão: ele não pode contar outra história."""
+    import re
+    import server
+    moedas_ts = (Path(__file__).resolve().parents[2] / "frontend/src/lib/moedas.ts").read_text(encoding="utf-8")
+    padrao = int(re.search(r"export const ADICIONAL_CONVERSAO_BPS_PADRAO = (\d+);", moedas_ts).group(1))
+    assert padrao == server.ADICIONAL_CONVERSAO_BPS
+    assert "não cobra nada a mais" not in moedas_ts   # o aviso antigo dizia que a taxa não mudava

@@ -61,7 +61,7 @@
 <div class="wrap">
   <a class="topbrand" href="/"><img src="/logo.png" alt="" width="40" height="32"><span>ShowUp</span></a>
   <h1>Política de Privacidade</h1>
-  <p class="updated">Última atualização: 13 de outubro de 2026</p>
+  <p class="updated">Última atualização: 29 de outubro de 2026</p>
 
   <p>Esta política explica quais dados o <strong>ShowUp</strong> coleta, por que
   coleta, e quais direitos você tem sobre eles. Escrevemos isso pra ser
@@ -71,7 +71,7 @@
   <p>O ShowUp é um aplicativo de agendamento com proteção contra no-show
   pra profissionais autônomos e seus clientes. O responsável pelo
   tratamento dos seus dados (controlador, na LGPD) é
-  <strong>Seu nome ou razão social</strong>. Se você tiver qualquer
+  <strong>{{RESPONSAVEL}}</strong> ({{DOCUMENTO}}). Se você tiver qualquer
   dúvida sobre esta política, pode falar com a gente pelo contato no
   final desta página.</p>
 
@@ -109,6 +109,12 @@
     bancária, documentos — geridos inteiramente pelo Stripe, não por
     nós).</li>
   </ul>
+  <p><strong>Dados técnicos:</strong></p>
+  <ul>
+    <li>Endereço IP, data e hora dos acessos, usados para segurança (por exemplo, o
+    limite de tentativas de login e de pagamento) e guardados nos registros do
+    servidor pelo prazo que o Marco Civil da Internet exige (6 meses).</li>
+  </ul>
 
   <h2>Como usamos esses dados</h2>
   <ul>
@@ -119,10 +125,31 @@
     <li>Prevenir fraude e uso indevido da plataforma.</li>
     <li>Cumprir obrigações legais e fiscais.</li>
   </ul>
-  <p>Não vendemos seus dados pra ninguém, em nenhuma circunstância.</p>
+  <p>Não vendemos seus dados pra ninguém, em nenhuma circunstância. Não usamos
+  seus dados para publicidade e não tomamos decisões sobre você de forma
+  totalmente automatizada.</p>
+
+  <h2>Por que podemos tratar esses dados (bases legais)</h2>
+  <ul>
+    <li><strong>Execução do contrato</strong> (art. 7º, V, da LGPD): conta, agendamentos,
+    pagamentos, repasses e avisos sobre os seus agendamentos. Sem esses dados o
+    serviço não funciona.</li>
+    <li><strong>Obrigação legal</strong> (art. 7º, II): registros financeiros e fiscais e os
+    registros de acesso exigidos pelo Marco Civil da Internet.</li>
+    <li><strong>Legítimo interesse</strong> (art. 7º, IX): segurança da conta e prevenção de
+    fraude, sempre no limite do necessário.</li>
+    <li><strong>Exercício regular de direitos</strong> (art. 7º, VI): defesa em contestações de
+    pagamento e em processos.</li>
+    <li><strong>Consentimento</strong> (art. 7º, I): notificações no celular, que você pode
+    desligar quando quiser nas configurações do aparelho.</li>
+  </ul>
 
   <h2>Com quem compartilhamos dados</h2>
-  <p>Só com os parceiros estritamente necessários pra fazer o app
+  <p><strong>Com o profissional com quem você agenda:</strong> ele vê o seu
+  nome, o seu telefone ou e-mail, os agendamentos feitos com ele e se você
+  compareceu. Ele pode usar esses dados só para prestar e combinar o
+  atendimento.</p>
+  <p>E com os parceiros estritamente necessários pra fazer o app
   funcionar:</p>
   <ul>
     <li><strong>Google</strong> e <strong>Microsoft</strong> — autenticação
@@ -140,25 +167,42 @@
   </ul>
   <p>Cada um desses parceiros tem sua própria política de privacidade,
   e só recebe os dados estritamente necessários pra prestar o serviço
-  deles pra gente.</p>
+  deles pra gente. Também podemos informar dados a autoridades quando a lei
+  ou uma ordem judicial exigir.</p>
+
+  <h2>Transferência internacional</h2>
+  <p>Vários desses parceiros (Render, MongoDB Atlas, Stripe, Expo, Google e
+  Microsoft) guardam ou processam dados em servidores fora do Brasil,
+  principalmente nos Estados Unidos. Essas transferências são necessárias
+  para executar o serviço que você contratou (art. 33 da LGPD) e seguem as
+  garantias contratuais de proteção de dados oferecidas por cada parceiro.</p>
 
   <h2>Seus direitos (LGPD)</h2>
   <p>Como usuário no Brasil, a Lei Geral de Proteção de Dados (LGPD)
   garante que você pode, a qualquer momento:</p>
   <ul>
-    <li>Confirmar quais dados seus temos.</li>
-    <li>Corrigir dados incompletos ou desatualizados.</li>
+    <li>Confirmar se tratamos dados seus e ter acesso a eles.</li>
+    <li>Corrigir dados incompletos, inexatos ou desatualizados.</li>
+    <li>Pedir a anonimização, o bloqueio ou a eliminação de dados desnecessários
+    ou tratados em desacordo com a lei.</li>
     <li>Solicitar a exclusão da sua conta e dos seus dados pessoais.</li>
     <li>Pedir uma cópia dos seus dados (portabilidade).</li>
-    <li>Revogar seu consentimento a qualquer momento.</li>
+    <li>Saber com quem compartilhamos os seus dados.</li>
+    <li>Revogar o consentimento, quando ele for a base do tratamento, e saber o
+    que acontece se você não der o consentimento.</li>
+    <li>Se opor a um tratamento feito com base no legítimo interesse.</li>
+    <li>Reclamar à Autoridade Nacional de Proteção de Dados (ANPD), em
+    <a href="https://www.gov.br/anpd">gov.br/anpd</a>.</li>
   </ul>
+  <p>Respondemos pedidos em até 15 dias. Para proteger você, podemos pedir
+  uma confirmação de que o pedido é seu antes de atender.</p>
   <div class="box">
     <strong>Excluir sua conta:</strong> você pode fazer isso direto pelo
     app, em Perfil &gt; Excluir minha conta — sem precisar entrar em
     contato com ninguém. Veja os detalhes em
     <a href="/excluir-conta">Excluir conta e dados</a>. Se você agendou
     por um link e não tem o app, escreva pra
-    <a href="mailto:seu@email.com">seu@email.com</a>.
+    <a href="mailto:{{EMAIL_CONTATO}}">{{EMAIL_CONTATO}}</a>.
   </div>
 
   <h2>Por quanto tempo guardamos seus dados</h2>
@@ -169,7 +213,8 @@
   Stripe e cancelamos qualquer plano pago ou teste grátis — com uma
   exceção: registros financeiros de agendamentos já realizados
   (valores, datas, taxas) podem ser mantidos por obrigação legal e
-  fiscal, mas desvinculados da sua identidade sempre que possível. Os
+  fiscal pelo prazo da lei (em geral, 5 anos), desvinculados da sua identidade
+  sempre que possível. Os registros de acesso ficam 6 meses. Os
   dados que o próprio Stripe mantém (pagamentos e, para profissionais,
   a verificação de identidade) seguem a política do Stripe e a
   legislação financeira.</p>
@@ -181,6 +226,13 @@
   texto, de um jeito que não permite recuperá-las. Há bloqueio temporário
   depois de várias tentativas erradas de entrar. Nos logins com Google ou
   Microsoft, quem guarda a senha é o próprio provedor, não o ShowUp.</p>
+  <p>Se acontecer um incidente de segurança que possa trazer risco ou dano
+  relevante a você, avisaremos você e a ANPD, como a LGPD exige.</p>
+
+  <h2>Cookies e armazenamento no navegador</h2>
+  <p>A página de agendamento guarda no seu navegador só o idioma que você
+  escolheu. O formulário de cartão é do Stripe, que usa cookies próprios para
+  prevenir fraude. Não usamos cookies de publicidade nem de rastreamento.</p>
 
   <h2>Menores de idade</h2>
   <p>O ShowUp não é destinado a menores de 18 anos, e não coletamos
@@ -194,7 +246,8 @@
     <h2>Contato</h2>
     <p>Dúvidas sobre privacidade, ou quer exercer algum dos seus
     direitos diretamente com a gente? Escreve pra
-    <a href="mailto:seu@email.com">seu@email.com</a>.</p>
+    <a href="mailto:{{EMAIL_CONTATO}}">{{EMAIL_CONTATO}}</a>. Este é o canal
+    de atendimento ao titular e de comunicação com a ANPD previsto na LGPD.</p>
   </div>
   <p class="nav"><a href="/termos">Termos de Uso</a> · <a href="/privacidade">Política de Privacidade</a> · <a href="/excluir-conta">Excluir conta e dados</a></p>
 </div>

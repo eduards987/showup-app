@@ -304,3 +304,18 @@ def test_expediente_alterado_depois_de_listar_derruba_o_horario_antigo(loja):
     atende([0, 1, 2, 3, 4], "14:00", "18:00")
     r = client.post("/api/public/agendamentos/cartao", json=corpo_publico(escolhido))
     assert r.status_code == 422 and FORA in r.json()["detail"] and gw.autorizacoes == []
+
+
+# ------------------------------------------------------------------ adicional de conversão: gravado na reserva nos 3 fluxos
+@pytest.mark.parametrize("moeda, taxa", [("BRL", 1000), ("USD", 1400)])
+def test_os_tres_fluxos_cobram_o_adicional_so_fora_do_real(loja, monkeypatch, moeda, taxa):
+    db, gw, atende = loja
+    monkeypatch.setattr(server, "GATEWAY_KIND", "stripe")
+    db.servicos.docs[0]["moeda"] = moeda
+    client = TestClient(server.app)
+    assert client.post("/api/public/agendamentos/cartao", json=corpo_publico(loc(22, 9))).status_code == 200
+    assert client.post("/api/agendamentos", json={"servico_id": "svc_1", "horario_inicio": loc(22, 10).isoformat()}).status_code == 200
+    assert client.post("/api/public/agendamentos/pix", json=corpo_publico(loc(22, 11))).status_code == 200
+    assert [a["fee_bps"] for a in gw.autorizacoes] == [taxa, taxa]
+    assert gw.pix[0]["fee_bps"] == taxa
+    assert [ag["fee_bps"] for ag in db.agendamentos.docs] == [taxa, taxa, taxa]

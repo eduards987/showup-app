@@ -22,7 +22,8 @@
 
 - [ ] **Preencher os dados do site** (você, 5 min). Os Termos e a Privacidade têm três campos em branco: nome/razão social, CPF/CNPJ e um **e-mail que você lê de verdade** (a política publicada antes usava `privacidade@showup.app`, que só funciona se você for dono desse domínio). Da raiz do projeto:
   `python lancamento/preencher-site.py --responsavel "Seu Nome" --documento "CPF 000.000.000-00" --email "contato@..."`
-- [ ] **Revisão jurídica dos Termos e da Privacidade** (você · um advogado ou contador de confiança). Os termos são um rascunho meu, **não aconselhamento jurídico**. Pontos para olhar: reembolso, retenção de valores em contestação, foro e a promessa de atender pedidos de exclusão por e-mail **em até 15 dias** (você precisa conseguir cumprir).
+- [ ] **Revisão jurídica dos Termos e da Privacidade** (você · um advogado ou contador de confiança). **Em 29/10/2026 os textos foram revisados** (LGPD, CDC, Marco Civil):
+  leve ao advogado as perguntas de `REVISAO-JURIDICA.md` e cumpra a lista da seção 3 de lá (registros de acesso por 6 meses, endereço no site, prazos). Os termos são um rascunho meu, **não aconselhamento jurídico**. Pontos para olhar: reembolso, retenção de valores em contestação, foro e a promessa de atender pedidos de exclusão por e-mail **em até 15 dias** (você precisa conseguir cumprir).
 - [ ] **Login por e-mail e Microsoft** (você, opcional mas recomendado para o lançamento): siga `LOGIN.md`. Só configure
   depois de publicar a Política de Privacidade nova (a antiga dizia que o app não guarda senhas).
 - [ ] **Publicar o site** (você): `python lancamento/preencher-site.py --verificar` e, só se passar, `firebase deploy --only hosting --project showup-509120`. Conferir que `/termos`, `/privacidade` e `/excluir-conta` abrem.
@@ -87,10 +88,12 @@ atendimento, confirmação) e site com Termos, Privacidade e exclusão de conta.
 2. ~~**Moeda.**~~ **Decidido: o app continua aberto a várias moedas e idiomas** (dropdown de moeda; português, inglês e espanhol). Corrigido: o **CLP saiu**
    da lista (o Stripe o trata sem centavos e cobraria 100x) e a conta Stripe do profissional passou a ser sempre no país da plataforma (Brasil). **Pendente: revisar as
    faixas de taxa**, porque o custo do Stripe (cartão internacional + conversão) supera a taxa do plano Ultra e do Profissional: veja `TAXAS-E-MOEDAS.md`.
+   **Aplicado em 29/10/2026:** Free 10%, Profissional R$ 29,90 + 7%, Ultra R$ 69,90 + 5,5%, +4 pontos fora do real. Prices novos no Stripe de teste.
+   **Falta:** trocar os 2 Price IDs no Render antes de publicar o servidor e criar os Prices no modo real (`PRECOS-DOS-PLANOS.md`, seção 6).
 3. **Stripe em modo real.** Ativar a conta, trocar as chaves (`sk_`, `pk_`, `whsec_`, `price_`), refazer os 2 webhooks no modo real e ligar
    `EXIGIR_RECEBIMENTO_ATIVO=1`. Só depois de validar tudo em teste. Veja `CHAVES-PRODUCAO.md`. **A chave `pk_test_` está dentro de `agendar.html`**: trocar também lá.
 4. **Segredos que apareceram em conversas.** Confirme que foram trocados: segredo do Google (feito), senha do MongoDB (feito), `INTERNAL_SERVICE_TOKEN`, segredos dos webhooks.
-5. **Revisão jurídica** dos Termos e da Privacidade (cobrança de taxa de falta, prazos, LGPD). Os textos são um modelo, não parecer jurídico.
+5. **Revisão jurídica** dos Termos e da Privacidade (cobrança de taxa de falta, prazos, LGPD). Os textos são um modelo, não parecer jurídico. Revisados em 29/10/2026: veja `REVISAO-JURIDICA.md`.
 6. **Google Play.** Conta de desenvolvedor, ficha da loja, formulário de segurança de dados e **teste fechado com 12 testadores por 14 dias** (`PLAY-STORE.md`, `TESTADORES.md`). É o que mais atrasa: comece cedo.
 7. **Build de produção** (`.aab`) no projeto Expo novo: variáveis de produção no EAS, keystore gerado pelo EAS e **cópia de segurança** dele.
 

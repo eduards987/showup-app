@@ -33,6 +33,7 @@ TRADUCOES: dict[str, tuple[str, str]] = {
     "Falha ao cancelar hold junto ao gateway": ("Failed to cancel the hold with the payment gateway", "Error al cancelar la reserva en la tarjeta con el gateway"),
     "Falha ao confirmar cartão junto ao gateway": ("Failed to confirm the card with the payment gateway", "Error al confirmar la tarjeta con el gateway"),
     "Falha ao criar assinatura junto ao gateway": ("Failed to create the subscription with the payment gateway", "Error al crear la suscripción con el gateway"),
+    "O preço deste plano está sendo atualizado. Tente de novo mais tarde.": ("This plan's price is being updated. Please try again later.", "El precio de este plan se está actualizando. Inténtalo de nuevo más tarde."),
     "Falha ao gerar cobrança Pix junto ao gateway": ("Failed to create the Pix charge with the payment gateway", "Error al generar el cobro Pix con el gateway"),
     "Falha ao gerar link de onboarding junto ao gateway": ("Failed to generate the onboarding link with the payment gateway", "Error al generar el enlace de registro con el gateway"),
     "Falha ao processar pagamento junto ao gateway": ("Failed to process the payment with the payment gateway", "Error al procesar el pago con el gateway"),

@@ -208,7 +208,7 @@ export default function Configuracoes() {
 
   const moedasQ = useQuery({
     queryKey: ["moedas-list"],
-    queryFn: () => api<{ moedas: string[]; moedas_de_recebimento?: string[] }>("/api/moedas"),
+    queryFn: () => api<{ moedas: string[]; moedas_de_recebimento?: string[]; adicional_conversao_bps?: number }>("/api/moedas"),
   });
 
   const dispQ = useQuery({
@@ -417,9 +417,9 @@ export default function Configuracoes() {
         <Text style={[styles.connectBody, { paddingHorizontal: spacing.xl, marginBottom: spacing.sm }]}>{t("Moeda em que você recebe. Só afeta serviços criados a partir de agora.")}</Text>
         <View style={{ paddingHorizontal: spacing.xl, marginBottom: spacing.md }}>
           <SeletorMoeda valor={selectedMoeda} moedas={moedasQ.data?.moedas ?? [selectedMoeda]} onChange={setSelectedMoeda} />
-          {avisoDeConversao(selectedMoeda, moedasQ.data?.moedas_de_recebimento) ? (
+          {avisoDeConversao(selectedMoeda, moedasQ.data?.moedas_de_recebimento, moedasQ.data?.adicional_conversao_bps) ? (
             <Text testID="aviso-conversao" style={[styles.connectBody, { marginTop: spacing.sm, color: colors.warning }]}>
-              {avisoDeConversao(selectedMoeda, moedasQ.data?.moedas_de_recebimento)}
+              {avisoDeConversao(selectedMoeda, moedasQ.data?.moedas_de_recebimento, moedasQ.data?.adicional_conversao_bps)}
             </Text>
           ) : null}
         </View>

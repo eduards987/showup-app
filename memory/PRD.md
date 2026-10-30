@@ -2820,3 +2820,25 @@ Guia: `lancamento/NOTIFICACOES.md`. Módulo novo `backend/notificacoes.py` (text
 - Fusos: 99 em 7 grupos (`TIMEZONES_POR_GRUPO` no servidor, tabela e regras em `src/lib/fusos.ts`). O app calcula horário de verão sem `Intl` (Hermes): regras us/eu/au/nz/cl/none + exceção
   `permanenteDesde` (BC, Alberta, Manitoba, de 2026). `test_fusos.py` compara com o pacote `tzdata` em TODAS as trocas (2025-2032). `tzdata>=2026.5`. CI com Node 22; sem Node no CI o teste FALHA.
 - `/api/categorias` e `/api/timezones` devolvem `grupos` além da lista plana (apps antigos continuam funcionando).
+
+## Revisão jurídica e preços dos planos (29/10/2026)
+- **Site:** as páginas legais e a inicial tinham sido gravadas (commit 5c9c6b0) com os textos de EXEMPLO ("Seu nome ou razão social", `seu@email.com`) no lugar dos `{{...}}`: a trava
+  não via nada e o `--reaplicar` não trocava mais. Os campos voltaram; `preencher-site.py` (`EXEMPLOS`) recusa texto de exemplo ao preencher e o `--verificar` e a trava JS do deploy acusam.
+  Testes em `test_site_publicacao.py`. Dados reais usados antes (18/10): `supportshowup@gmail.com`, responsável "Show Up".
+- **Privacidade:** bases legais, o profissional como destinatário, transferência internacional, direitos completos do art. 18 + ANPD, prazos (fiscal ~5 anos, acesso 6 meses),
+  cookies/armazenamento, incidente, canal do titular. **Termos:** seção 5 (responsabilidades do profissional), contestação de cobrança em 30 dias, arrependimento de 7 dias no plano,
+  aviso de 30 dias para mudança de preço, maioridade/cartão no link. Pendências e perguntas ao advogado: `lancamento/REVISAO-JURIDICA.md` (inclui registro de acesso por 6 meses, que o código não grava).
+- **Preços:** custos oficiais do Stripe BR conferidos (3,99% + R$ 0,39; +2% internacional; conversão a partir de 2%; Connect R$ 6/conta ativa + 0,25% + R$ 0,67 por repasse; Billing 0,7%).
+  `lancamento/calcular-precos.py` (+ `test_calcular_precos.py`). Atual: Ultra dá prejuízo a partir de ~20 atendimentos/mês. Proposta (NÃO aplicada): Free 10%, Profissional R$ 29,90 + 7%,
+  Ultra R$ 69,90 + 5,5%, +4% em cobrança internacional. Guia: `lancamento/PRECOS-DOS-PLANOS.md`.
+- `test_trocar_dominio.py` e o teste da trava JS passaram a rodar também no Windows (caminho com `/` e saída em UTF-8).
+
+## Planos novos aplicados e adicional de conversão (29/10/2026)
+- `PLANOS`: Free 10%; Profissional R$ 29,90 + 7%; Ultra R$ 69,90 + 5,5% (antes R$ 19,90 + 5% e R$ 59,90 + 2%, que davam prejuízo). Equilíbrios: Profissional compensa acima de
+  R$ 996,67/mês; Ultra acima de R$ 2.666,67/mês em relação ao Profissional.
+- `ADICIONAL_CONVERSAO_BPS = 400`: `_fee_bps_for(prof, moeda)` soma 4 pontos quando a moeda não está em `MOEDAS_RECEBIMENTO`; gravado na reserva nos 3 fluxos. `/api/moedas` devolve
+  `adicional_conversao_bps`; `avisoDeConversao(moeda, recebimento, adicionalBps)` mostra o adicional (pt/en/es). Substitui a decisão "o ShowUp absorve a conversão". Os Termos citam o adicional.
+- Trava `_price_confere`: `/me/plano/subscription-intent` lê o Price (`gateway.get_price`, com colchetes por causa do SDK v16) e recusa com 503 se valor, moeda, intervalo ou ativo divergirem de `PLANOS`.
+- Stripe de TESTE: Prices novos `price_1UW4JvFl9Xrvr2Jycec9DkNQ` (Profissional) e `price_1UW4JwFl9Xrvr2Jyhwi4ozls` (Ultra) nos mesmos produtos; `.env` local atualizado. Falta Render e modo real.
+- Testes: `test_planos_resumo.py` (valores, trava do Price, adicional), `test_agenda_servidor.py` (adicional nos 3 fluxos), `test_plano_gateway.py` (`get_price` com `construct_from`),
+  `test_moedas.py` (padrão do app = servidor), `test_calcular_precos.py` (calculadora = servidor).

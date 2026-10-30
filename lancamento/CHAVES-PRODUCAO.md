@@ -11,7 +11,7 @@ secreta de um modo com a publicável do outro.
 | Chave secreta | `sk_test_...` | `sk_live_...` | Render > Environment: `STRIPE_API_KEY` |
 | Chave publicável | `pk_test_...` | `pk_live_...` | EAS (`EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY`) **e** `firebase-hosting/public/agendar.html` (constante `STRIPE_PUBLISHABLE_KEY`) |
 | Segredos dos webhooks | `whsec_...` (teste) | `whsec_...` (produção) | Render: `STRIPE_WEBHOOK_SECRET` (plataforma) e `STRIPE_CONNECT_WEBHOOK_SECRET` (Connect) |
-| Price IDs dos planos | `price_...` (teste) | `price_...` (produção) | Render: `STRIPE_PRICE_ID_PROFISSIONAL` / `_ULTRA` (só se `PLANOS_COMPRA_HABILITADA=1`) |
+| Price IDs dos planos | `price_...` (teste) | `price_...` (produção) | Render: `STRIPE_PRICE_ID_PROFISSIONAL` / `_ULTRA` (só se `PLANOS_COMPRA_HABILITADA=1`). O Price precisa ter **exatamente** o valor de `PLANOS` (R$ 29,90 e R$ 69,90, mensal, BRL), senão o servidor recusa assinar |
 | Backend usado pelo app | — | URL pública (https) | EAS: `EXPO_PUBLIC_BACKEND_URL`; `agendar.html`: `BACKEND_URL` |
 
 > **Como o backend escolhe o gateway:** `STRIPE_API_KEY` vazia = modo **simulado** (aprova reservas sem cobrar nada — só

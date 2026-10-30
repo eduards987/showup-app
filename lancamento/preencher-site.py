@@ -36,6 +36,10 @@ PASTA_PADRAO = Path(__file__).resolve().parent.parent / "firebase-hosting" / "pu
 DADOS_LOCAIS = Path(__file__).resolve().parent / "dados-site.local.json"   # fora do Git (ver .gitignore)
 CAMPOS = {"responsavel": "{{RESPONSAVEL}}", "documento": "{{DOCUMENTO}}", "email": "{{EMAIL_CONTATO}}"}
 EMAIL_RE = re.compile(r"^[^@\s<>\"']+@[^@\s<>\"']+\.[^@\s<>\"']+$")
+# Textos de exemplo da própria documentação. Já foram parar no site uma vez (sem sobrar nenhum {{...}}, a trava não via):
+# o preenchimento recusa e o --verificar acusa.
+EXEMPLOS = ("Seu nome ou razão social", "Seu Nome Completo", "seu@email.com", "contato@seudominio.com",
+            "CPF 000.000.000-00", "000.000.000-00", "00.000.000/0000-00")
 
 
 def paginas(pasta: Path) -> list[Path]:
@@ -46,6 +50,9 @@ def preencher(pasta: Path, valores: dict[str, str]) -> dict[str, int]:
     """Troca os campos pelos valores informados. Devolve quantas trocas por arquivo."""
     if valores.get("email") and not EMAIL_RE.match(valores["email"]):
         raise ValueError(f"e-mail inválido: {valores['email']!r}")
+    for chave in CAMPOS:
+        if valores.get(chave) and any(ex.lower() in valores[chave].lower() for ex in EXEMPLOS):
+            raise ValueError(f"{chave} ainda é o texto de exemplo ({valores[chave]!r}): informe o dado real")
     if valores.get("documento") and valores.get("sem_documento"):
         raise ValueError("use --documento OU --sem-documento, não os dois")
     trocas: dict[str, int] = {}
@@ -74,6 +81,9 @@ def verificar(pasta: Path) -> list[str]:
         texto = arq.read_text(encoding="utf-8")
         for token in sorted(set(re.findall(r"\{\{[A-Z_]+\}\}", texto))):
             problemas.append(f"{arq.name}: campo {token} ainda em branco")
+        for ex in EXEMPLOS:
+            if ex in texto:
+                problemas.append(f"{arq.name}: ainda tem o texto de exemplo {ex!r} no lugar do dado real")
         for alvo in sorted(set(re.findall(r'href="/([a-z0-9-]*)(?:[?#][^"]*)?"', texto))):
             if alvo and alvo not in existentes:
                 problemas.append(f"{arq.name}: link para /{alvo}, mas não existe {alvo}.html")

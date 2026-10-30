@@ -350,7 +350,7 @@ const en: Record<string, string> = {
   "• pouco antes do próximo atendimento;": "• shortly before your next appointment;",
   "• quando entra um novo agendamento;": "• when a new booking comes in;",
   "• quando precisa confirmar se o cliente compareceu.": "• when you need to confirm whether the client showed up.",
-  "O valor cobrado em {{moeda}} é convertido para reais pelo Stripe, pela cotação do dia, então o que você recebe em reais pode variar um pouco. O ShowUp não cobra nada a mais pela conversão e a sua taxa continua a mesma.": "The amount charged in {{moeda}} is converted to reais by Stripe at the day's exchange rate, so what you receive in reais may vary slightly. ShowUp doesn't charge anything extra for the conversion and its fee stays the same.",
+  "O valor cobrado em {{moeda}} é convertido para reais pelo Stripe, pela cotação do dia, então o que você recebe em reais pode variar um pouco. Para cobrir a conversão e o cartão internacional, a taxa do ShowUp nos agendamentos nesta moeda tem {{adicional}} pontos percentuais a mais.": "The amount charged in {{moeda}} is converted to reais by Stripe at the day's exchange rate, so what you receive in reais may vary slightly. To cover the conversion and the international card, ShowUp's fee on bookings in this currency is {{adicional}} percentage points higher.",
   "Médico(a)": "Doctor",
   "Dentista": "Dentist",
   "Psicólogo(a)": "Psychologist",

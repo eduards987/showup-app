@@ -78,3 +78,18 @@ def test_status_do_setup_intent(monkeypatch):
     si = stripe.SetupIntent.construct_from({"id": "seti_1", "status": "succeeded"}, "sk_test")
     monkeypatch.setattr(stripe.SetupIntent, "retrieve", staticmethod(lambda i: si))
     assert asyncio.run(_gw().get_setup_intent_status("seti_1")) == "succeeded"
+
+
+def test_get_price_le_um_price_real_do_stripe(monkeypatch):
+    """SDK v16: o Price não é dict. O teste usa um objeto de verdade (construct_from), não um dict."""
+    real = stripe.Price.construct_from({"id": "price_p", "object": "price", "unit_amount": 2990, "currency": "brl",
+                                        "active": True, "recurring": {"interval": "month", "interval_count": 1}}, "sk_test")
+    monkeypatch.setattr(stripe.Price, "retrieve", staticmethod(lambda pid: real))
+    assert asyncio.run(_gw().get_price("price_p")) == {"unit_amount": 2990, "currency": "brl", "interval": "month", "active": True}
+
+
+def test_get_price_avulso_sem_recorrencia(monkeypatch):
+    real = stripe.Price.construct_from({"id": "price_x", "object": "price", "unit_amount": 2990, "currency": "brl",
+                                        "active": True, "recurring": None}, "sk_test")
+    monkeypatch.setattr(stripe.Price, "retrieve", staticmethod(lambda pid: real))
+    assert asyncio.run(_gw().get_price("price_x"))["interval"] is None

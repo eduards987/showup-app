@@ -35,13 +35,14 @@ assert.ok(aj.resumoJanelaAgenda([{ weekday: 0 }, { weekday: 1 }]).texto.includes
 
 // ---- aviso de conversão: só quando a moeda do preço NÃO é uma das moedas em que o Stripe deposita
 assert.strictEqual(m.avisoDeConversao("BRL"), null); assert.strictEqual(m.avisoDeConversao(""), null);
-assert.ok(m.avisoDeConversao("USD").startsWith("O valor cobrado em USD é convertido para reais") && m.avisoDeConversao("USD").includes("não cobra nada a mais pela conversão") && !/cobra uma taxa de convers/.test(m.avisoDeConversao("USD")));
+assert.ok(m.avisoDeConversao("USD").startsWith("O valor cobrado em USD é convertido para reais") && m.avisoDeConversao("USD").includes("tem 4 pontos percentuais a mais") && !m.avisoDeConversao("USD").includes("não cobra nada a mais"));
+assert.ok(m.avisoDeConversao("USD", ["BRL"], 250).includes("tem 2.5 pontos percentuais a mais"), "o adicional vem do servidor");
 assert.strictEqual(m.avisoDeConversao("USD", ["BRL", "USD"]), null, "moeda liberada pelo Stripe: sem aviso");
 assert.ok(m.avisoDeConversao("EUR", ["BRL", "USD"]).includes("EUR"));
 
 // ---- inglês
 core.setIdiomaAtual("en");
-assert.ok(m.avisoDeConversao("USD").startsWith("The amount charged in USD is converted to reais") && m.avisoDeConversao("USD").endsWith("its fee stays the same."));
+assert.ok(m.avisoDeConversao("USD").startsWith("The amount charged in USD is converted to reais") && m.avisoDeConversao("USD").endsWith("is 4 percentage points higher."));
 assert.deepStrictEqual(em(ISO), ["Oct 21, 10:30", "Wed, Oct 21"]); assert.strictEqual(f.formatMoney(12000, "USD"), "$120.00");
 assert.strictEqual(core.t("Salvar serviço"), "Save service"); assert.strictEqual(core.t("Testar {{trial_dias}} dias grátis", { trial_dias: 14 }), "Try 14 days free");
 assert.strictEqual(core.t(" (atual)"), " (current)", "espaço do início é preservado");

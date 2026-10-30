@@ -36,6 +36,7 @@ jobs:
           tests/test_taxa_falta.py
           tests/test_lancamento.py
           tests/test_site_publicacao.py
+          tests/test_calcular_precos.py
           tests/test_webhook_segredos.py
           tests/test_verificar_producao.py
           tests/test_senhas_e_email.py

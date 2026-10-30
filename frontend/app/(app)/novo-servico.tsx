@@ -91,8 +91,8 @@ export default function NovoServico() {
   const auth = useAuth();
   // O valor é na moeda em que o profissional recebe (escolhida em Configurações), não sempre em reais.
   const moeda = auth.status === "authenticated" ? (auth.user.moeda ?? "BRL") : "BRL";
-  const moedasQ = useQuery({ queryKey: ["moedas-list"], queryFn: () => api<{ moedas: string[]; moedas_de_recebimento?: string[] }>("/api/moedas") });
-  const aviso = avisoDeConversao(moeda, moedasQ.data?.moedas_de_recebimento);
+  const moedasQ = useQuery({ queryKey: ["moedas-list"], queryFn: () => api<{ moedas: string[]; moedas_de_recebimento?: string[]; adicional_conversao_bps?: number }>("/api/moedas") });
+  const aviso = avisoDeConversao(moeda, moedasQ.data?.moedas_de_recebimento, moedasQ.data?.adicional_conversao_bps);
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();

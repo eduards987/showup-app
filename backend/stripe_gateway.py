@@ -464,6 +464,21 @@ class StripeGateway:
         c = stripe.Customer.create(email=email, name=name, metadata={"user_id": user_id, "billing": "plano"})
         return c.id
 
+    async def get_price(self, price_id: str) -> dict:
+        """Valor, moeda, intervalo e situação de um Price (para conferir com PLANOS antes de assinar).
+        SDK v16: o objeto não é dict (sem .get), por isso colchetes."""
+        try:
+            p = stripe.Price.retrieve(price_id)
+        except stripe.error.StripeError as e:
+            raise _translate_stripe_error(e) from e
+        recorrente = p["recurring"] if "recurring" in p and p["recurring"] else None
+        return {
+            "unit_amount": p["unit_amount"],
+            "currency": p["currency"],
+            "interval": recorrente["interval"] if recorrente else None,
+            "active": bool(p["active"]),
+        }
+
     async def create_plano_subscription(
         self, billing_customer_id: str, price_id: str, user_id: str, trial_days: int = 0
     ) -> dict:

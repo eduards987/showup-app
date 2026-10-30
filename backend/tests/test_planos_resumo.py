@@ -90,6 +90,14 @@ class FakeGW:
         self.si_status = "succeeded"
         self.quebrar_detalhes = False
         self.n_subs = 0
+        # o Price que o Stripe devolve para cada ID (por padrão, exatamente o que PLANOS diz)
+        self.prices = {
+            "price_prof": {"unit_amount": server.PLANOS["profissional"]["preco_centavos"], "currency": "brl", "interval": "month", "active": True},
+            "price_ultra": {"unit_amount": server.PLANOS["ultra"]["preco_centavos"], "currency": "brl", "interval": "month", "active": True},
+        }
+
+    async def get_price(self, price_id):
+        return dict(self.prices[price_id])
 
     async def ensure_billing_customer(self, user_id, email, name):
         return "cus_1"
@@ -165,10 +173,10 @@ def _usuario(db):
 def test_conta_dos_tres_planos_com_20_sessoes_de_120():
     linhas = {l["id"]: l for l in server.calcular_comparacao_planos([12000] * 20, "free")}
     assert linhas["free"]["custo_total_centavos"] == 24000
-    assert linhas["profissional"]["custo_total_centavos"] == 12000 + 1990
-    assert linhas["ultra"]["custo_total_centavos"] == 4800 + 5990
-    assert linhas["profissional"]["economia_vs_atual_centavos"] == 10010
-    assert linhas["ultra"]["economia_vs_atual_centavos"] == 13210
+    assert linhas["profissional"]["custo_total_centavos"] == 16800 + 2990   # 7% de 240.000 + R$ 29,90
+    assert linhas["ultra"]["custo_total_centavos"] == 13200 + 6990          # 5,5% de 240.000 + R$ 69,90
+    assert linhas["profissional"]["economia_vs_atual_centavos"] == 4210
+    assert linhas["ultra"]["economia_vs_atual_centavos"] == 3810
 
 
 def test_taxa_arredonda_por_agendamento_como_na_cobranca():
@@ -180,15 +188,15 @@ def test_taxa_arredonda_por_agendamento_como_na_cobranca():
 def test_economia_e_relativa_ao_plano_atual():
     linhas = {l["id"]: l for l in server.calcular_comparacao_planos([12000] * 20, "profissional")}
     assert linhas["profissional"]["economia_vs_atual_centavos"] == 0
-    assert linhas["free"]["economia_vs_atual_centavos"] == -10010
-    assert linhas["ultra"]["economia_vs_atual_centavos"] == 13990 - 10790
+    assert linhas["free"]["economia_vs_atual_centavos"] == -4210
+    assert linhas["ultra"]["economia_vs_atual_centavos"] == 19790 - 20190
 
 
 def test_pontos_de_equilibrio():
     eq = server._equilibrios()
-    assert eq["profissional"] == {"vs_free": 39800, "vs_anterior": 39800}      # R$ 398,00
-    assert eq["ultra"]["vs_free"] == 74875                                      # R$ 748,75
-    assert eq["ultra"]["vs_anterior"] == 133334                                 # R$ 1.333,34
+    assert eq["profissional"] == {"vs_free": 99667, "vs_anterior": 99667}      # R$ 996,67
+    assert eq["ultra"]["vs_free"] == 155334                                     # R$ 1.553,34
+    assert eq["ultra"]["vs_anterior"] == 266667                                 # R$ 2.666,67
 
 
 def test_trial_so_pra_quem_nunca_testou_nem_pagou():
@@ -220,23 +228,30 @@ def test_resumo_filtra_janela_profissional_moeda_e_status(ctx):
 
 
 def test_resumo_nao_recomenda_upgrade_que_sai_mais_caro(ctx):
-    # 3 atendimentos de 120 (R$ 360): Free custa R$ 36; Profissional R$ 37,90
+    # 3 atendimentos de 120 (R$ 360): Free custa R$ 36; Profissional R$ 55,10
     client, db, gw = ctx(agendamentos=[_agendamento() for _ in range(3)])
     r = client.get("/api/me/plano/resumo").json()
     assert r["recomendado"] is None
 
 
 def test_resumo_recomenda_o_mais_barato_quando_o_volume_justifica(ctx):
-    client, db, gw = ctx(agendamentos=[_agendamento() for _ in range(20)])
+    # 60 x R$ 120 = R$ 7.200: Free R$ 720; Profissional R$ 533,90; Ultra R$ 465,90
+    client, db, gw = ctx(agendamentos=[_agendamento() for _ in range(60)])
     r = client.get("/api/me/plano/resumo").json()
     assert r["recomendado"] == "ultra"
     ultra = next(l for l in r["comparacao"] if l["id"] == "ultra")
-    assert ultra["economia_vs_atual_centavos"] == 13210
+    assert ultra["economia_vs_atual_centavos"] == 72000 - 46590
+
+
+def test_resumo_no_meio_do_caminho_recomenda_o_profissional(ctx):
+    # 20 x R$ 120: Profissional (R$ 197,90) sai mais barato que o Ultra (R$ 201,90)
+    client, db, gw = ctx(agendamentos=[_agendamento() for _ in range(20)])
+    assert client.get("/api/me/plano/resumo").json()["recomendado"] == "profissional"
 
 
 def test_resumo_nao_recomenda_plano_indisponivel(ctx, monkeypatch):
     monkeypatch.delenv("STRIPE_PRICE_ID_ULTRA")
-    client, db, gw = ctx(agendamentos=[_agendamento() for _ in range(20)])
+    client, db, gw = ctx(agendamentos=[_agendamento() for _ in range(60)])
     r = client.get("/api/me/plano/resumo").json()
     assert r["recomendado"] == "profissional"
 
@@ -246,7 +261,7 @@ def test_resumo_sem_movimento_traz_equilibrio_e_nenhuma_recomendacao(ctx):
     r = client.get("/api/me/plano/resumo").json()
     assert r["atendimentos_cobrados"] == 0 and r["recomendado"] is None
     prof = next(l for l in r["comparacao"] if l["id"] == "profissional")
-    assert prof["equilibrio_vs_free_centavos"] == 39800
+    assert prof["equilibrio_vs_free_centavos"] == 99667
 
 
 def test_resumo_em_outra_moeda_nao_compara(ctx):
@@ -456,3 +471,43 @@ def test_compra_desligada_nao_tranca_quem_ja_assina(ctx, monkeypatch):
     monkeypatch.setattr(server, "PLANOS_COMPRA_HABILITADA", False)
     assert client.get("/api/me/plano/resumo").json()["plano_atual"] == "profissional"
     assert client.post("/api/me/plano/cancelar").json()["user"]["plano"] == "free"   # cancelar sempre funciona
+
+
+# ------------------------------------------------------------------ o Price do Stripe tem de cobrar o que o app mostra
+@pytest.mark.parametrize("mudanca", [
+    {"unit_amount": 1990},          # Price antigo (R$ 19,90) esquecido no Render
+    {"currency": "usd"},
+    {"interval": "year"},
+    {"active": False},
+])
+def test_assinatura_recusada_se_o_price_do_stripe_nao_confere(ctx, mudanca):
+    client, db, gw = ctx()
+    gw.prices["price_prof"].update(mudanca)
+    r = client.post("/api/me/plano/subscription-intent", json={"plano": "profissional"})
+    assert r.status_code == 503
+    assert gw.n_subs == 0 and "plano_pendente" not in _usuario(db)
+
+
+def test_assinatura_com_price_certo_passa(ctx):
+    client, db, gw = ctx()
+    assert client.post("/api/me/plano/subscription-intent", json={"plano": "ultra"}).status_code == 200
+    assert gw.n_subs == 1
+
+
+# ------------------------------------------------------------------ adicional quando a moeda precisa de conversão
+def test_adicional_so_quando_o_stripe_converte_a_moeda():
+    prof = _user(plano="profissional")
+    assert server._fee_bps_for(prof, "BRL") == 700
+    assert server._fee_bps_for(prof, "USD") == 700 + server.ADICIONAL_CONVERSAO_BPS == 1100
+    assert server._fee_bps_for(_user(), "EUR") == 1400
+    assert server._fee_bps_for(prof) == 700          # sem moeda (conta do resumo, em reais): sem adicional
+
+
+def test_adicional_some_se_o_stripe_liberar_a_moeda(monkeypatch):
+    monkeypatch.setattr(server, "MOEDAS_RECEBIMENTO", ["BRL", "USD"])
+    assert server._fee_bps_for(_user(plano="ultra"), "USD") == 550
+
+
+def test_api_moedas_informa_o_adicional_ao_app(ctx):
+    client, db, gw = ctx()
+    assert client.get("/api/moedas").json()["adicional_conversao_bps"] == 400

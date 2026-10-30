@@ -61,7 +61,7 @@
 <div class="wrap">
   <a class="topbrand" href="/"><img src="/logo.png" alt="" width="40" height="32"><span>ShowUp</span></a>
   <h1>Termos de Uso</h1>
-  <p class="updated">Última atualização: 13 de outubro de 2026</p>
+  <p class="updated">Última atualização: 29 de outubro de 2026</p>
 
   <p>Estes termos regem o uso do <strong>ShowUp</strong> (o aplicativo e as páginas de
   agendamento). Ao criar uma conta ou fazer um agendamento, você concorda com eles. Se não
@@ -69,7 +69,7 @@
 
   <h2>1. Quem é o ShowUp</h2>
   <p>O ShowUp é uma plataforma de agendamento com proteção contra falta (no-show) para
-  profissionais autônomos e seus clientes. É operado por <strong>Seu nome ou razão social</strong>. O ShowUp <strong>não presta os serviços agendados</strong>: quem presta, e
+  profissionais autônomos e seus clientes. É operado por <strong>{{RESPONSAVEL}}</strong> ({{DOCUMENTO}}). O ShowUp <strong>não presta os serviços agendados</strong>: quem presta, e
   responde por eles, é o profissional.</p>
 
   <h2>2. Conta e requisitos</h2>
@@ -78,6 +78,9 @@
     Microsoft, ou criar uma conta com e-mail e senha.</li>
     <li>Você é responsável pelas informações que fornece, pelo uso da sua conta e por manter a
     sua senha em segredo.</li>
+    <li>Quem agenda pelo link sem criar conta também precisa ser maior de idade, ou estar
+    autorizado pelo responsável. O pagamento deve ser feito com um cartão do qual você seja
+    titular ou que esteja autorizado a usar.</li>
     <li>Profissionais precisam concluir a verificação de identidade e informar a conta bancária
     no Stripe para receber pagamentos pelo app.</li>
   </ul>
@@ -90,7 +93,8 @@
       <ul>
         <li><strong>Compareceu:</strong> o valor do serviço é cobrado.</li>
         <li><strong>Não compareceu:</strong> é cobrada apenas a taxa de no-show, valor definido
-        pelo profissional para cada serviço e mostrado antes de você reservar.</li>
+        pelo profissional para cada serviço e mostrado antes de você reservar. Ela nunca é
+        maior que o valor do serviço.</li>
         <li><strong>Sem resposta do profissional dentro do prazo:</strong> a reserva é liberada
         e nada é cobrado.</li>
       </ul>
@@ -98,6 +102,11 @@
     <li>Você e o profissional podem cancelar um agendamento antes do atendimento. O cancelamento
     libera a reserva no cartão; o prazo para o valor voltar ao seu limite depende do banco
     emissor.</li>
+    <li><strong>Discordou de uma cobrança?</strong> Se você foi cobrado por uma falta que não
+    aconteceu, ou por um valor diferente do combinado, escreva para o contato abaixo em até
+    30 dias. Ouvimos você e o profissional e, se a cobrança foi indevida, devolvemos o valor.
+    Isso não tira o seu direito de procurar o banco emissor ou os órgãos de defesa do
+    consumidor.</li>
     <li>Os pagamentos com cartão são processados pelo Stripe. O ShowUp não armazena o número
     completo do seu cartão.</li>
   </ul>
@@ -107,7 +116,10 @@
     <li>O ShowUp cobra uma <strong>taxa sobre o valor efetivamente cobrado</strong> em cada
     agendamento (o serviço inteiro, ou apenas a taxa de no-show quando o cliente falta). O
     percentual depende do plano. As taxas e mensalidades de cada plano aparecem no app antes
-    da contratação, e a taxa de um agendamento é a vigente no momento em que ele foi feito.</li>
+    da contratação, e a taxa de um agendamento é a vigente no momento em que ele foi feito.
+    Serviços cobrados em moeda que não seja o real têm um adicional na taxa (hoje, 4 pontos
+    percentuais), para cobrir a conversão e o cartão internacional; o app mostra o adicional
+    quando você escolhe a moeda.</li>
     <li>O restante é repassado à sua conta pelo Stripe Connect, conforme os
     <a href="https://stripe.com/br/legal/connect-account" target="_blank" rel="noopener">termos
     do Stripe</a>. Os repasses dependem de a sua conta no Stripe estar ativa e verificada.</li>
@@ -115,44 +127,63 @@
     período informado no app. Ao final, a mensalidade é cobrada automaticamente no cartão
     cadastrado, a menos que você cancele antes. Enviamos um aviso por notificação antes do
     fim do teste, mas cancelar a tempo é responsabilidade sua.</li>
+    <li><strong>Direito de arrependimento:</strong> na primeira contratação de um plano pago, você
+    pode desistir em até 7 dias da primeira cobrança e receber de volta o valor integral, pelo
+    contato abaixo (art. 49 do Código de Defesa do Consumidor).</li>
     <li>Você pode cancelar o plano a qualquer momento no app; isso interrompe as cobranças
-    futuras e a conta volta ao plano gratuito. Pedidos de reembolso são analisados conforme a
-    lei, pelo contato abaixo.</li>
+    futuras e a conta volta ao plano gratuito na hora. Outros pedidos de
+    reembolso são analisados conforme a lei, pelo contato abaixo.</li>
+    <li>Se o preço de um plano mudar, avisaremos no app com pelo menos 30 dias de antecedência.
+    O novo preço só vale a partir da cobrança seguinte ao aviso, e você pode cancelar antes sem
+    nenhum custo.</li>
     <li>Contestações de cartão (chargebacks), fraude ou descumprimento destes termos podem
     levar à retenção ou reversão de valores e à suspensão da conta.</li>
   </ul>
 
-  <h2>5. Uso adequado</h2>
+  <h2>5. Responsabilidades do profissional</h2>
+  <ul>
+    <li>Prestar o serviço como anunciado e informar os clientes sobre preços, duração e a sua
+    política de falta antes do agendamento.</li>
+    <li>Informar com verdade se o cliente compareceu. Marcar falta de quem compareceu é fraude:
+    o valor é devolvido ao cliente e a conta pode ser suspensa.</li>
+    <li>Cumprir as obrigações da sua atividade, incluindo as fiscais (como a emissão de nota
+    fiscal pelos seus serviços) e as regras da sua profissão.</li>
+    <li>Usar os dados dos clientes que recebe pelo ShowUp (nome, telefone, e-mail) apenas para
+    combinar e prestar o atendimento, respeitando a Lei Geral de Proteção de Dados.</li>
+  </ul>
+
+  <h2>6. Uso adequado</h2>
   <p>Não use o ShowUp para fins ilegais, para fraudar pagamentos ou taxas, para criar contas
   falsas ou para prejudicar outras pessoas ou o funcionamento do serviço. Podemos suspender ou
   encerrar contas que violem estes termos, avisando sempre que possível.</p>
 
-  <h2>6. Disponibilidade</h2>
+  <h2>7. Disponibilidade</h2>
   <p>Trabalhamos para manter o serviço no ar, mas ele é oferecido no estado em que se encontra e
   pode ter interrupções. Não garantimos que haverá profissionais ou horários disponíveis, nem
   que todo pagamento será aprovado pelo banco emissor.</p>
 
-  <h2>7. Responsabilidade</h2>
+  <h2>8. Responsabilidade</h2>
   <p>O ShowUp não responde pela qualidade, pontualidade ou resultado dos serviços prestados
   pelos profissionais, combinados diretamente entre profissional e cliente. Nada nestes termos
   afasta direitos que a lei assegura ao consumidor.</p>
 
-  <h2>8. Propriedade intelectual</h2>
+  <h2>9. Propriedade intelectual</h2>
   <p>A marca, o aplicativo e o código do ShowUp pertencem ao responsável pelo serviço. O que
   você cadastra (nome, serviços, descrições) continua sendo seu; você nos autoriza a usar esse
   conteúdo apenas para operar o serviço.</p>
 
-  <h2>9. Privacidade e exclusão da conta</h2>
+  <h2>10. Privacidade e exclusão da conta</h2>
   <p>O tratamento dos seus dados está descrito na
   <a href="/privacidade">Política de Privacidade</a>. Você pode excluir a conta a qualquer
   momento, como explicado em <a href="/excluir-conta">Excluir conta e dados</a>.</p>
 
-  <h2>10. Mudanças nestes termos</h2>
+  <h2>11. Mudanças nestes termos</h2>
   <p>Podemos atualizar estes termos. Quando a mudança for relevante, atualizaremos a data no
-  topo e avisaremos no app. Mudanças em taxas valem apenas para agendamentos feitos depois delas.
+  topo e avisaremos no app com antecedência razoável (30 dias para mudanças de preço). Mudanças
+  em taxas valem apenas para agendamentos feitos depois delas.
   Continuar usando o ShowUp após o aviso significa que você aceita a nova versão.</p>
 
-  <h2>11. Lei aplicável e foro</h2>
+  <h2>12. Lei aplicável e foro</h2>
   <p>Aplica-se a lei brasileira. Para resolver disputas, fica eleito o foro do domicílio do
   usuário, quando ele for consumidor, e, nos demais casos, o foro da comarca do responsável pelo
   ShowUp.</p>
@@ -160,7 +191,7 @@
   <div class="contact">
     <h2>Contato</h2>
     <p>Dúvidas sobre estes termos? Escreva para
-    <a href="mailto:seu@email.com">seu@email.com</a>.</p>
+    <a href="mailto:{{EMAIL_CONTATO}}">{{EMAIL_CONTATO}}</a>.</p>
   </div>
   <p class="nav"><a href="/termos">Termos de Uso</a> · <a href="/privacidade">Política de Privacidade</a> · <a href="/excluir-conta">Excluir conta e dados</a></p>
 </div>

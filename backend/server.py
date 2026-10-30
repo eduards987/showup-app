@@ -324,13 +324,20 @@ CONNECT_PAIS = os.environ.get("CONNECT_PAIS", "BR").upper()
 
 # Planos de assinatura do PROFISSIONAL — decrescem a taxa por agendamento
 # conforme a mensalidade sobe. fee_bps em pontos-base (1000 = 10%).
+# Valores de 29/10/2026: nenhum plano pode ficar abaixo do custo do Stripe (3,99% + R$ 0,39 por cobrança, mais o Connect).
+# Conta e motivo em lancamento/PRECOS-DOS-PLANOS.md e lancamento/calcular-precos.py. Mudou aqui? Crie o Price novo no Stripe
+# e troque o STRIPE_PRICE_ID_* no Render: o servidor RECUSA assinar se o Price não tiver este valor (_price_confere).
 # price_env: nome da env var com o Price ID do Stripe pra esse plano (None
 # pro Free, que não tem cobrança). Ver STRIPE_PRICE_ID_* no .env.
 PLANOS = {
     "free":         {"nome": "Free",         "fee_bps": 1000, "preco_centavos": 0,    "price_env": None},
-    "profissional": {"nome": "Profissional", "fee_bps": 500,  "preco_centavos": 1990, "price_env": "STRIPE_PRICE_ID_PROFISSIONAL"},
-    "ultra":        {"nome": "Ultra",        "fee_bps": 200,  "preco_centavos": 5990, "price_env": "STRIPE_PRICE_ID_ULTRA"},
+    "profissional": {"nome": "Profissional", "fee_bps": 700,  "preco_centavos": 2990, "price_env": "STRIPE_PRICE_ID_PROFISSIONAL"},
+    "ultra":        {"nome": "Ultra",        "fee_bps": 550,  "preco_centavos": 6990, "price_env": "STRIPE_PRICE_ID_ULTRA"},
 }
+PLANOS_MOEDA = "brl"  # os Prices dos planos no Stripe são em reais
+# Adicional na taxa do ShowUp quando o serviço é cobrado numa moeda que o Stripe converte para real (fora de MOEDAS_RECEBIMENTO):
+# cobre a conversão (a partir de 2%) e o cartão internacional (+2%). O app mostra o valor ao profissional (GET /api/moedas).
+ADICIONAL_CONVERSAO_BPS = 400
 DEFAULT_PLANO = "free"
 TRIAL_DIAS = 14  # teste grátis do plano pago — uma vez por profissional
 RESUMO_JANELA_DIAS = 30  # janela da conta "quanto você pagaria em cada plano"
@@ -356,12 +363,27 @@ RECIBO_ESPERA_SEG = 4
 PIX_RESERVA_MINUTOS = 20  # tempo que um agendamento via Pix fica reservado esperando pagamento antes de liberar o horário sozinho
 
 
-def _fee_bps_for(profissional_doc: Optional[dict]) -> int:
+def _fee_bps_for(profissional_doc: Optional[dict], moeda: Optional[str] = None) -> int:
     """Mesma filosofia de _tz_for/_moeda: nunca deixa um plano desconhecido
     ou ausente quebrar o cálculo — cai pro Free (a taxa mais alta, o que é
-    o comportamento seguro do ponto de vista da plataforma)."""
+    o comportamento seguro do ponto de vista da plataforma).
+    `moeda` = moeda da cobrança: se o Stripe precisa converter para real, soma ADICIONAL_CONVERSAO_BPS."""
     plano = (profissional_doc or {}).get("plano") or DEFAULT_PLANO
-    return PLANOS.get(plano, PLANOS[DEFAULT_PLANO])["fee_bps"]
+    bps = PLANOS.get(plano, PLANOS[DEFAULT_PLANO])["fee_bps"]
+    if moeda and moeda.upper() not in MOEDAS_RECEBIMENTO:
+        bps += ADICIONAL_CONVERSAO_BPS
+    return bps
+
+
+def _price_confere(plano_cfg: dict, price: dict) -> bool:
+    """O Price do Stripe cobra exatamente o que o app mostra? (valor, moeda, mensal e ativo).
+    Protege contra trocar o valor em PLANOS e esquecer o STRIPE_PRICE_ID_* no Render (ou o contrário)."""
+    return (
+        price.get("unit_amount") == plano_cfg["preco_centavos"]
+        and (price.get("currency") or "").lower() == PLANOS_MOEDA
+        and price.get("interval") == "month"
+        and bool(price.get("active"))
+    )
 
 
 def _plano_disponivel(p: dict) -> bool:
@@ -1714,7 +1736,8 @@ async def set_timezone(payload: TimezoneRequest, authorization: Optional[str] = 
 
 @api_router.get("/moedas")
 async def listar_moedas():
-    return {"moedas": MOEDAS_SUPORTADAS, "moedas_de_recebimento": [m for m in MOEDAS_RECEBIMENTO if m in MOEDAS_SUPORTADAS] or [DEFAULT_MOEDA]}
+    return {"moedas": MOEDAS_SUPORTADAS, "moedas_de_recebimento": [m for m in MOEDAS_RECEBIMENTO if m in MOEDAS_SUPORTADAS] or [DEFAULT_MOEDA],
+            "adicional_conversao_bps": ADICIONAL_CONVERSAO_BPS}
 
 
 @api_router.put("/me/moeda", response_model=MeResponse)
@@ -2251,6 +2274,14 @@ async def plano_subscription_intent(request: Request, payload: PlanoCheckoutRequ
     price_id = os.environ.get(plano_cfg["price_env"] or "")
     if not price_id:
         raise HTTPException(400, f"Plano {payload.plano} ainda não tem Price ID configurado no servidor")
+    try:
+        price = await gateway.get_price(price_id)
+    except PaymentError:
+        logging.exception("não consegui ler o Price %s do plano %s", price_id, payload.plano)
+        raise HTTPException(502, "Falha ao criar assinatura junto ao gateway")
+    if not _price_confere(plano_cfg, price):
+        logging.error("Price %s do plano %s não confere com PLANOS: %s", price_id, payload.plano, price)
+        raise HTTPException(503, "O preço deste plano está sendo atualizado. Tente de novo mais tarde.")
 
     if payload.usar_trial and not _trial_disponivel(doc):
         raise HTTPException(400, "Teste grátis indisponível: ele só vale uma vez, pra quem ainda não assinou nenhum plano")
@@ -2485,7 +2516,7 @@ async def criar_agendamento(request: Request, background_tasks: BackgroundTasks,
             payment_method_id=card["payment_method_id"],
             amount_centavos=svc["valor_centavos"],
             moeda=svc["moeda"],
-            fee_bps=_fee_bps_for(prof),
+            fee_bps=_fee_bps_for(prof, svc["moeda"]),
             # Chave determinística a partir do agendamento_id: um retry desta
             # mesma requisição (timeout no cliente, nova tentativa do app)
             # nunca resulta em um segundo hold no cartão.
@@ -2523,7 +2554,7 @@ async def criar_agendamento(request: Request, background_tasks: BackgroundTasks,
         # Percentual de taxa vigente NA ÉPOCA da reserva (plano de então). A
         # captura da falta usa este valor — mudar de plano depois não altera
         # reservas já feitas.
-        "fee_bps": _fee_bps_for(prof),
+        "fee_bps": _fee_bps_for(prof, svc["moeda"]),
         "criado_em": _now(),
         "push_pergunta_enviada_em": None,
         "push_urgencia_enviada_em": None,
@@ -2598,7 +2629,7 @@ async def criar_agendamento_publico_cartao(request: Request, background_tasks: B
             payment_method_id=payload.payment_method_id,
             amount_centavos=svc["valor_centavos"],
             moeda=svc["moeda"],
-            fee_bps=_fee_bps_for(prof),
+            fee_bps=_fee_bps_for(prof, svc["moeda"]),
             idempotency_key=f"hold_{agendamento_id}",
             metadata={"servico_id": svc["servico_id"], "cliente_id": cliente["user_id"], "origem": "link_publico"},
         )
@@ -2633,7 +2664,7 @@ async def criar_agendamento_publico_cartao(request: Request, background_tasks: B
         # Percentual de taxa vigente NA ÉPOCA da reserva (plano de então). A
         # captura da falta usa este valor — mudar de plano depois não altera
         # reservas já feitas.
-        "fee_bps": _fee_bps_for(prof),
+        "fee_bps": _fee_bps_for(prof, svc["moeda"]),
         "origem": "link_publico",
         "criado_em": _now(),
         "push_pergunta_enviada_em": None,
@@ -2684,7 +2715,7 @@ async def criar_agendamento_publico_pix(request: Request, payload: AgendamentoPu
         pix = await gateway.create_pix_payment_intent(
             amount_centavos=svc["valor_centavos"],
             moeda=svc["moeda"],
-            fee_bps=_fee_bps_for(prof),
+            fee_bps=_fee_bps_for(prof, svc["moeda"]),
             idempotency_key=f"pix_{agendamento_id}",
             metadata={"agendamento_id": agendamento_id, "servico_id": svc["servico_id"], "cliente_id": cliente["user_id"]},
             destination_account_id=destination,
@@ -2722,7 +2753,7 @@ async def criar_agendamento_publico_pix(request: Request, payload: AgendamentoPu
         # Percentual de taxa vigente NA ÉPOCA da reserva (plano de então). A
         # captura da falta usa este valor — mudar de plano depois não altera
         # reservas já feitas.
-        "fee_bps": _fee_bps_for(prof),
+        "fee_bps": _fee_bps_for(prof, svc["moeda"]),
         "metodo_pagamento": "pix",
         "origem": "link_publico",
         "criado_em": _now(),

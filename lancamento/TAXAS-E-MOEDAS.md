@@ -18,7 +18,9 @@
 - Existe a "liquidação em várias moedas" (saldo e repasse em mais de uma moeda, **uma conta bancária por moeda**, sem taxa de câmbio), mas só em alguns países.
   Uma lista recente de terceiros cita UE, Reino Unido, Suíça, Noruega, Liechtenstein, Emirados, Austrália, Hong Kong, Singapura e EUA, **sem o Brasil**.
   A lista oficial do Stripe não carregou na minha consulta, então a confirmação final é com o Stripe.
-- **Hoje (decisão tomada): o ShowUp absorve a conversão.** Cobrar em dólar funciona: o Stripe converte para reais pela cotação do dia e a taxa de conversão fica no custo do ShowUp.
+- **Decisão de 29/10/2026 (substitui a anterior): adicional de 4 pontos na taxa do ShowUp** quando o serviço é cobrado numa moeda que o Stripe converte (`ADICIONAL_CONVERSAO_BPS`).
+  O aviso do app mostra o adicional. O texto abaixo descreve a decisão ANTIGA e fica como histórico.
+- **Antes:** o ShowUp absorvia a conversão. Cobrar em dólar funciona: o Stripe converte para reais pela cotação do dia e a taxa de conversão fica no custo do ShowUp.
   O profissional não paga nada a mais e a taxa do ShowUp é a mesma; o app só avisa (em *Configurações > MOEDA* e em *Novo serviço*) que o valor em reais pode variar um pouco.
   **Confira com uma cobrança de teste em dólar:** no extrato do Stripe, veja o valor que chegou ao profissional e quem arcou com a taxa de conversão. Se o Stripe a descontar do
   repasse do profissional, o texto do aviso deixa de ser verdadeiro e precisa mudar.
@@ -40,6 +42,10 @@ O preço do plano está em reais e o Stripe cobra a assinatura em reais. Para co
 os valores (não dá para só converter pela cotação do dia). Quando você definir a tabela, eu ligo cada moeda ao seu preço. A porcentagem por agendamento continua igual em todos os países.
 
 ## O custo (conferir nas páginas de preços do Stripe antes de decidir)
+
+> **Atualizado em 29/10/2026:** a conta completa (com o Connect: R$ 6 por profissional ativo + 0,25% + R$ 0,67 por repasse, e o Billing: 0,7%) e a proposta
+> de novas faixas estão em `PRECOS-DOS-PLANOS.md`, com a calculadora `py lancamento\calcular-precos.py`. A conversão de moeda no Stripe Brasil é **a partir de 2%**.
+> A tabela abaixo é a conta antiga, sem esses custos.
 As cobranças usam repasse com destino (`transfer_data.destination` + `application_fee_amount`, sem `on_behalf_of`). Nesse modelo a **taxa de
 processamento do Stripe sai da plataforma**, e a taxa do ShowUp (`application_fee`) é a sua receita. Valores públicos do Stripe Brasil:
 **3,99% + R$ 0,39** por cartão nacional, **+2%** para cartão internacional, e conversão de moeda (cerca de **1%**, podendo chegar a 2%).

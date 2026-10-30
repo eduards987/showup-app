@@ -111,7 +111,7 @@ def test_o_projeto_real_so_tem_o_dominio_antigo_nos_arquivos_que_o_script_conhec
                 continue
             try:
                 if ANTIGO in arq.read_text(encoding="utf-8"):
-                    achados.append(str(arq.relative_to(RAIZ)))
+                    achados.append(arq.relative_to(RAIZ).as_posix())
             except (UnicodeDecodeError, OSError):
                 pass
     # exemplos em documentação do próprio lancamento/ são aceitos; código real, não

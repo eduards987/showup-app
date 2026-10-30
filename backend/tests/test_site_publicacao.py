@@ -98,12 +98,12 @@ def test_a_trava_cancela_o_deploy_com_campo_em_branco_e_libera_depois_de_preench
     copia = tmp_path / "firebase-hosting"
     shutil.copytree(HOSPEDAGEM, copia)
     script = copia / "verificar-antes-de-publicar.js"
-    r = subprocess.run(["node", str(script)], capture_output=True, text=True, cwd=copia)
+    r = subprocess.run(["node", str(script)], capture_output=True, text=True, encoding="utf-8", cwd=copia)
     assert r.returncode == 1 and "PUBLICAÇÃO CANCELADA" in r.stderr
     for campo in ("{{RESPONSAVEL}}", "{{EMAIL_CONTATO}}", "termos.html", "privacidade.html"):
         assert campo in r.stderr
     ps.preencher(copia / "public", {"responsavel": "Ana Lima", "email": "oi@ana.com", "sem_documento": True})
-    r = subprocess.run(["node", str(script)], capture_output=True, text=True, cwd=copia)
+    r = subprocess.run(["node", str(script)], capture_output=True, text=True, encoding="utf-8", cwd=copia)
     assert r.returncode == 0 and "pode publicar" in r.stdout
 
 
@@ -359,3 +359,38 @@ def test_pagina_detecta_idioma_do_navegador_com_escolha_guardada_e_pede_erros_no
         assert trecho in html, trecho
     assert html.count("...CAB") == 3 and html.count("{ headers: CAB }") == 3          # todas as chamadas ao servidor levam o idioma
     assert 'toLocaleString("pt-BR"' not in html                                          # o valor não é mais sempre formatado em português
+
+
+@pytest.mark.parametrize("valores", [
+    {"responsavel": "Seu nome ou razão social"},
+    {"email": "seu@email.com"},
+    {"documento": "CPF 000.000.000-00"},
+])
+def test_preencher_recusa_o_texto_de_exemplo_e_nao_altera_nada(pasta, valores):
+    """Já aconteceu: as páginas foram 'preenchidas' com o exemplo e, sem sobrar {{...}}, a trava liberava o deploy."""
+    antes = (pasta / "termos.html").read_text(encoding="utf-8")
+    with pytest.raises(ValueError):
+        ps.preencher(pasta, valores)
+    assert (pasta / "termos.html").read_text(encoding="utf-8") == antes
+
+
+def test_verificar_acusa_texto_de_exemplo_mesmo_sem_campo_em_branco(pasta):
+    for arq in pasta.glob("*.html"):
+        texto = arq.read_text(encoding="utf-8")
+        texto = texto.replace("{{RESPONSAVEL}}", "Seu nome ou razão social").replace("{{EMAIL_CONTATO}}", "seu@email.com")
+        arq.write_text(texto.replace(" ({{DOCUMENTO}})", ""), encoding="utf-8")
+    problemas = ps.verificar(pasta)
+    assert not any("em branco" in p for p in problemas)
+    assert any("seu@email.com" in p and "termos.html" in p for p in problemas)
+    assert any("Seu nome ou razão social" in p for p in problemas)
+
+
+def test_a_trava_do_deploy_tambem_cancela_com_texto_de_exemplo(tmp_path):
+    import subprocess
+    copia = tmp_path / "firebase-hosting"
+    shutil.copytree(HOSPEDAGEM, copia)
+    for arq in (copia / "public").glob("*.html"):
+        texto = arq.read_text(encoding="utf-8").replace(" ({{DOCUMENTO}})", "")
+        arq.write_text(texto.replace("{{RESPONSAVEL}}", "Seu nome ou razão social").replace("{{EMAIL_CONTATO}}", "seu@email.com"), encoding="utf-8")
+    r = subprocess.run(["node", str(copia / "verificar-antes-de-publicar.js")], capture_output=True, text=True, encoding="utf-8", cwd=copia)
+    assert r.returncode == 1 and "PUBLICAÇÃO CANCELADA" in r.stderr and "seu@email.com" in r.stderr
