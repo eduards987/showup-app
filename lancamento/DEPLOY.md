@@ -38,10 +38,19 @@ O app novo precisa do backend novo; por isso o backend vai antes.
    | `PLANOS_COMPRA_HABILITADA` (nova) | `1` | `0` na 1ª versão do Google Play |
    | `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `MICROSOFT_OAUTH_REDIRECT_URI` (novas) | vazias (sem o botão Microsoft) | ver `LOGIN.md`, seção B |
    | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` (novas) | vazias (sem cadastro por e-mail) | ver `LOGIN.md`, seção A — **só depois** de publicar a Política de Privacidade nova |
+   | `PROXIES_NA_FRENTE` (nova, 30/10/2026) | não crie (vale `1`) | `1`; veja o aviso abaixo |
 
 3. Espere o painel mostrar **Live**. Se o deploy falhar, abra os **Logs**: uma `STRIPE_API_KEY` preenchida e inválida
    derruba a subida de propósito (e o Render **mantém a versão anterior no ar**).
 4. **Não há migração de banco.** Os campos novos são opcionais; as reservas antigas continuam funcionando.
+   **Índice único das reservas (30/10/2026):** ao subir, o servidor cria o índice `uniq_vaga_ativa` (agora cobre também o
+   Pix) e só então apaga o antigo `uniq_slot_ativo`. Nada a fazer. Se nos Logs aparecer "índice uniq_vaga_ativa não
+   criado: há reservas ativas duplicadas", o antigo continua valendo: me chame para resolver as duplicadas.
+5. **Limite de tentativas por IP (30/10/2026):** confira nos Logs, depois do primeiro acesso, a linha
+   `limite por IP: conexão de ..., X-Forwarded-For com N IP(s); PROXIES_NA_FRENTE=1`. Com `N` igual a 1, está certo.
+   Se `N` for 2 ou mais **em todo pedido** (há outro proxy, como Cloudflare, na frente do Render), crie
+   `PROXIES_NA_FRENTE` com esse número. Errar para mais deixa o limite valendo para o IP do proxy (todos juntos);
+   errar para menos deixa um atacante trocar o IP. Nunca use `0` no Render.
 
 ## Passo 3 — Stripe Dashboard (5 minutos)
 1. **Reenviar os webhooks que falharam**: Developers > Webhooks > seu endpoint > filtre por falhas > **Resend**.
@@ -57,15 +66,15 @@ O app novo precisa do backend novo; por isso o backend vai antes.
 > Antes de publicar, rode `py lancamento\preencher-site.py --reaplicar` (a página inicial e as páginas legais voltam com os campos em branco a cada zip novo).
 > Depois confira com `verificar-producao.py ... --completo`: ele testa a página inicial, o `/p/...` e a página 404.
 
-> ⚠️ O `firebase deploy` publica **a pasta `public` inteira**, inclusive os Termos, a Privacidade e a Exclusão de conta. Desde esta
+> ⚠️ O `firebase deploy` (sempre de dentro de `firebase-hosting`; a raiz não tem mais site) publica **a pasta `public` inteira**, inclusive os Termos, a Privacidade e a Exclusão de conta. Desde esta
 > versão há uma **trava**: antes de publicar, o Firebase roda `verificar-antes-de-publicar.js` e **cancela o deploy** se alguma
 > página ainda tiver campo em branco (`{{...}}`). Se ela cancelar, é só preencher (comando abaixo) e publicar de novo.
 - **Quer só o dropdown de data e horário agora?** Extraia o `showup-agendar-agora.zip` dentro da pasta `firebase-hosting`
-  e rode `firebase deploy --only hosting --project showup-509120`.
+  e rode `cd firebase-hosting` e `firebase deploy --only hosting --project showup-509120`.
 - **Quer o site completo (Termos, Privacidade, Exclusão de conta)?** Depois de ter o nome, o CPF/CNPJ e o e-mail:
   1. `python lancamento/preencher-site.py --responsavel "Seu Nome" --documento "CPF 000.000.000-00" --email "contato@..."`
   2. `python lancamento/preencher-site.py --verificar` (tem que dizer OK)
-  3. `firebase deploy --only hosting --project showup-509120`
+  3. `cd firebase-hosting` e `firebase deploy --only hosting --project showup-509120`
 
 ## Passo 5 — Conferir que subiu de verdade (2 minutos)
 Na raiz do projeto (use `--completo` se publicou o site completo):

@@ -3,10 +3,13 @@
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
-import { FlatList, Pressable, Text, View } from "react-native";
+import { Pressable, SectionList, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { Carregando, ErroAoCarregar } from "@/src/components/estado-consulta";
 import { api } from "@/src/lib/api";
+import { estadoDaConsulta, separarAgendamentos } from "@/src/lib/estado-consulta";
+import { useAgora } from "@/src/lib/use-agora";
 import { useAuth } from "@/src/lib/auth";
 import {
   infoHold,
@@ -55,6 +58,7 @@ const useStyles = makeStyles((c) => ({
   },
   emptyTitle: { fontSize: 15, fontWeight: "700", color: c.onSurfaceTertiary },
   emptyBody: { fontSize: 13, color: c.muted, textAlign: "center" },
+  secao: { fontSize: 12, fontWeight: "700", color: c.muted, letterSpacing: 1, marginHorizontal: spacing.xl, marginTop: spacing.md, marginBottom: spacing.sm },
 }));
 
 const KIND_COLORS = {
@@ -77,21 +81,34 @@ export default function Agendamentos() {
     queryKey: ["agendamentos"],
     queryFn: () => api<Agendamento[]>("/api/agendamentos"),
   });
+  const agora = useAgora();
+  const estado = estadoDaConsulta(q);
+  const { proximos, anteriores } = separarAgendamentos(q.data ?? [], agora);
+  const secoes = [
+    { titulo: t("PRÓXIMOS"), data: proximos },
+    { titulo: t("ANTERIORES"), data: anteriores },
+  ].filter((sec) => sec.data.length > 0);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.title}>{isCliente ? t("Minhas reservas") : t("Meus atendimentos")}</Text>
       </View>
-      {(q.data?.length ?? 0) === 0 ? (
+      {estado === "carregando" ? (
+        <Carregando />
+      ) : estado === "erro" ? (
+        <ErroAoCarregar onTentar={() => q.refetch()} testID="agendamentos-erro" />
+      ) : estado === "vazio" ? (
         <View style={styles.empty}>
           <Ionicons name="calendar-outline" size={28} color={colors.muted} />
           <Text style={styles.emptyTitle}>{t("Nada aqui ainda")}</Text>
           <Text style={styles.emptyBody}>{t("Suas reservas aparecerão nesta lista.")}</Text>
         </View>
       ) : (
-        <FlatList
-          data={q.data ?? []}
+        <SectionList
+          sections={secoes}
+          stickySectionHeadersEnabled={false}
+          renderSectionHeader={({ section }) => <Text style={styles.secao}>{section.titulo}</Text>}
           keyExtractor={(a) => a.agendamento_id}
           onRefresh={() => q.refetch()}
           refreshing={q.isFetching}

@@ -40,12 +40,15 @@ Os campos `{{...}}` voltaram, e agora o `preencher-site.py` e a trava do `fireba
    Se a ideia é só o Brasil por agora, o mais seguro é tirar EUR e GBP até ter essa resposta.
 10. **Termos só em português.** O app é trilíngue, mas os Termos não. Pergunte se é preciso traduzi-los para quem usa o app em outro idioma.
 11. **Impostos.** Nota fiscal das taxas e mensalidades (ISS hoje e IBS/CBS com a reforma tributária). Isso é mais para o contador.
+12. **Mercado Pago (30/10/2026).** O profissional que conecta o Mercado Pago autoriza o ShowUp a cobrar, capturar e cancelar em nome dele, e a
+    tarifa do Mercado Pago sai do valor do profissional (a taxa do ShowUp é 3 pontos menor). Confirme se a cláusula 4 dos Termos basta como
+    autorização e se o Mercado Pago entra como operador na Política de Privacidade (ele recebe e-mail e CPF do cliente).
 
 ## 3. O que você precisa fazer para as promessas dos textos serem verdade
 
 - [ ] **Registros de acesso por 6 meses** (Marco Civil, art. 15). A política diz que guardamos IP, data e hora por 6 meses. Confirme se os logs do Render guardam isso por esse tempo.
   Se não guardam, é preciso gravar esses registros (por exemplo, numa coleção do MongoDB com expiração de 6 meses). Hoje o código não faz isso.
 - [ ] **Responder pedidos em até 15 dias** (exclusão por e-mail, acesso aos dados, contestação de cobrança). Use um e-mail que você lê.
-- [ ] **Reembolso do arrependimento e das contestações:** é manual, pelo painel do Stripe.
+- [ ] **Reembolso do arrependimento e das contestações:** é manual, pelo painel do Stripe (ou do Mercado Pago, quando o profissional recebe por ele).
 - [ ] **Aviso de 30 dias** antes de mudar preço de plano: precisa ser enviado (notificação e e-mail).
 - [ ] Depois de preencher os dados: `py lancamento\preencher-site.py --verificar` e só então `firebase deploy`.

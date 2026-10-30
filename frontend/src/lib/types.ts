@@ -33,6 +33,10 @@ export type ProfissionalDetail = {
   // false quando o profissional ainda não habilitou os recebimentos (e o servidor
   // exige isso) — o app avisa em vez de deixar o cliente tentar agendar.
   aceita_agendamentos?: boolean;
+  // "mercadopago": o cliente agenda pelo link (página web), com cartão ou Pix do Mercado Pago.
+  recebimento?: "stripe" | "mercadopago";
+  link_agendamento?: string | null;
+  pix_disponivel?: boolean;
 };
 
 export type Agendamento = {

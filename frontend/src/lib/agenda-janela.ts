@@ -7,7 +7,8 @@ export type SlotSemana = { weekday: number };
 
 export type ResumoJanela = { dias: number; nomes: string[]; texto: string };
 
-export function resumoJanelaAgenda(slots: SlotSemana[]): ResumoJanela {
+// holdDias: validade da reserva no cartão de quem recebe o dinheiro (Stripe 7, Mercado Pago 5; vem de GET /api/me/recebimento).
+export function resumoJanelaAgenda(slots: SlotSemana[], holdDias = 7): ResumoJanela {
   const distintos = [...new Set(slots.map((s) => s.weekday))].filter((d) => d >= 0 && d <= 6).sort((a, b) => a - b);
   const todos = [t("Seg"), t("Ter"), t("Qua"), t("Qui"), t("Sex"), t("Sáb"), t("Dom")];
   const nomes = distintos.map((d) => todos[d]);
@@ -21,6 +22,6 @@ export function resumoJanelaAgenda(slots: SlotSemana[]): ResumoJanela {
     nomes,
     texto:
       t("Seus clientes poderão agendar {{quando}}. ", { quando }) +
-      t("A reserva no cartão vale 7 dias e você tem 24 h depois do atendimento para confirmar, por isso o último dia pode abrir só aos poucos."),
+      t("A reserva no cartão vale {{dias}} dias e você tem 24 h depois do atendimento para confirmar, por isso o último dia pode abrir só aos poucos.", { dias: holdDias }),
   };
 }

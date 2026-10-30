@@ -32,6 +32,9 @@ jobs:
         run: >
           python -m pytest -q
           tests/test_planos_resumo.py
+          tests/test_mercadopago.py
+          tests/test_brechas.py
+          tests/test_app_telas.py
           tests/test_plano_gateway.py
           tests/test_taxa_falta.py
           tests/test_lancamento.py

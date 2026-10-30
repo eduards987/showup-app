@@ -62,11 +62,12 @@ def test_traducoes_mantem_variaveis_quebras_de_linha_e_espacos_das_pontas():
 
 
 # traduções que ficam IGUAIS ao português de propósito (nomes, siglas, palavras parecidas nas duas línguas)
-IGUAL_EN = {"Coaching", "Euro", "Fitness", "min", "Pets"}
+IGUAL_EN = {"Coaching", "Euro", "Fitness", "min", "Pets", "Personal trainer"}
 IGUAL_ES = {"Acupuntura", "Dentista", "Fisioterapeuta", "Fonoaudiólogo(a)", "Médico(a)", "Psicólogo(a)", "(código: {{codigo}})", "Agenda", "Buscar", "Cancelado", "Cancelar", "Cancelar reserva", "Coaching", "Cobrado (100%)", "Conectar Stripe",
             "Confirmar reserva", "Continuar", "Copiar", "Código de 6 dígitos", "Documento adicional", "Dom", "Dólar australiano", "Enviar código", "Estética",
             "Euro", "Fitness", "IDIOMA", "Idioma", "Libra esterlina", "Mínimo 8 caracteres", "Perfil", "Peso argentino", "Peso colombiano", "Peso mexicano",
-            "Reservas", "Sáb", "Terapia", "Todos", "Valor", "Valor ({{moeda}})", "Ver todos", "Ver →", "min"}
+            "Reservas", "Sáb", "Terapia", "Todos", "Valor", "Valor ({{moeda}})", "Ver todos", "Ver →", "min",
+            "Desconectar", "Desconectar Mercado Pago", "Reservado: R$ 60,00", "Reserva liberada"}
 
 
 def _nomes_de_lugares() -> set[str]:
@@ -129,7 +130,7 @@ def test_comportamento_real_em_portugues_ingles_e_espanhol(tmp_path):
         (tmp_path / pasta).mkdir()
     for arq in ("core", "en", "es"):
         shutil.copy(FRONT / "src" / "i18n" / f"{arq}.ts", tmp_path / "i18n" / f"{arq}.ts")
-    for arq in ("format", "fusos", "moedas", "categorias", "auth-email", "connect-estado", "notificacoes-erros", "agenda-janela"):
+    for arq in ("format", "fusos", "moedas", "categorias", "auth-email", "connect-estado", "notificacoes-erros", "agenda-janela", "recebimento", "tutorial", "estado-consulta"):
         shutil.copy(FRONT / "src" / "lib" / f"{arq}.ts", tmp_path / "lib" / f"{arq}.ts")
     for arq in tmp_path.rglob("*.ts"):
         texto = arq.read_text(encoding="utf-8")
@@ -139,3 +140,20 @@ def test_comportamento_real_em_portugues_ingles_e_espanhol(tmp_path):
     shutil.copy(Path(__file__).parent / "node" / "i18n_app.test.mjs", tmp_path / "teste.mjs")
     r = subprocess.run([shutil.which("node"), "--experimental-strip-types", "teste.mjs"], cwd=tmp_path, capture_output=True, text=True, timeout=60)
     assert r.returncode == 0 and "i18n do app: OK" in r.stdout, r.stderr[-1500:]
+
+
+def test_tutorial_abre_depois_do_cadastro_para_os_dois_papeis_e_pode_ser_revisto():
+    role = (FRONT / "app" / "role-select.tsx").read_text(encoding="utf-8")
+    home = (FRONT / "app" / "(app)" / "home.tsx").read_text(encoding="utf-8")
+    perfil = (FRONT / "app" / "(app)" / "perfil.tsx").read_text(encoding="utf-8")
+    comp = (FRONT / "src" / "components" / "tutorial.tsx").read_text(encoding="utf-8")
+    fim_do_cadastro = role.split("await auth.setRole(selected);")[1][:300]
+    assert "[PARAM_TUTORIAL]: \"1\"" in fim_do_cadastro                       # terminou o cadastro -> Início com o tutorial
+    assert "params[PARAM_TUTORIAL] === \"1\"" in home and "<Tutorial" in home
+    assert 'papel={isCliente ? "cliente" : "profissional"}' in home             # cada papel vê o seu
+    assert "router.setParams({ [PARAM_TUTORIAL]: undefined })" in home          # fechou: não reabre ao voltar ao Início
+    assert "storage" not in comp                                                # não depende de "primeiro acesso"
+    assert 'testID="tutorial-pular"' in comp                                    # sempre dá para pular
+    ver = perfil.index('testID="ver-tutorial"')
+    assert ver < perfil.index('t("IDIOMA")') and ver > perfil.index('{!isCliente ? (') and "<Tutorial" in perfil
+    assert perfil.rfind("</>\n        ) : null}", 0, ver) > perfil.index('{!isCliente ? (')     # fora do bloco só do profissional

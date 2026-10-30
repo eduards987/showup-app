@@ -65,7 +65,7 @@ export function NotificacoesCard() {
       const r = await diagnosticarNotificacoes(setPassos);
       setPassos(r.passos);
       setToken(r.token);
-    } catch (e) {
+    } catch {
       setPassos([{ id: "envio", titulo: t("Teste de notificação"), estado: "falhou", detalhe: t("Não foi possível fazer o teste agora. Tente de novo.") }]);
     } finally {
       setCarregando(false);

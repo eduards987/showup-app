@@ -16,6 +16,7 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 HOLD_MAX_DIAS = 7            # validade máxima da reserva no cartão (Stripe: 7 dias na maioria dos cartões)
+HOLD_DIAS_MERCADOPAGO = 5    # Mercado Pago (Brasil): a reserva não capturada é cancelada em 5 dias
 JANELA_CONFIRMACAO_H = 24    # tempo que o profissional tem, depois do fim do atendimento, para confirmar
 MARGEM_H = 2                 # folga de segurança (relógio, processamento)
 MARGEM_HOLD_H = 1            # folga antes do vencimento real que o Stripe informou
@@ -24,6 +25,7 @@ MENSAGENS = {
     "sem_agenda": "Este profissional ainda não abriu horários para agendamento.",
     "fora_da_janela": "Esse horário ainda não está aberto para agendamento. Escolha um dos horários disponíveis.",
     "alem_da_validade": "Esse horário está distante demais: a reserva no cartão vale por 7 dias. Escolha um horário mais próximo.",
+    "alem_da_validade_5": "Esse horário está distante demais: a reserva no cartão vale por 5 dias. Escolha um horário mais próximo.",
     "fora_do_expediente": "Esse horário não está disponível. Escolha um dos horários mostrados.",
 }
 ANTECEDENCIA_MIN = 15        # o cliente não agenda para daqui a menos de 15 minutos
@@ -85,9 +87,10 @@ def inicios_possiveis(weekly: list[dict], duracao: timedelta, agora: datetime, t
     return saida
 
 
-def limite_do_fim_do_atendimento(agora: datetime) -> datetime:
-    """Nenhum atendimento pago no cartão pode terminar depois disso (dá tempo de o profissional confirmar e cobrar)."""
-    return agora + timedelta(days=HOLD_MAX_DIAS) - timedelta(hours=JANELA_CONFIRMACAO_H + MARGEM_H)
+def limite_do_fim_do_atendimento(agora: datetime, hold_dias: int = HOLD_MAX_DIAS) -> datetime:
+    """Nenhum atendimento pago no cartão pode terminar depois disso (dá tempo de o profissional confirmar e cobrar).
+    `hold_dias`: validade da reserva de quem recebe o dinheiro (Stripe 7, Mercado Pago 5)."""
+    return agora + timedelta(days=hold_dias) - timedelta(hours=JANELA_CONFIRMACAO_H + MARGEM_H)
 
 
 @dataclass(frozen=True)
@@ -95,6 +98,7 @@ class Janela:
     ultimo_dia: Optional[date]
     limite_fim_cartao: datetime
     tz: ZoneInfo
+    hold_dias: int = HOLD_MAX_DIAS
 
     def motivo_recusa(self, inicio: datetime, fim: datetime, reserva_no_cartao: bool = True) -> Optional[str]:
         """None se o horário pode ser agendado; senão o código do motivo (chave de MENSAGENS)."""
@@ -103,12 +107,12 @@ class Janela:
         if inicio.astimezone(self.tz).date() > self.ultimo_dia:
             return "fora_da_janela"
         if reserva_no_cartao and fim > self.limite_fim_cartao:      # Pix é pago na hora: não tem prazo de reserva
-            return "alem_da_validade"
+            return "alem_da_validade" if self.hold_dias == HOLD_MAX_DIAS else f"alem_da_validade_{self.hold_dias}"
         return None
 
 
-def montar_janela(weekly: list[dict], agora: datetime, tz: ZoneInfo) -> Janela:
-    return Janela(ultimo_dia_de_atendimento(weekly, agora, tz), limite_do_fim_do_atendimento(agora), tz)
+def montar_janela(weekly: list[dict], agora: datetime, tz: ZoneInfo, hold_dias: int = HOLD_MAX_DIAS) -> Janela:
+    return Janela(ultimo_dia_de_atendimento(weekly, agora, tz), limite_do_fim_do_atendimento(agora, hold_dias), tz, hold_dias)
 
 
 def janela_de_confirmacao(horario_fim: datetime, hold_expira_em: datetime) -> Optional[datetime]:

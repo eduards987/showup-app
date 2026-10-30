@@ -5,6 +5,9 @@
   O app oferece 9 moedas (BRL, USD, EUR, GBP, MXN, ARS, COP, CAD, AUD). A moeda é **a do preço do serviço**, escolhida pelo profissional.
 - **Idiomas:** português, inglês e espanhol, no app e na página de agendamento (veja `IDIOMAS.md`).
 
+> **Mercado Pago (30/10/2026):** o profissional pode receber pelo Mercado Pago em vez do Stripe (só reais). Lá a tarifa sai do valor dele
+> e a taxa do ShowUp é 3 pontos menor. Veja `MERCADO-PAGO.md`.
+
 ## O que NÃO funciona (e como está protegido)
 - **Profissional fora do Brasil.** O Stripe só permite transferir entre contas na **mesma região** (as exceções são entre EUA, Canadá, Reino
   Unido, Europa e Suíça). Uma plataforma brasileira só paga contas conectadas **no Brasil**. Por isso a conta Stripe do profissional é sempre criada

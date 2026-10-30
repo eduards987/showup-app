@@ -25,14 +25,15 @@ export function usePushRegistration() {
 
   // 1. Registration — only for profissionais (only role the backend pushes
   // to today) and only once per user_id per app session.
+  const userId = auth.status === "authenticated" ? auth.user.user_id : null;
+  const role = auth.status === "authenticated" ? auth.user.role : null;
   useEffect(() => {
-    if (auth.status !== "authenticated") return;
-    if (auth.user.role !== "profissional") return;
-    if (registeredForUserId.current === auth.user.user_id) return;
+    if (!userId || role !== "profissional") return;
+    if (registeredForUserId.current === userId) return;
 
-    registeredForUserId.current = auth.user.user_id;
+    registeredForUserId.current = userId;
     registerForPushNotifications();
-  }, [auth.status, auth.status === "authenticated" ? auth.user.user_id : null, auth.status === "authenticated" ? auth.user.role : null]);
+  }, [userId, role]);
 
   // 2. Tap handling — works whether the app was backgrounded or fully
   // killed (getLastNotificationResponseAsync covers the cold-start case).

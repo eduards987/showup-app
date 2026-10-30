@@ -4,16 +4,18 @@ import { Redirect, useRouter } from "expo-router";
 import { useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
-  StyleSheet,
   Text,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { ApiError } from "@/src/lib/api";
 import { Role, useAuth } from "@/src/lib/auth";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 import { t } from "@/src/i18n/core";
+import { PARAM_TUTORIAL } from "@/src/lib/tutorial";
 import { useIdioma } from "@/src/i18n";
 
 const useStyles = makeStyles((colors) => ({
@@ -105,7 +107,9 @@ export default function RoleSelect() {
 
   if (auth.status === "loading") return null;
   if (auth.status === "unauthenticated") return <Redirect href="/welcome" />;
-  if (auth.user.role) return <Redirect href="/(app)/home" />;
+  // Enquanto salva, quem leva ao Início é o handleContinue (com o tutorial); sem esta trava, a mudança do papel
+  // redirecionava antes, sem o parâmetro, e o tutorial não abria.
+  if (auth.user.role && !saving) return <Redirect href="/(app)/home" />;
 
   const options: { role: Role; title: string; desc: string; letter: string }[] = [
     {
@@ -127,7 +131,10 @@ export default function RoleSelect() {
     setSaving(true);
     try {
       await auth.setRole(selected);
-      router.replace("/(app)/home");
+      // Cadastro concluído: o Início abre o mini tutorial do papel escolhido (dá para pular).
+      router.replace({ pathname: "/(app)/home", params: { [PARAM_TUTORIAL]: "1" } });
+    } catch (err) {
+      Alert.alert(t("Não foi possível salvar"), err instanceof ApiError ? err.message : t("Sem conexão com o servidor. Confira a internet e tente de novo."));
     } finally {
       setSaving(false);
     }

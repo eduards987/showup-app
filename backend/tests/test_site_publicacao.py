@@ -202,7 +202,7 @@ def test_pagina_de_agendamento_le_o_endereco_legivel_e_o_link_antigo():
     assert r"/^\/p\/([^/]+)\/?$/" in html and 'params.get("prof")' in html
     assert "profissionalId = data.user_id" in html                      # depois de carregar, tudo usa o id interno
     assert "/profissionais/${encodeURIComponent(identificador)}" in html
-    assert "/profissionais/${profissionalId}/slots" in html and html.count("profissional_id: profissionalId") == 2
+    assert "/profissionais/${encodeURIComponent(profissionalId)}/slots" in html and html.count("profissional_id: profissionalId") == 3
 
 
 def test_pagina_de_agendamento_explica_a_garantia_antes_de_pedir_o_cartao():
@@ -357,7 +357,7 @@ def test_pagina_detecta_idioma_do_navegador_com_escolha_guardada_e_pede_erros_no
     for trecho in ('localStorage.getItem("idioma")', "navigator.languages", 'IDIOMAS_OK = ["pt", "en", "es"]', 'const CAB = { "Accept-Language": IDIOMA }',
                    'id="idiomaSelect"', 'classList.toggle("hidden", n !== 1)', "new Intl.NumberFormat(LOCALE"):
         assert trecho in html, trecho
-    assert html.count("...CAB") == 3 and html.count("{ headers: CAB }") == 3          # todas as chamadas ao servidor levam o idioma
+    assert html.count("...CAB") == 4 and html.count("{ headers: CAB }") == 3          # todas as chamadas ao servidor levam o idioma (4ª: cartão do Mercado Pago)
     assert 'toLocaleString("pt-BR"' not in html                                          # o valor não é mais sempre formatado em português
 
 
@@ -394,3 +394,90 @@ def test_a_trava_do_deploy_tambem_cancela_com_texto_de_exemplo(tmp_path):
         arq.write_text(texto.replace("{{RESPONSAVEL}}", "Seu nome ou razão social").replace("{{EMAIL_CONTATO}}", "seu@email.com"), encoding="utf-8")
     r = subprocess.run(["node", str(copia / "verificar-antes-de-publicar.js")], capture_output=True, text=True, encoding="utf-8", cwd=copia)
     assert r.returncode == 1 and "PUBLICAÇÃO CANCELADA" in r.stderr and "seu@email.com" in r.stderr
+
+
+# ------------------------------------------------------------------ agendar.html: nada do servidor entra como HTML cru
+AGENDAR = RAIZ / "firebase-hosting" / "public" / "agendar.html"
+
+
+def _templates_com_html(js: str):
+    """Cada template literal (`...`) do script que monta HTML, com as expressões ${...} dele (inclusive as aninhadas)."""
+    achados, i = [], 0
+    while True:
+        i = js.find("`", i)
+        if i < 0:
+            return achados
+        j, exprs = i + 1, []
+        while js[j] != "`":
+            if js.startswith("${", j):
+                k, prof = j + 2, 1
+                while prof:
+                    prof += {"{": 1, "}": -1}.get(js[k], 0)
+                    k += 1
+                exprs.append(js[j + 2:k - 1].strip())
+                j = k
+            else:
+                j += 1
+        corpo = js[i:j + 1]
+        if "<" in corpo:
+            achados.append((corpo, exprs))
+        i = j + 1
+
+
+def _expr_segura(e: str) -> bool:
+    import re
+    fixo = r'T\("[^"]*"\)'
+    if re.fullmatch(fixo, e) or re.fullmatch(rf"\w+ \? {fixo} : {fixo}", e):   # texto fixo traduzido (ou um de dois)
+        return True
+    if e.startswith("esc(") or e == "notaNoShow":         # notaNoShow é outro template, conferido à parte
+        return True
+    return bool(re.match(r"^[\w.()]+\.map\(", e))         # o .map monta outro template, conferido à parte
+
+
+def test_agendar_so_poe_no_html_o_que_passou_por_esc():
+    html = AGENDAR.read_text(encoding="utf-8")
+    js = html.split("<script>")[-1].split("</script>")[0]
+    assert "function esc(" in js
+    templates = _templates_com_html(js)
+    assert len(templates) >= 6
+    ruins = [(e, corpo[:60]) for corpo, exprs in templates for e in exprs if not _expr_segura(e)]
+    # cada template aninhado (.map) também aparece na lista e passa pela mesma regra
+    assert ruins == [], f"valor do servidor entrando no HTML sem esc(): {ruins}"
+    for proibido in ("insertAdjacentHTML", "outerHTML", "document.write"):
+        assert proibido not in js
+
+
+def _node():
+    exe = shutil.which("node")
+    if not exe:
+        if __import__("os").environ.get("CI"):
+            pytest.fail("Node não encontrado (CI=true)")
+        pytest.skip("precisa de Node")
+    return exe
+
+
+def test_esc_do_agendar_neutraliza_codigo_no_nome(tmp_path):
+    import subprocess
+    js = AGENDAR.read_text(encoding="utf-8").split("<script>")[-1]
+    ini = js.index("function esc(")
+    fim = js.index("\n  }\n", ini) + 4
+    (tmp_path / "t.mjs").write_text(js[ini:fim] + """
+const casos = ['<img src=x onerror=alert(1)>', '"><script>x</script>', "a' onmouseover='x", '`${x}`', '&lt;', null, undefined, 45];
+for (const c of casos) {
+  const s = esc(c);
+  if (/[<>"'`]/.test(s) || /&(?!amp;|lt;|gt;|quot;|#39;|#96;)/.test(s)) { console.error('FALHOU', c, s); process.exit(1); }
+}
+if (esc('Corte & Barba') !== 'Corte &amp; Barba' || esc(null) !== '' || esc(45) !== '45') process.exit(2);
+console.log('ok');
+""", encoding="utf-8")
+    r = __import__("subprocess").run([_node(), str(tmp_path / "t.mjs")], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and r.stdout.strip() == "ok", r.stdout + r.stderr
+
+
+def test_so_existe_um_site_para_publicar():
+    """Havia uma cópia ANTIGA do site na raiz (firebase.json + public/ + .firebaserc no MESMO projeto do Firebase): um
+    `firebase deploy` na pasta errada publicaria as páginas velhas, sem a trava de antes de publicar."""
+    assert not (RAIZ / "firebase.json").exists() and not (RAIZ / ".firebaserc").exists()
+    assert not (RAIZ / "public").exists()
+    cfg = (RAIZ / "firebase-hosting" / "firebase.json").read_text(encoding="utf-8")
+    assert "verificar-antes-de-publicar.js" in cfg

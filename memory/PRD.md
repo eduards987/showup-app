@@ -2842,3 +2842,57 @@ Guia: `lancamento/NOTIFICACOES.md`. Módulo novo `backend/notificacoes.py` (text
 - Stripe de TESTE: Prices novos `price_1UW4JvFl9Xrvr2Jycec9DkNQ` (Profissional) e `price_1UW4JwFl9Xrvr2Jyhwi4ozls` (Ultra) nos mesmos produtos; `.env` local atualizado. Falta Render e modo real.
 - Testes: `test_planos_resumo.py` (valores, trava do Price, adicional), `test_agenda_servidor.py` (adicional nos 3 fluxos), `test_plano_gateway.py` (`get_price` com `construct_from`),
   `test_moedas.py` (padrão do app = servidor), `test_calcular_precos.py` (calculadora = servidor).
+
+## Mercado Pago como segunda forma de receber, com Pix (30/10/2026)
+- Profissional escolhe Stripe ou Mercado Pago (`recebimento`), em Configurações > Onde você recebe. Só aparece com `MERCADOPAGO_CLIENT_ID`,
+  `_CLIENT_SECRET`, `_REDIRECT_URI` e `MERCADOPAGO_TOKEN_KEY` válidos (`MERCADOPAGO_ATIVO`). Conexão por OAuth (`/api/me/mercadopago/conectar` ->
+  `/api/mercadopago/callback`, `state` de uso único em `mp_oauth_states`, 15 min). A mesma conta do Mercado Pago não liga em dois profissionais.
+  Conectar já passa a receber pelo Mercado Pago se moeda e serviços estão em BRL; desconectar recusa com reserva aberta.
+- Regras: taxa do ShowUp - `DESCONTO_MERCADOPAGO_BPS` (300) porque a tarifa sai do profissional; reserva de 5 dias (`HOLD_DIAS_MERCADOPAGO`, agenda e
+  mensagem `alem_da_validade_5`); só bandeiras com captura parcial (`MARCAS_CAPTURA_PARCIAL`); Pix com 30 min (mínimo do Mercado Pago) e horário preso
+  +5 min, sincronizado com o Mercado Pago antes de expirar; só BRL (`PUT /me/moeda` recusa outra moeda).
+- Cliente: só pelo link (`/api/public/agendamentos/mercadopago/cartao` com o token do Card Payment Brick, e `/api/public/agendamentos/pix`, que pede e-mail).
+  No app, a tela de reserva manda para `link_agendamento`; os fluxos do Stripe recusam (409) profissional do Mercado Pago.
+- Cada agendamento grava `gateway`; captura (total ou taxa de falta com `application_fee` proporcional e conferência da taxa gravada ->
+  `taxa_a_devolver_centavos`), cancelamento e expiração vão ao gateway certo (`_desfazer_reserva`, `_capturar_mercadopago`).
+- Pagamentos: `/api/webhooks/mercadopago` confere `x-signature` (HMAC, `MERCADOPAGO_WEBHOOK_SECRET`, tolerância de 10 min) e CONSULTA o pagamento
+  (`_sincronizar_pagamento_mp`, confere `external_reference`). A página também consulta pelo `/status`.
+- Tokens cifrados (Fernet, `cofre.py`), renovados antes de cobrar (< 7 dias) e por job a cada 12 h (< 30 dias). Exclusão de conta apaga tudo.
+- Pix pelo Stripe: a página não tem mais `PIX_DISPONIVEL`; vem do servidor (`pix_disponivel`, `PIX_STRIPE_HABILITADO`).
+- Termos (cl. 3 e 4) e Privacidade citam o Mercado Pago (operador; e-mail e CPF do cliente; token cifrado do profissional). Pergunta 12 em REVISAO-JURIDICA.md.
+- Pendências da documentação do Mercado Pago (testar no sandbox, ver MERCADO-PAGO.md): erro 2077 de captura adiada, taxa na captura parcial, avisos.
+- Testes: `test_mercadopago.py` (52), `test_i18n_app.py` (textos novos), node `i18n_app.test.mjs` (`recebimento.ts`, agenda de 5 dias).
+
+
+## Mini tutorial animado, depois do cadastro (30/10/2026)
+- `src/lib/tutorial.ts` (passos de cada papel, pt/en/es) e `src/components/tutorial.tsx` (Modal com Reanimated: passo entra deslizando,
+  exemplos em sequência, ícone pulsando, barra de progresso; respeita "reduzir movimento"). Sempre dá para pular.
+- Quando abre: logo DEPOIS do cadastro. A tela "Como você vai usar o ShowUp?" (`role-select.tsx`) manda para o Início com `?tutorial=1`;
+  ao fechar, o parâmetro sai da rota (não reabre). NÃO é "primeiro acesso" (decisão do dono, 30/10/2026). Rever: Perfil > "Ver o tutorial", para os dois papéis.
+- Profissional (5): serviços, horários, onde receber (Stripe/Mercado Pago), link, confirmar depois do atendimento; termina em Novo serviço.
+- Cliente (5): buscar, cartão, dia e horário, valor só reservado, como desmarcar; termina na Busca.
+- Testes: `test_i18n_app.py` (abre depois do cadastro, papel certo, não reabre, revisto no Perfil) e node `i18n_app.test.mjs` (passos e traduções).
+
+## Revisão de brechas (30/10/2026)
+Testes: `backend/tests/test_brechas.py` (servidor), `test_app_telas.py` (telas), `test_site_publicacao.py` (página de agendamento),
+node `i18n_app.test.mjs` (`estado-consulta.ts`). Cada proteção foi sabotada e o teste falhou.
+- **Página de agendamento:** nome do profissional/serviço e horários entram no HTML só por `esc()` (antes: código no nome do
+  serviço rodava na página onde o cliente paga). O teste recusa qualquer `${...}` em HTML que não seja `T("fixo")` ou `esc(...)`.
+- **Site duplicado removido:** a raiz tinha `firebase.json`, `.firebaserc` e `public/` antigos no MESMO projeto do Firebase.
+  O site é só `firebase-hosting/` (`cd firebase-hosting` antes do `firebase deploy`).
+- **Horário ocupado:** `STATUS_OCUPAM_HORARIO` (inclui `pago_integral` e `aguardando_pix`) é a única lista usada pelos horários
+  livres, pelas duas checagens de conflito (app e link) e pelo índice único `uniq_vaga_ativa`. Antes a reserva DENTRO do app
+  passava por cima de um Pix pago, e a lista mostrava como livre horário de Pix. Atendimento em andamento também ocupa.
+- **Lista de agendamentos:** traz os 200 MAIS RECENTES (antes os 200 mais antigos: os novos sumiam), nomes em 2 consultas
+  para a lista inteira (`_hydrate_varios`). No app: PRÓXIMOS (mais perto primeiro) e ANTERIORES (mais recente primeiro).
+- **Busca:** texto digitado com `re.escape` (antes era padrão: ".*" listava todos, "[" dava erro), até 60 caracteres, só quem
+  tem serviço ativo, em ordem alfabética, sem uma consulta por profissional.
+- **Limite por IP:** `ip_do_cliente` lê o `X-Forwarded-For` DA DIREITA (`PROXIES_NA_FRENTE`, padrão 1). Antes valia o IP do
+  proxy do Render: o limite era de todos os usuários juntos.
+- **App:** sem internet as telas mostram "Não foi possível carregar · Tentar de novo" (`estadoDaConsulta`, `ErroAoCarregar`),
+  nunca "vazio" nem tela em branco. "Compareceu" (cobra tudo), "Cancelar reserva" e "Remover serviço" pedem confirmação, e o
+  erro de cada um aparece. Configurações: horários do servidor entram uma vez (antes cada busca apagava a edição), "Salvar
+  disponibilidade" só depois de carregar (antes podia gravar agenda vazia), e salvar categorias/fuso/moeda/horários avisa se
+  falhou. Reserva: horário pego por outro (409) recarrega a lista. Escolha do papel: erro aparece e o tutorial sempre abre.
+- Lint do app zerado (`npx expo lint`). Pendente, não é falha: lembrete para o CLIENTE (push/e-mail).
+

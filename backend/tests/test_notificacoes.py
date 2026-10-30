@@ -4,6 +4,7 @@ banco real — só ids, sem nome de cliente nem de serviço — que é onde o c�
 import hashlib
 import hmac
 import json
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -32,6 +33,8 @@ def _casa(doc, q):
                     "$in": lambda: v in arg, "$ne": lambda: v != arg,
                     "$gt": lambda: v is not None and v > arg, "$gte": lambda: v is not None and v >= arg,
                     "$lt": lambda: v is not None and v < arg, "$lte": lambda: v is not None and v <= arg,
+                    "$regex": lambda: v is not None and re.search(arg, v, re.I if "i" in cond.get("$options", "") else 0) is not None,
+                    "$options": lambda: True,
                 }[op]()
                 if not ok:
                     return False
@@ -58,6 +61,10 @@ class Cursor:
             return dict(next(self._it))
         except StopIteration:
             raise StopAsyncIteration
+
+    def sort(self, campo, direcao=1):
+        self.docs = sorted(self.docs, key=lambda d: d.get(campo), reverse=direcao == -1)
+        return self
 
     async def to_list(self, n):
         return [dict(d) for d in self.docs[:n]]

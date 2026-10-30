@@ -1,12 +1,11 @@
 // Perfil: user info, save card (cliente), sign out.
 
 import Ionicons from "@react-native-vector-icons/ionicons";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Clipboard from "expo-clipboard";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
-  ActivityIndicator,
   Linking,
   Pressable,
   ScrollView,
@@ -21,6 +20,7 @@ import { ExcluirContaCard } from "@/src/components/excluir-conta";
 import { NotificacoesCard } from "@/src/components/notificacoes-card";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
+import { Tutorial } from "@/src/components/tutorial";
 import { URL_PRIVACIDADE, URL_SITE, URL_TERMOS } from "@/src/lib/legal";
 import { CardInfo } from "@/src/lib/types";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
@@ -170,6 +170,7 @@ export default function Perfil() {
   const auth = useAuth();
   const qc = useQueryClient();
   const [linkCopiado, setLinkCopiado] = useState(false);
+  const [verTutorial, setVerTutorial] = useState(false);
 
   const isCliente = auth.status === "authenticated" && auth.user.role === "cliente";
 
@@ -316,6 +317,20 @@ export default function Perfil() {
             </View>
           </>
         ) : null}
+
+        <Pressable testID="ver-tutorial" onPress={() => setVerTutorial(true)} style={styles.card}>
+          <View style={styles.cardRow}>
+            <Ionicons name="play-circle-outline" size={20} color={colors.brandPrimary} />
+            <Text style={styles.cardLabel}>{t("Ver o tutorial: como usar o ShowUp")}</Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+          </View>
+        </Pressable>
+        <Tutorial
+          papel={isCliente ? "cliente" : "profissional"}
+          visivel={verTutorial}
+          onFechar={() => setVerTutorial(false)}
+          onComecar={(rota) => router.push(rota as never)}
+        />
 
         <Text style={styles.sectionTitle}>{t("IDIOMA")}</Text>
         <View style={{ paddingHorizontal: spacing.xl, marginBottom: spacing.md }}>

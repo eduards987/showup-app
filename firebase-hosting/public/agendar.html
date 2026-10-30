@@ -127,7 +127,7 @@
   label.field { display: block; margin-bottom: 14px; }
   label.field:last-child { margin-bottom: 0; }
   label.field span { display: block; font-size: 13px; color: var(--ink-soft); margin-bottom: 6px; }
-  input[type="text"], input[type="tel"] {
+  input[type="text"], input[type="tel"], input[type="email"] {
     width: 100%; padding: 13px 14px; border-radius: 10px; border: 1px solid var(--line);
     background: var(--bg); color: var(--ink); font-family: inherit; font-size: 16px;
   }
@@ -228,7 +228,7 @@
       <div id="servicosList"></div>
       <div class="trust">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
-        <span>Você informa o cartão só para garantir o horário. O valor fica reservado e <b>só é cobrado depois do atendimento</b>. Pagamento seguro, processado pelo Stripe.</span>
+        <span>Você informa o cartão só para garantir o horário. O valor fica reservado e <b>só é cobrado depois do atendimento</b>. <span id="processadoPor">Pagamento seguro, processado pelo Stripe.</span></span>
       </div>
     </section>
 
@@ -250,6 +250,11 @@
       <label class="field">
         <span>Telefone (com DDD)</span>
         <input type="tel" id="inputTelefone" placeholder="11987654321" inputmode="numeric" />
+      </label>
+      <!-- Só para quem recebe pelo Mercado Pago: o comprovante do cartão e do Pix vai para este e-mail. -->
+      <label class="field hidden" id="campoEmail">
+        <span>E-mail (para receber o comprovante)</span>
+        <input type="email" id="inputEmail" autocomplete="email" inputmode="email" />
       </label>
       <div style="margin-top:16px">
         <button class="btn-primary" id="btnContinuarDados">Continuar</button>
@@ -279,6 +284,8 @@
         </div>
 
         <div id="cartaoForm" style="margin-top:16px">
+          <!-- Mercado Pago: o formulário dele (Card Payment Brick) toma o lugar do campo do Stripe e tem o próprio botão. -->
+          <div id="mpCardBrick" class="hidden"></div>
           <div id="card-element"></div>
           <div id="cartaoErroCampo" class="error-note hidden"></div>
           <button class="btn-primary" id="btnPagarCartao" style="margin-top:14px">Reservar com cartão</button>
@@ -322,13 +329,10 @@
   // Chave PUBLICÁVEL do Stripe (pk_...) — feita pra ficar em página pública,
   // não é segredo. Hoje é a de TESTE; trocar pela pk_live_... junto com a
   // troca das chaves do backend na hora de ir pra produção.
-  // Pix DESLIGADO: no Stripe Brasil o Pix é liberado por convite (conta em boa
-  // situação e 60+ dias processando) e a nossa conta ainda não tem — o Stripe
-  // recusa com "payment method type pix is invalid". Enquanto isso, a página
-  // oferece só cartão. Quando o Stripe liberar o Pix (Dashboard > Settings >
-  // Payment methods), é só trocar pra true e republicar. Todo o fluxo de Pix
-  // (QR code, copia e cola, confirmação) continua aqui, pronto.
-  const PIX_DISPONIVEL = false;
+  // Pix: quem decide é o SERVIDOR (campo pix_disponivel do profissional). Ligado sempre para quem recebe pelo
+  // Mercado Pago; pelo Stripe só com PIX_STRIPE_HABILITADO=1 no Render (no Stripe Brasil o Pix é por convite).
+  // Mercado Pago: o cartão é digitado no formulário do próprio Mercado Pago, carregado só para esses profissionais.
+  const MERCADOPAGO_SDK = "https://sdk.mercadopago.com/js/v2";
   const STRIPE_PUBLISHABLE_KEY = "pk_test_51UGMv4Fl9Xrvr2JyV4mtBMqZ62J4Cu9vAtxl3R7SWrRnHhNXIQWUO4HE7QdZSIl9ziXInXMuMRX3YxSSNoKBDnFb00NYihUD6f";
 
   // ---- Idioma (pt / en / es): vem do navegador; o visitante pode trocar na 1ª etapa e a escolha fica guardada neste aparelho ----
@@ -336,13 +340,18 @@
   // todo texto da página (do HTML e das chamadas a T() do JavaScript) existe em inglês e em espanhol.
   const DICIONARIO = {
     en: {
+      "Pagamento seguro, processado pelo Stripe.": "Secure payment, processed by Stripe.",
+      "Pagamento seguro, processado pelo Mercado Pago.": "Secure payment, processed by Mercado Pago.",
+      "E-mail (para receber o comprovante)": "Email (to receive the receipt)",
+      "Digite um e-mail válido para receber o comprovante.": "Enter a valid email to receive the receipt.",
+      "Não foi possível carregar o formulário do Mercado Pago. Recarregue a página e tente de novo.": "Couldn't load the Mercado Pago form. Reload the page and try again.",
+      "Você tem 30 minutos para pagar este Pix.": "You have 30 minutes to pay this Pix.",
       "Carregando...": "Loading...",
       "Escolha o serviço, o horário, e finalize o pagamento — sem precisar instalar nada.": "Choose the service and time, and complete the payment — no app to install.",
       "Este profissional ainda não está recebendo agendamentos pelo ShowUp. Tente de novo mais tarde.": "This professional is not accepting bookings through ShowUp yet. Please try again later.",
       "1 · Escolha o serviço": "1 · Choose the service",
       "Você informa o cartão só para garantir o horário. O valor fica reservado e": "You enter your card only to secure the time slot. The amount is held and",
       "só é cobrado depois do atendimento": "is only charged after the appointment",
-      ". Pagamento seguro, processado pelo Stripe.": ". Secure payment, processed by Stripe.",
       "‹ Trocar serviço": "‹ Change service",
       "2 · Escolha a data e o horário": "2 · Choose the date and time",
       "‹ Trocar horário": "‹ Change time",
@@ -402,13 +411,18 @@
       "{{servico}} com {{prof}} — {{quando}}.": "{{servico}} with {{prof}} — {{quando}}.",
     },
     es: {
+      "Pagamento seguro, processado pelo Stripe.": "Pago seguro, procesado por Stripe.",
+      "Pagamento seguro, processado pelo Mercado Pago.": "Pago seguro, procesado por Mercado Pago.",
+      "E-mail (para receber o comprovante)": "Correo (para recibir el comprobante)",
+      "Digite um e-mail válido para receber o comprovante.": "Ingresa un correo válido para recibir el comprobante.",
+      "Não foi possível carregar o formulário do Mercado Pago. Recarregue a página e tente de novo.": "No fue posible cargar el formulario de Mercado Pago. Recarga la página e inténtalo de nuevo.",
+      "Você tem 30 minutos para pagar este Pix.": "Tienes 30 minutos para pagar este Pix.",
       "Carregando...": "Cargando...",
       "Escolha o serviço, o horário, e finalize o pagamento — sem precisar instalar nada.": "Elige el servicio y el horario, y finaliza el pago, sin instalar nada.",
       "Este profissional ainda não está recebendo agendamentos pelo ShowUp. Tente de novo mais tarde.": "Este profesional aún no recibe reservas por ShowUp. Inténtalo de nuevo más tarde.",
       "1 · Escolha o serviço": "1 · Elige el servicio",
       "Você informa o cartão só para garantir o horário. O valor fica reservado e": "Ingresas la tarjeta solo para asegurar el horario. El valor queda reservado y",
       "só é cobrado depois do atendimento": "solo se cobra después de la atención",
-      ". Pagamento seguro, processado pelo Stripe.": ". Pago seguro, procesado por Stripe.",
       "‹ Trocar serviço": "‹ Cambiar servicio",
       "2 · Escolha a data e o horário": "2 · Elige la fecha y el horario",
       "‹ Trocar horário": "‹ Cambiar horario",
@@ -508,6 +522,12 @@
       });
     });
   }
+  // Tudo que vem do servidor (nome do profissional, do serviço, horários...) entra no HTML SÓ por esc(): o nome é
+  // escrito pelo profissional e poderia trazer código (ex.: <img onerror=...>) para a página onde o cliente paga.
+  // O teste test_site_publicacao.py recusa qualquer valor em HTML que não seja tradução de texto fixo ou esc(...).
+  function esc(valor) {
+    return String(valor ?? "").replace(/[&<>"'`]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;", "`": "&#96;" })[c]);
+  }
   function formatMoney(centavos, moeda) {
     const v = centavos / 100;
     try { return new Intl.NumberFormat(LOCALE, { style: "currency", currency: moeda }).format(v); }
@@ -532,7 +552,10 @@
     agendamentoId: null,
     pollTimer: null,
     metodo: "cartao",
+    email: "",
   };
+  const pelaMP = () => !!state.profissional && state.profissional.recebimento === "mercadopago";
+  let mpBrick = null;
 
   let stripe = null;
   let cardElement = null;
@@ -580,6 +603,17 @@
         document.getElementById("stepIndisponivel").classList.remove("hidden");
         return;
       }
+      if (pelaMP()) {
+        document.getElementById("processadoPor").textContent = T("Pagamento seguro, processado pelo Mercado Pago.");
+        document.getElementById("campoEmail").classList.remove("hidden");
+      }
+      if (!data.pix_disponivel) {
+        // Só cartão: sem seletor, sem o botão de Pix — o cliente vai direto pro formulário.
+        document.querySelector('#metodoLista [data-metodo="pix"]').remove();
+        document.getElementById("metodoLista").classList.add("hidden");
+        document.getElementById("metodoLabel").classList.add("hidden");
+        document.getElementById("pixForm").remove();
+      }
       showStep(1);
     } catch (e) {
       document.getElementById("loadingProf").classList.add("hidden");
@@ -595,10 +629,10 @@
       btn.className = "option";
       btn.innerHTML = `
         <span>
-          <span class="opt-title">${s.nome}</span>
-          <span class="opt-sub">${s.duracao_min} min</span>
+          <span class="opt-title">${esc(s.nome)}</span>
+          <span class="opt-sub">${esc(s.duracao_min)} min</span>
         </span>
-        <span class="opt-price">${formatMoney(s.valor_centavos, s.moeda)}</span>
+        <span class="opt-price">${esc(formatMoney(s.valor_centavos, s.moeda))}</span>
       `;
       btn.addEventListener("click", () => selecionarServico(s, btn));
       list.appendChild(btn);
@@ -612,7 +646,7 @@
     showStep(2);
     document.getElementById("slotsList").innerHTML = T("Carregando horários…");
     try {
-      const res = await fetch(`${BACKEND_URL}/profissionais/${profissionalId}/slots?servico_id=${servico.servico_id}`, { headers: CAB });
+      const res = await fetch(`${BACKEND_URL}/profissionais/${encodeURIComponent(profissionalId)}/slots?servico_id=${encodeURIComponent(servico.servico_id)}`, { headers: CAB });
       const slots = await res.json();
       renderSlots(slots);
     } catch (e) {
@@ -669,7 +703,7 @@
         <span>${T("Data")}</span>
         <select id="selectData" class="slot-select">
           <option value="">${T("Selecione a data")}</option>
-          ${datas.map((ymd) => `<option value="${ymd}">${rotuloData(ymd)}</option>`).join("")}
+          ${datas.map((ymd) => `<option value="${esc(ymd)}">${esc(rotuloData(ymd))}</option>`).join("")}
         </select>
       </label>
       <label class="field" for="selectHora">
@@ -699,7 +733,7 @@
       }
       selHora.innerHTML =
         `<option value="">${T("Selecione o horário")}</option>` +
-        porDia.get(ymd).map((slot) => `<option value="${slot.iso}">${slot.time_label}</option>`).join("");
+        porDia.get(ymd).map((slot) => `<option value="${esc(slot.iso)}">${esc(slot.time_label)}</option>`).join("");
       selHora.disabled = false;
     });
 
@@ -727,8 +761,11 @@
     const telefone = document.getElementById("inputTelefone").value.trim();
     if (nome.length < 2) { alert(T("Digita seu nome completo.")); return; }
     if (telefone.replace(/\D/g, "").length < 10) { alert(T("Telefone inválido — inclui o DDD.")); return; }
+    const email = document.getElementById("inputEmail").value.trim();
+    if (pelaMP() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { alert(T("Digite um e-mail válido para receber o comprovante.")); return; }
     state.nome = nome;
     state.telefone = telefone;
+    state.email = email;
     showStep(4);
     escolherMetodo(state.metodo);
   });
@@ -737,13 +774,13 @@
     const s = state.servico;
     const ehCartao = state.metodo === "cartao";
     const notaNoShow = ehCartao
-      ? `<div class="summary-row note"><span>${T("Taxa se faltar sem avisar")}</span><span>${formatMoney(s.taxa_no_show_centavos, s.moeda)}</span></div>`
+      ? `<div class="summary-row note"><span>${T("Taxa se faltar sem avisar")}</span><span>${esc(formatMoney(s.taxa_no_show_centavos, s.moeda))}</span></div>`
       : "";
     document.getElementById("resumo").innerHTML = `
-      <div class="summary-row"><span>${T("Profissional")}</span><span>${state.profissional.name}</span></div>
-      <div class="summary-row"><span>${T("Serviço")}</span><span>${s.nome}</span></div>
-      <div class="summary-row"><span>${T("Horário")}</span><span>${state.slotLabel}</span></div>
-      <div class="summary-row total"><span>${ehCartao ? T("Valor do serviço") : T("Total (Pix)")}</span><span>${formatMoney(s.valor_centavos, s.moeda)}</span></div>
+      <div class="summary-row"><span>${T("Profissional")}</span><span>${esc(state.profissional.name)}</span></div>
+      <div class="summary-row"><span>${T("Serviço")}</span><span>${esc(s.nome)}</span></div>
+      <div class="summary-row"><span>${T("Horário")}</span><span>${esc(state.slotLabel)}</span></div>
+      <div class="summary-row total"><span>${ehCartao ? T("Valor do serviço") : T("Total (Pix)")}</span><span>${esc(formatMoney(s.valor_centavos, s.moeda))}</span></div>
       ${notaNoShow}
     `;
   }
@@ -767,11 +804,77 @@
   }
 
   function montarCartao() {
+    if (pelaMP()) { montarCartaoMP(); return; }
     initStripe();
     if (cardElement && !cardMounted) {
       cardElement.mount("#card-element");
       cardMounted = true;
     }
+  }
+
+  // ---- Cartão pelo Mercado Pago: o formulário dele tokeniza o cartão com a chave PÚBLICA do profissional ----
+  function carregarSdkMP() {
+    if (window.MercadoPago) return Promise.resolve();
+    return new Promise((ok, erro) => {
+      const tag = document.createElement("script");
+      tag.src = MERCADOPAGO_SDK;
+      tag.onload = ok;
+      tag.onerror = erro;
+      document.head.appendChild(tag);
+    });
+  }
+
+  async function montarCartaoMP() {
+    document.getElementById("card-element").classList.add("hidden");
+    document.getElementById("btnPagarCartao").classList.add("hidden");
+    document.getElementById("mpCardBrick").classList.remove("hidden");
+    if (mpBrick) return;
+    try {
+      await carregarSdkMP();
+      const mp = new window.MercadoPago(state.profissional.mp_public_key, { locale: { pt: "pt-BR", en: "en-US", es: "es-AR" }[IDIOMA] });
+      mpBrick = await mp.bricks().create("cardPayment", "mpCardBrick", {
+        initialization: { amount: state.servico.valor_centavos / 100, payer: { email: state.email } },
+        customization: { paymentMethods: { maxInstallments: 1 } },
+        callbacks: {
+          onReady: () => {},
+          onSubmit: (formData) => reservarComCartaoMP(formData),
+          onError: () => mostrarErroPagamento(T("Não foi possível carregar o formulário do Mercado Pago. Recarregue a página e tente de novo.")),
+        },
+      });
+    } catch (e) {
+      mostrarErroPagamento(T("Não foi possível carregar o formulário do Mercado Pago. Recarregue a página e tente de novo."));
+    }
+  }
+
+  async function reservarComCartaoMP(formData) {
+    document.getElementById("pagamentoErro").classList.add("hidden");
+    const payer = (formData && formData.payer) || {};
+    const ident = payer.identification || {};
+    const res = await fetch(`${BACKEND_URL}/public/agendamentos/mercadopago/cartao`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...CAB },
+      body: JSON.stringify({
+        profissional_id: profissionalId,
+        servico_id: state.servico.servico_id,
+        horario_inicio: state.slotIso,
+        nome: state.nome,
+        telefone: state.telefone,
+        email: payer.email || state.email,
+        token: formData.token,
+        payment_method_id: formData.payment_method_id,
+        issuer_id: formData.issuer_id ? String(formData.issuer_id) : null,
+        identificacao_tipo: ident.type || null,
+        identificacao_numero: ident.number || null,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      mostrarErroPagamento(mensagemDoErro(data, T("Não foi possível concluir o agendamento.")));
+      throw new Error("reserva recusada");            // o formulário do Mercado Pago volta ao normal para tentar de novo
+    }
+    state.agendamentoId = data.agendamento_id;
+    if (mpBrick) { try { mpBrick.unmount(); } catch (e) { /* já desmontado */ } }
+    mostrarSucesso(T("O valor ficou reservado no seu cartão e só será cobrado depois do atendimento."));
   }
 
   function escolherMetodo(metodo) {
@@ -876,10 +979,12 @@
           horario_inicio: state.slotIso,
           nome: state.nome,
           telefone: state.telefone,
+          email: state.email || null,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(mensagemDoErro(data, T("Não foi possível gerar a cobrança.")));
+      if (pelaMP()) document.querySelector("#pixBox .waiting-note").insertAdjacentText("beforebegin", T("Você tem 30 minutos para pagar este Pix."));
       state.agendamentoId = data.agendamento_id;
       document.getElementById("pagamentoInicial").classList.add("hidden");
       document.getElementById("pixBox").classList.remove("hidden");
@@ -912,7 +1017,7 @@
   function iniciarPolling() {
     state.pollTimer = setInterval(async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/public/agendamentos/${state.agendamentoId}/status`, { headers: CAB });
+        const res = await fetch(`${BACKEND_URL}/public/agendamentos/${encodeURIComponent(state.agendamentoId)}/status`, { headers: CAB });
         const data = await res.json();
         if (data.hold_status === "pago_integral") {
           clearInterval(state.pollTimer);
@@ -940,14 +1045,6 @@
   document.querySelectorAll("[data-back]").forEach((btn) => {
     btn.addEventListener("click", () => showStep(Number(btn.dataset.back)));
   });
-
-  if (!PIX_DISPONIVEL) {
-    // Só cartão: sem seletor, sem o botão de Pix — o cliente vai direto pro formulário.
-    document.querySelector('#metodoLista [data-metodo="pix"]').remove();
-    document.getElementById("metodoLista").classList.add("hidden");
-    document.getElementById("metodoLabel").classList.add("hidden");
-    document.getElementById("pixForm").remove();
-  }
 
   carregarProfissional();
   // idioma: seletor (recarrega a página, por isso só aparece antes de começar a reserva) e tradução do que já está na tela

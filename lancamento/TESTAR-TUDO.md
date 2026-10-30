@@ -239,7 +239,7 @@ python lancamento\verificar-producao.py --backend https://showup-backend-s9y1.on
 ```
 
 Tudo `[OK]` (os `[ATENÇÃO]` sobre Microsoft/e-mail desligados são normais se você não configurou). O site: extraia o
-`showup-agendar-agora.zip` em `firebase-hosting` e rode `firebase deploy --only hosting --project showup-509120`.
+`showup-agendar-agora.zip` em `firebase-hosting` e rode `cd firebase-hosting` e `firebase deploy --only hosting --project showup-509120`.
 
 ## 5. O app no celular ou emulador
 

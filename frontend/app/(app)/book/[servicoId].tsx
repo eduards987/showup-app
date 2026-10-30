@@ -6,6 +6,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Linking,
   Pressable,
   ScrollView,
   Text,
@@ -13,11 +14,13 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { Carregando, ErroAoCarregar } from "@/src/components/estado-consulta";
+import { estadoDaConsulta } from "@/src/lib/estado-consulta";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { formatMoney } from "@/src/lib/format";
 import { rotuloDoFuso } from "@/src/lib/fusos";
-import { Agendamento, Servico } from "@/src/lib/types";
+import { Agendamento, ProfissionalDetail, Servico } from "@/src/lib/types";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 import { t } from "@/src/i18n/core";
 import { useIdioma } from "@/src/i18n";
@@ -128,16 +131,24 @@ export default function Book() {
   const svcQ = useQuery({
     queryKey: ["servico-detail", servicoId],
     queryFn: async () => {
-      const caches = qc.getQueriesData<{ servicos: Servico[]; user_id: string; timezone?: string }>({ queryKey: ["profissional"] });
+      // recebimento/link_agendamento: quem recebe pelo Mercado Pago é agendado pelo link (o cartão salvo no app é do Stripe).
+      const montar = (d: ProfissionalDetail, s: Servico) => ({
+        servico: s,
+        profissional_id: d.user_id,
+        timezone: d.timezone ?? "America/Sao_Paulo",
+        recebimento: d.recebimento ?? "stripe",
+        link_agendamento: d.link_agendamento ?? null,
+      });
+      const caches = qc.getQueriesData<ProfissionalDetail>({ queryKey: ["profissional"] });
       for (const [, data] of caches) {
         const found = data?.servicos.find((s) => s.servico_id === servicoId);
-        if (found) return { servico: found, profissional_id: data!.user_id, timezone: data!.timezone ?? "America/Sao_Paulo" };
+        if (found) return montar(data!, found);
       }
       const profs = await api<{ user_id: string }[]>("/api/profissionais");
       for (const p of profs) {
-        const detail = await api<{ servicos: Servico[]; user_id: string; timezone?: string }>(`/api/profissionais/${p.user_id}`);
+        const detail = await api<ProfissionalDetail>(`/api/profissionais/${p.user_id}`);
         const s = detail.servicos.find((s) => s.servico_id === servicoId);
-        if (s) return { servico: s, profissional_id: detail.user_id, timezone: detail.timezone ?? "America/Sao_Paulo" };
+        if (s) return montar(detail, s);
       }
       throw new Error(t("Serviço não encontrado"));
     },
@@ -176,19 +187,50 @@ export default function Book() {
       qc.invalidateQueries({ queryKey: ["agendamentos"] });
       router.replace(`/(app)/agendamento/${ag.agendamento_id}`);
     },
-    onError: (e: any) => setErr(e.message || t("Falha ao reservar")),
+    onError: (e: any) => {
+      setErr(e.message || t("Falha ao reservar"));
+      // Alguém pegou o horário antes (ou ele saiu da agenda): a lista volta a ser buscada e o escolhido é desmarcado.
+      setSelectedIso(null);
+      slotsQ.refetch();
+    },
   });
 
-  if (svcQ.isLoading) {
+  if (!svcQ.data) {
     return (
       <View style={[styles.root, { paddingTop: insets.top }]}>
-        <ActivityIndicator style={{ marginTop: spacing.xxl }} color={colors.brandPrimary} />
+        {svcQ.isError ? <ErroAoCarregar onTentar={() => svcQ.refetch()} testID="reserva-erro" /> : <Carregando />}
       </View>
     );
   }
-  if (!svcQ.data) return null;
   const s = svcQ.data.servico;
   const hasCard = auth.status === "authenticated" && auth.user.has_card;
+  const linkWeb = svcQ.data.recebimento === "mercadopago" ? svcQ.data.link_agendamento : null;
+
+  if (linkWeb) {
+    return (
+      <View style={[styles.root, { paddingTop: insets.top }]}>
+        <View style={styles.headerRow}>
+          <Pressable onPress={() => router.back()} style={styles.backBtn}>
+            <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
+          </Pressable>
+        </View>
+        <Text style={styles.title}>{t("Confirmar reserva")}</Text>
+        <Text style={styles.subtitle}>{s.nome}</Text>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>{t("Este profissional recebe pelo Mercado Pago")}</Text>
+          <Text style={styles.cardMeta}>
+            {t("A reserva é feita na página de agendamento dele, no navegador, com cartão ou Pix. Leva menos de um minuto.")}
+          </Text>
+        </View>
+        <View style={[styles.ctaWrap, { paddingBottom: insets.bottom + spacing.md, marginTop: "auto" }]}>
+          <Pressable testID="agendar-pelo-link" onPress={() => Linking.openURL(linkWeb)} style={styles.cta}>
+            <Ionicons name="open-outline" size={18} color={colors.onBrandPrimary} />
+            <Text style={styles.ctaText}>{t("Abrir página de agendamento")}</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -217,8 +259,10 @@ export default function Book() {
           <Text style={[styles.cardMeta, { paddingHorizontal: spacing.xl, marginBottom: spacing.sm }]}>{t("Horários no fuso de")}{" "}{rotuloDoFuso(svcQ.data.timezone)}
           </Text>
         ) : null}
-        {slotsQ.isLoading ? (
-          <ActivityIndicator color={colors.brandPrimary} />
+        {estadoDaConsulta(slotsQ) === "carregando" ? (
+          <Carregando />
+        ) : estadoDaConsulta(slotsQ) === "erro" ? (
+          <ErroAoCarregar onTentar={() => slotsQ.refetch()} testID="horarios-erro" />
         ) : days.length === 0 ? (
           <View style={styles.emptySlots}>
             <Text style={styles.emptySlotsText}>{t("Este profissional ainda não tem disponibilidade cadastrada.")}</Text>

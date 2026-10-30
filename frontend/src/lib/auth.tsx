@@ -44,6 +44,7 @@ export type User = {
   timezone?: string;
   moeda?: string;
   plano?: string;
+  recebimento?: "stripe" | "mercadopago";
   created_at: string;
 };
 

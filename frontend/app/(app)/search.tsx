@@ -5,16 +5,16 @@ import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
-  ActivityIndicator,
   FlatList,
   Pressable,
-  ScrollView,
   Text,
   TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { Carregando, ErroAoCarregar } from "@/src/components/estado-consulta";
+import { estadoDaConsulta } from "@/src/lib/estado-consulta";
 import { api } from "@/src/lib/api";
 import { nomeDaCategoria, nomeDoGrupo } from "@/src/lib/categorias";
 import { DropdownGrupos } from "@/src/components/dropdown";
@@ -156,8 +156,10 @@ export default function Search() {
         />
       </View>
 
-      {listQ.isLoading ? (
-        <ActivityIndicator style={{ marginTop: spacing.xl }} color={colors.brandPrimary} />
+      {estadoDaConsulta(listQ) === "carregando" ? (
+        <Carregando />
+      ) : estadoDaConsulta(listQ) === "erro" ? (
+        <ErroAoCarregar onTentar={() => listQ.refetch()} />
       ) : (listQ.data?.length ?? 0) === 0 ? (
         <View style={styles.empty} testID="search-empty">
           <Ionicons name="people-outline" size={28} color={colors.muted} />

@@ -6,6 +6,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -14,7 +15,8 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api } from "@/src/lib/api";
+import { Carregando, ErroAoCarregar } from "@/src/components/estado-consulta";
+import { api, ApiError } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import {
   infoHold,
@@ -144,6 +146,13 @@ export default function AgendamentoDetalhe() {
     enabled: !!id,
   });
 
+  // Falhou (sem internet, cartão recusado, já confirmado em outro aparelho...): diz o motivo e recarrega o agendamento,
+  // que pode ter mudado. Antes o botão só parava de girar, sem explicar nada.
+  const avisarErro = (titulo: string) => (err: unknown) => {
+    qc.invalidateQueries({ queryKey: ["agendamento", id] });
+    Alert.alert(titulo, err instanceof ApiError ? err.message : t("Sem conexão com o servidor. Confira a internet e tente de novo."));
+  };
+
   const confirmM = useMutation({
     mutationFn: (resultado: "compareceu" | "nao_compareceu") =>
       api<Agendamento>(`/api/agendamentos/${id}/confirmar`, {
@@ -155,6 +164,10 @@ export default function AgendamentoDetalhe() {
       qc.invalidateQueries({ queryKey: ["agendamentos"] });
       setConfirmNoShow(false);
     },
+    onError: (err: unknown) => {
+      setConfirmNoShow(false);
+      avisarErro(t("Não foi possível confirmar"))(err);
+    },
   });
 
   const cancelM = useMutation({
@@ -163,16 +176,32 @@ export default function AgendamentoDetalhe() {
       qc.invalidateQueries({ queryKey: ["agendamento", id] });
       qc.invalidateQueries({ queryKey: ["agendamentos"] });
     },
+    onError: avisarErro(t("Não foi possível cancelar")),
   });
 
-  if (q.isLoading || !q.data) {
+  if (!q.data) {
     return (
       <View style={[styles.root, { paddingTop: insets.top }]}>
-        <ActivityIndicator style={{ marginTop: spacing.xxl }} color={colors.brandPrimary} />
+        {q.isError ? <ErroAoCarregar onTentar={() => q.refetch()} testID="agendamento-erro" /> : <Carregando />}
       </View>
     );
   }
   const a = q.data;
+  // Cobrar e cancelar não têm volta: as duas pedem confirmação (a falta já pedia, no quadro de baixo).
+  const confirmarComparecimento = () =>
+    Alert.alert(
+      t("O cliente compareceu?"),
+      t("Isso cobra {{valor}} do cartão do cliente. Ação irreversível.", { valor: formatMoney(a.valor_total_centavos, a.moeda) }),
+      [
+        { text: t("Voltar"), style: "cancel" },
+        { text: t("Confirmar e cobrar"), onPress: () => confirmM.mutate("compareceu") },
+      ],
+    );
+  const confirmarCancelamento = () =>
+    Alert.alert(t("Cancelar esta reserva?"), t("A reserva no cartão é liberada e o horário fica livre para outra pessoa."), [
+      { text: t("Voltar"), style: "cancel" },
+      { text: t("Cancelar reserva"), style: "destructive", onPress: () => cancelM.mutate() },
+    ]);
   const isProf = auth.status === "authenticated" && auth.user.role === "profissional";
   const isCli = auth.status === "authenticated" && auth.user.role === "cliente";
   const holdMeta = infoHold(a.hold_status);
@@ -239,7 +268,7 @@ export default function AgendamentoDetalhe() {
             <>
               <Pressable
                 testID="confirm-attended"
-                onPress={() => confirmM.mutate("compareceu")}
+                onPress={confirmarComparecimento}
                 disabled={confirmM.isPending}
                 style={styles.primary}
               >
@@ -268,7 +297,7 @@ export default function AgendamentoDetalhe() {
           {canCancel && !canConfirm ? (
             <Pressable
               testID="cancel-hold"
-              onPress={() => cancelM.mutate()}
+              onPress={confirmarCancelamento}
               disabled={cancelM.isPending}
               style={styles.ghost}
             >

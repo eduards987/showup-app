@@ -2,9 +2,9 @@
 
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useQuery } from "@tanstack/react-query";
-import { Redirect, useRouter } from "expo-router";
+import { useState } from "react";
+import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import {
-  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -13,6 +13,11 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { Tutorial } from "@/src/components/tutorial";
+import { PARAM_TUTORIAL } from "@/src/lib/tutorial";
+import { Carregando, ErroAoCarregar } from "@/src/components/estado-consulta";
+import { estadoDaConsulta } from "@/src/lib/estado-consulta";
+import { useAgora } from "@/src/lib/use-agora";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { formatMoney, formatDateTime, rotuloConfirmacao } from "@/src/lib/format";
@@ -143,6 +148,17 @@ export default function Home() {
     enabled: auth.status === "authenticated" && auth.user.role === "profissional",
     refetchInterval: 60_000,
   });
+  // Mini tutorial: abre logo depois do cadastro (a tela de escolha do papel manda ?tutorial=1). Ao fechar, o parâmetro sai
+  // da rota para não abrir de novo ao voltar para o Início.
+  const params = useLocalSearchParams<{ [PARAM_TUTORIAL]?: string }>();
+  // Aberto enquanto o parâmetro estiver na rota: fechar tira o parâmetro (não reabre ao voltar para o Início).
+  const [fechouAgora, setFechouAgora] = useState(false);
+  const tutorialAberto = params[PARAM_TUTORIAL] === "1" && !fechouAgora;
+  const fecharTutorial = () => {
+    setFechouAgora(true);
+    router.setParams({ [PARAM_TUTORIAL]: undefined });
+  };
+  const agora = useAgora();
 
   if (auth.status !== "authenticated") return <Redirect href="/" />;
   if (!auth.user.role) return <Redirect href="/role-select" />;
@@ -152,19 +168,25 @@ export default function Home() {
 
   const list = agendamentosQ.data ?? [];
   const upcoming = list
-    .filter((a) => new Date(a.horario_inicio).getTime() > Date.now() - 60 * 60 * 1000)
+    .filter((a) => new Date(a.horario_inicio).getTime() > agora - 60 * 60 * 1000)
     .slice(0, 5);
   const needsAction = !isCliente
     ? list.filter(
         (a) =>
           a.status_confirmacao === "pendente" &&
           a.hold_status === "autorizado" &&
-          new Date(a.horario_fim).getTime() <= Date.now(),
+          new Date(a.horario_fim).getTime() <= agora,
       )
     : [];
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
+      <Tutorial
+        papel={isCliente ? "cliente" : "profissional"}
+        visivel={tutorialAberto}
+        onFechar={fecharTutorial}
+        onComecar={(rota) => router.push(rota as never)}
+      />
       <ScrollView
         testID="home-scroll"
         contentContainerStyle={{ paddingBottom: spacing.xxl }}
@@ -254,8 +276,10 @@ export default function Home() {
           </View>
         </View>
 
-        {agendamentosQ.isLoading ? (
-          <ActivityIndicator style={{ marginTop: spacing.md }} color={colors.brandPrimary} />
+        {estadoDaConsulta(agendamentosQ) === "carregando" ? (
+          <Carregando />
+        ) : estadoDaConsulta(agendamentosQ) === "erro" ? (
+          <ErroAoCarregar onTentar={() => agendamentosQ.refetch()} testID="home-erro" />
         ) : upcoming.length === 0 ? (
           <View style={styles.empty} testID="home-empty">
             <Ionicons name="calendar-clear-outline" size={28} color={colors.muted} />

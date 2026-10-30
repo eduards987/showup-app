@@ -4,7 +4,6 @@ import Ionicons from "@react-native-vector-icons/ionicons";
 import { useQuery } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
-  ActivityIndicator,
   Pressable,
   ScrollView,
   Text,
@@ -12,6 +11,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { Carregando, ErroAoCarregar } from "@/src/components/estado-consulta";
 import { api } from "@/src/lib/api";
 import { formatMoney } from "@/src/lib/format";
 import { ProfissionalDetail } from "@/src/lib/types";
@@ -96,14 +96,14 @@ export default function ProfissionalDetalhe() {
     enabled: !!id,
   });
 
-  if (q.isLoading) {
+  if (!q.data) {
+    // Antes: sem internet a tela ficava em BRANCO (return null), sem jeito de voltar a tentar.
     return (
       <View style={[styles.root, { paddingTop: insets.top }]}>
-        <ActivityIndicator style={{ marginTop: spacing.xxl }} color={colors.brandPrimary} />
+        {q.isError ? <ErroAoCarregar onTentar={() => q.refetch()} testID="profissional-erro" /> : <Carregando />}
       </View>
     );
   }
-  if (!q.data) return null;
 
   const initials = q.data.name.split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
 

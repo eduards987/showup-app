@@ -47,11 +47,10 @@ from google.oauth2 import id_token as google_id_token
 import httpx
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, OperationFailure
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from slowapi.util import get_remote_address
 from starlette.middleware.cors import CORSMiddleware
 
 ROOT_DIR = Path(__file__).parent
@@ -65,10 +64,12 @@ from payment_errors import CardDeclinedError, GatewayUnavailableError, InvalidPa
 from webhooks import router as webhooks_router
 from expo_push import buscar_recibo, is_device_not_registered, push_para_usuario, send_push
 from i18n_servidor import idioma_da_requisicao, traduzir
-from agenda import MENSAGENS as MENSAGENS_AGENDA, inicios_possiveis, janela_de_confirmacao, montar_janela
+from agenda import HOLD_DIAS_MERCADOPAGO, HOLD_MAX_DIAS, MENSAGENS as MENSAGENS_AGENDA, inicios_possiveis, janela_de_confirmacao, montar_janela
 from notificacoes import avisar_novo_agendamento, avisar_proximo_atendimento, dados_do_agendamento, explicar_erro_push
 from emailer import email_configurado, enviar_email
 from senhas import hash_falso, hash_senha, validar_senha, verificar_senha
+import cofre
+from mercadopago_gateway import MARCAS_CAPTURA_PARCIAL, PIX_MINUTOS as PIX_MINUTOS_MERCADOPAGO, MercadoPagoGateway, assinatura_valida, taxa_centavos
 
 mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
@@ -90,7 +91,28 @@ api_router = APIRouter(prefix="/api")
 # testes acabam recebendo 429 em vez do status que estão verificando. Em
 # produção essa env var nunca deve existir, então o default é proteção ativa.
 _TESTING = os.environ.get("TESTING", "").lower() in ("1", "true", "yes")
-limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"], enabled=not _TESTING)
+# IP de quem fez o pedido. No Render o servidor fica atrás de um proxy: sem isto, request.client é o IP do PROXY e o
+# limite ("5 por minuto") vale para TODOS os usuários juntos. O X-Forwarded-For é lido DA DIREITA: os itens da
+# esquerda podem ter sido escritos pelo próprio usuário (falsos); o último é o que o proxy de confiança anotou.
+# PROXIES_NA_FRENTE = quantos proxies de confiança há na frente (1 no Render; 0 = sem proxy, usa o IP da conexão).
+PROXIES_NA_FRENTE = max(0, int(os.environ.get("PROXIES_NA_FRENTE", "1") or 0))
+_ip_registrado = False
+
+
+def ip_do_cliente(request: Request) -> str:
+    global _ip_registrado
+    cadeia = [p.strip() for p in (request.headers.get("x-forwarded-for") or "").split(",") if p.strip()]
+    direto = request.client.host if request.client else "desconhecido"
+    if not _ip_registrado and cadeia:
+        _ip_registrado = True       # uma vez por processo: para conferir PROXIES_NA_FRENTE no log do Render
+        logging.info("limite por IP: conexão de %s, X-Forwarded-For com %d IP(s); PROXIES_NA_FRENTE=%d",
+                     direto, len(cadeia), PROXIES_NA_FRENTE)
+    if PROXIES_NA_FRENTE and len(cadeia) >= PROXIES_NA_FRENTE:
+        return cadeia[-PROXIES_NA_FRENTE]
+    return direto
+
+
+limiter = Limiter(key_func=ip_do_cliente, default_limits=["200/minute"], enabled=not _TESTING)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -361,15 +383,59 @@ except ValueError:
 # Segundos que o teste de notificação espera pelo recibo da Expo (é ele que revela erro de credencial do Firebase).
 RECIBO_ESPERA_SEG = 4
 PIX_RESERVA_MINUTOS = 20  # tempo que um agendamento via Pix fica reservado esperando pagamento antes de liberar o horário sozinho
+# Pix pelo Stripe: só por convite no Brasil (hoje a conta não tem). Com "1" a página de agendamento oferece Pix para quem recebe
+# pelo Stripe. Quem recebe pelo Mercado Pago tem Pix sempre (o Mercado Pago não exige convite).
+PIX_STRIPE_HABILITADO = os.environ.get("PIX_STRIPE_HABILITADO", "0") == "1"
+
+# ---- Mercado Pago: segunda forma de o profissional receber (só Brasil, só reais). Guia: lancamento/MERCADO-PAGO.md
+# Sem as 4 variáveis (e a MERCADOPAGO_TOKEN_KEY do cofre.py) a opção nem aparece no app: tudo continua só com o Stripe.
+MERCADOPAGO_CLIENT_ID = os.environ.get("MERCADOPAGO_CLIENT_ID", "").strip()
+MERCADOPAGO_CLIENT_SECRET = os.environ.get("MERCADOPAGO_CLIENT_SECRET", "").strip()
+# Endereço deste servidor + /api/mercadopago/callback, IDÊNTICO ao cadastrado na aplicação do Mercado Pago.
+MERCADOPAGO_REDIRECT_URI = os.environ.get("MERCADOPAGO_REDIRECT_URI", "").strip()
+# Chave secreta dos webhooks (Suas integrações > Webhooks). Sem ela, avisos do Mercado Pago são recusados.
+MERCADOPAGO_WEBHOOK_SECRET = os.environ.get("MERCADOPAGO_WEBHOOK_SECRET", "").strip()
+MERCADOPAGO_SANDBOX = os.environ.get("MERCADOPAGO_SANDBOX", "0") == "1"
+# No Mercado Pago a tarifa do cartão/Pix sai do valor do PROFISSIONAL (no Stripe sai do ShowUp). Para ele não pagar duas vezes,
+# a taxa do ShowUp é 3 pontos menor: Free 7%, Profissional 4%, Ultra 2,5%. Decidido em 30/10/2026.
+DESCONTO_MERCADOPAGO_BPS = 300
+
+
+def _notificacao_mercadopago(redirect_uri: str) -> Optional[str]:
+    """O aviso de pagamento vai para /api/webhooks/mercadopago no mesmo servidor do callback do OAuth."""
+    if "/api/" not in redirect_uri:
+        return None
+    return redirect_uri.split("/api/", 1)[0] + "/api/webhooks/mercadopago"
+
+
+MERCADOPAGO_ATIVO = bool(MERCADOPAGO_CLIENT_ID and MERCADOPAGO_CLIENT_SECRET and MERCADOPAGO_REDIRECT_URI) and cofre.cofre_configurado()
+mp_gateway: Optional[MercadoPagoGateway] = (
+    MercadoPagoGateway(MERCADOPAGO_CLIENT_ID, MERCADOPAGO_CLIENT_SECRET, MERCADOPAGO_REDIRECT_URI,
+                       _notificacao_mercadopago(MERCADOPAGO_REDIRECT_URI), sandbox=MERCADOPAGO_SANDBOX)
+    if MERCADOPAGO_ATIVO else None
+)
+
+
+def _recebe_pelo_mp(prof: Optional[dict]) -> bool:
+    """O profissional escolheu receber pelo Mercado Pago e a conta dele está conectada."""
+    return bool(prof and prof.get("recebimento") == "mercadopago" and prof.get("mp_user_id"))
+
+
+def _hold_dias(prof: Optional[dict]) -> int:
+    """Validade da reserva no cartão de quem recebe: Mercado Pago 5 dias, Stripe 7 (decide até onde a agenda abre)."""
+    return HOLD_DIAS_MERCADOPAGO if _recebe_pelo_mp(prof) else HOLD_MAX_DIAS
 
 
 def _fee_bps_for(profissional_doc: Optional[dict], moeda: Optional[str] = None) -> int:
     """Mesma filosofia de _tz_for/_moeda: nunca deixa um plano desconhecido
     ou ausente quebrar o cálculo — cai pro Free (a taxa mais alta, o que é
     o comportamento seguro do ponto de vista da plataforma).
-    `moeda` = moeda da cobrança: se o Stripe precisa converter para real, soma ADICIONAL_CONVERSAO_BPS."""
+    `moeda` = moeda da cobrança: se o Stripe precisa converter para real, soma ADICIONAL_CONVERSAO_BPS.
+    Quem recebe pelo Mercado Pago paga a tarifa do cartão do próprio bolso: tira DESCONTO_MERCADOPAGO_BPS (só reais, sem adicional)."""
     plano = (profissional_doc or {}).get("plano") or DEFAULT_PLANO
     bps = PLANOS.get(plano, PLANOS[DEFAULT_PLANO])["fee_bps"]
+    if _recebe_pelo_mp(profissional_doc):
+        return max(bps - DESCONTO_MERCADOPAGO_BPS, 0)
     if moeda and moeda.upper() not in MOEDAS_RECEBIMENTO:
         bps += ADICIONAL_CONVERSAO_BPS
     return bps
@@ -415,17 +481,19 @@ def _equilibrios() -> dict[str, dict[str, int]]:
     return out
 
 
-def calcular_comparacao_planos(valores_centavos: list[int], plano_atual: str) -> list[dict]:
+def calcular_comparacao_planos(valores_centavos: list[int], plano_atual: str, desconto_bps: int = 0) -> list[dict]:
     """Quanto o profissional pagaria em cada plano com o MESMO movimento.
     `valores_centavos` = valor do serviço de cada agendamento cobrado — a taxa
     é calculada por agendamento, com a mesma conta da cobrança real
-    (valor * bps // 10_000, arredondando pra baixo cada um)."""
+    (valor * bps // 10_000, arredondando pra baixo cada um).
+    `desconto_bps`: quem recebe pelo Mercado Pago tem a taxa menor em todos os planos (os equilíbrios não mudam)."""
     atual_id = plano_atual if plano_atual in PLANOS else DEFAULT_PLANO
     linhas = []
     for pid, p in PLANOS.items():
-        taxa = sum((v * p["fee_bps"]) // 10_000 for v in valores_centavos)
+        bps = max(p["fee_bps"] - desconto_bps, 0)
+        taxa = sum((v * bps) // 10_000 for v in valores_centavos)
         linhas.append({
-            "id": pid, "nome": p["nome"], "fee_percent": p["fee_bps"] / 100,
+            "id": pid, "nome": p["nome"], "fee_percent": bps / 100,
             "preco_centavos": p["preco_centavos"], "disponivel": _plano_disponivel(p),
             "taxa_estimada_centavos": taxa, "custo_total_centavos": taxa + p["preco_centavos"],
         })
@@ -508,6 +576,7 @@ class User(BaseModel):
     timezone: str = DEFAULT_TIMEZONE
     moeda: str = DEFAULT_MOEDA
     plano: str = DEFAULT_PLANO
+    recebimento: Literal["stripe", "mercadopago"] = "stripe"
     created_at: datetime
 
 
@@ -605,6 +674,12 @@ class ProfissionalDetail(BaseModel):
     # não habilitou o recebimento — a página pública avisa em vez de deixar o
     # cliente ir até o pagamento pra só então recusar.
     aceita_agendamentos: bool = True
+    # Por onde o dinheiro do cliente passa. "mercadopago": a página usa o formulário do Mercado Pago (chave pública do
+    # PROFISSIONAL, como manda o modelo marketplace), a reserva vale 5 dias e o app manda o cliente para o link.
+    recebimento: Literal["stripe", "mercadopago"] = "stripe"
+    mp_public_key: Optional[str] = None
+    pix_disponivel: bool = False
+    link_agendamento: Optional[str] = None
 
 
 class AgendamentoCreate(BaseModel):
@@ -621,6 +696,8 @@ class AgendamentoPublicoCreate(BaseModel):
     horario_inicio: datetime
     nome: str = Field(min_length=2, max_length=120)
     telefone: str
+    # Só o Mercado Pago pede: o comprovante do Pix e do cartão vai para este e-mail (o Stripe não precisa).
+    email: Optional[EmailStr] = None
 
     @field_validator("telefone")
     @classmethod
@@ -633,6 +710,17 @@ class AgendamentoPublicoCreate(BaseModel):
 
 class AgendamentoPublicoCartaoRequest(AgendamentoPublicoCreate):
     payment_method_id: str  # já coletado/confirmado via Stripe.js Elements na página web
+
+
+class AgendamentoPublicoMPCartaoRequest(AgendamentoPublicoCreate):
+    """Cartão pelo Mercado Pago: o formulário do Mercado Pago (Card Payment Brick) tokeniza o cartão no navegador com a
+    chave pública do profissional; o número nunca passa por aqui."""
+    token: str = Field(min_length=8, max_length=200)
+    payment_method_id: str = Field(min_length=2, max_length=40)       # bandeira: visa, master, amex, elo...
+    issuer_id: Optional[str] = Field(default=None, max_length=40)
+    email: EmailStr
+    identificacao_tipo: Optional[str] = Field(default=None, max_length=10)
+    identificacao_numero: Optional[str] = Field(default=None, max_length=20)
 
 
 class CartaoSetupPublicoRequest(BaseModel):
@@ -658,8 +746,9 @@ class CartaoSetupPublicoResponse(BaseModel):
 
 class AgendamentoPublicoPixResponse(BaseModel):
     agendamento_id: str
-    payment_intent_client_secret: str
+    payment_intent_client_secret: Optional[str] = None   # só no Stripe
     qr_code_data: Optional[str] = None
+    qr_code_base64: Optional[str] = None                 # só no Mercado Pago (imagem pronta do QR)
     hosted_instructions_url: Optional[str] = None
     expira_em: datetime
 
@@ -842,6 +931,7 @@ async def _serialize_user(doc: dict) -> User:
         timezone=doc.get("timezone") or DEFAULT_TIMEZONE,
         moeda=doc.get("moeda") or DEFAULT_MOEDA,
         plano=doc.get("plano") or DEFAULT_PLANO,
+        recebimento="mercadopago" if _recebe_pelo_mp(doc) else "stripe",
         created_at=_aware(doc["created_at"]),
     )
 
@@ -896,10 +986,10 @@ async def _exigir_horario_na_agenda(prof_id: str, horario: datetime, horario_fim
     """Recusa (422) horário fora da janela da agenda: o cliente só agenda nos próximos N dias em que o profissional atende
     (N = dias da semana que ele cadastrou) e nunca num horário em que a reserva no cartão venceria antes da cobrança.
     A mesma regra filtra a lista de horários (/slots), mas é AQUI que vale: um pedido montado à mão não pode furá-la."""
-    prof = await db.users.find_one({"user_id": prof_id}, {"_id": 0, "timezone": 1})
+    prof = await db.users.find_one({"user_id": prof_id}, {"_id": 0, "timezone": 1, "recebimento": 1, "mp_user_id": 1})
     weekly = await db.disponibilidade.find({"profissional_id": prof_id}, {"_id": 0}).to_list(200)
     tz, agora = _tz_for(prof), _now()
-    motivo = montar_janela(weekly, agora, tz).motivo_recusa(horario, horario_fim, reserva_no_cartao)
+    motivo = montar_janela(weekly, agora, tz, _hold_dias(prof)).motivo_recusa(horario, horario_fim, reserva_no_cartao)
     if motivo:
         raise HTTPException(422, MENSAGENS_AGENDA[motivo])
     # Dentro da janela de dias, mas é um horário que o expediente realmente oferece? (um pedido montado à mão poderia
@@ -908,7 +998,51 @@ async def _exigir_horario_na_agenda(prof_id: str, horario: datetime, horario_fim
         raise HTTPException(422, MENSAGENS_AGENDA["fora_do_expediente"])
 
 
-async def _janela_de_confirmacao_ou_desfazer(hold: dict, horario_fim: datetime, agendamento_id: str) -> datetime:
+async def _mp_access_token(prof: dict) -> str:
+    """Token do Mercado Pago do profissional, decifrado. Renova sozinho quando faltam menos de 7 dias para vencer
+    (vale 180 dias). Falha vira GatewayUnavailableError: quem chama já trata erro de pagamento sem travar o agendamento."""
+    if not MERCADOPAGO_ATIVO or mp_gateway is None:
+        raise GatewayUnavailableError("Mercado Pago não configurado neste servidor")
+    try:
+        token = cofre.decifrar(prof["mp_access_token_cifrado"])
+        expira = prof.get("mp_token_expira_em")
+        if expira and _aware(expira) - _now() < timedelta(days=7) and prof.get("mp_refresh_token_cifrado"):
+            novo = await mp_gateway.renovar(cofre.decifrar(prof["mp_refresh_token_cifrado"]))
+            await _gravar_tokens_mp(prof["user_id"], novo)
+            token = novo["access_token"]
+    except (KeyError, cofre.CofreIndisponivel) as e:
+        raise GatewayUnavailableError(f"token do Mercado Pago indisponível: {e}") from e
+    return token
+
+
+async def _gravar_tokens_mp(user_id: str, tokens: dict) -> None:
+    campos = {
+        "mp_access_token_cifrado": cofre.cifrar(tokens["access_token"]),
+        "mp_token_expira_em": tokens["expira_em"],
+    }
+    if tokens.get("refresh_token"):
+        campos["mp_refresh_token_cifrado"] = cofre.cifrar(tokens["refresh_token"])
+    if tokens.get("public_key"):
+        campos["mp_public_key"] = tokens["public_key"]
+    if tokens.get("user_id"):
+        campos["mp_user_id"] = tokens["user_id"]
+    await db.users.update_one({"user_id": user_id}, {"$set": campos})
+
+
+async def _desfazer_reserva(gateway_nome: Optional[str], profissional_id: str, payment_id: str, idempotency_key: str) -> None:
+    """Solta a reserva no cartão no gateway em que ela foi feita (cada agendamento grava o seu em `gateway`)."""
+    if gateway_nome == "mercadopago":
+        prof = await db.users.find_one({"user_id": profissional_id}, {"_id": 0})
+        if not prof:
+            raise GatewayUnavailableError("profissional não encontrado para desfazer a reserva")
+        token = await _mp_access_token(prof)
+        await mp_gateway.cancelar(token, payment_id, idempotency_key=idempotency_key)
+        return
+    await gateway.void(payment_id, idempotency_key=idempotency_key)
+
+
+async def _janela_de_confirmacao_ou_desfazer(hold: dict, horario_fim: datetime, agendamento_id: str,
+                                             gateway_nome: Optional[str] = None, profissional_id: str = "") -> datetime:
     """Prazo para o profissional confirmar o atendimento: normalmente fim + 24 h, mas nunca depois de o Stripe soltar a
     reserva (alguns cartões vencem antes de 7 dias). Se a reserva venceria antes de o atendimento acabar, desfaz a
     autorização (o cliente não fica com o limite preso) e recusa."""
@@ -916,10 +1050,15 @@ async def _janela_de_confirmacao_ou_desfazer(hold: dict, horario_fim: datetime, 
     if janela is not None:
         return janela
     try:
-        await gateway.void(hold["payment_intent_id"], idempotency_key=f"void_curto_{agendamento_id}")
+        await _desfazer_reserva(gateway_nome, profissional_id, hold["payment_intent_id"], f"void_curto_{agendamento_id}")
     except PaymentError:
         logging.exception("Falha ao desfazer hold de validade curta p/ %s", agendamento_id)
     raise HTTPException(422, "O seu cartão só permite reservar por poucos dias. Escolha um horário mais próximo.")
+
+
+# Reserva nestes estados OCUPA o horário. A lista de horários livres, as duas checagens de conflito (app e link) e o
+# índice único do banco usam esta MESMA lista: antes cada um tinha a sua, e o Pix ficava de fora de três delas.
+STATUS_OCUPAM_HORARIO = ["autorizado", "cancelando", "capturado_total", "capturado_taxa", "pago_integral", "aguardando_pix"]
 
 
 async def _valida_servico_e_conflito(servico_id: str, horario_inicio: datetime, reserva_no_cartao: bool = True) -> tuple[dict, dict, datetime]:
@@ -936,7 +1075,7 @@ async def _valida_servico_e_conflito(servico_id: str, horario_inicio: datetime, 
     await _exigir_horario_na_agenda(svc["profissional_id"], horario, horario_fim, reserva_no_cartao)
     conflito = await db.agendamentos.find_one({
         "profissional_id": svc["profissional_id"],
-        "hold_status": {"$in": ["autorizado", "cancelando", "capturado_total", "capturado_taxa", "pago_integral", "aguardando_pix"]},
+        "hold_status": {"$in": STATUS_OCUPAM_HORARIO},
         "horario_inicio": {"$lt": horario_fim},
         "horario_fim": {"$gt": horario},
     })
@@ -1511,6 +1650,8 @@ async def excluir_conta(request: Request, authorization: Optional[str] = Header(
             "stripe_customer_id": "", "stripe_billing_customer_id": "", "stripe_account_id": "",
             "stripe_subscription_id": "", "plano_pendente": "", "plano_trial_termina_em": "",
             "plano_cobranca_pendente": "", "password_hash": "", "microsoft_id": "", "email_verified": "",
+            "mp_access_token_cifrado": "", "mp_refresh_token_cifrado": "", "mp_token_expira_em": "",
+            "mp_public_key": "", "mp_user_id": "", "recebimento": "",
         }},
     )
     await db.user_sessions.delete_many({"user_id": user_id})
@@ -1749,6 +1890,8 @@ async def set_moeda(payload: MoedaRequest, authorization: Optional[str] = Header
     criação — ver criar_servico), só os próximos."""
     doc = await _current_user(authorization)
     await _require_role(doc, "profissional")
+    if _recebe_pelo_mp(doc) and payload.moeda != "BRL":
+        raise HTTPException(409, "O Mercado Pago só recebe em reais. Para usar outra moeda, passe a receber pelo Stripe.")
     await db.users.update_one({"user_id": doc["user_id"]}, {"$set": {"moeda": payload.moeda}})
     doc = await db.users.find_one({"user_id": doc["user_id"]}, {"_id": 0})
     return MeResponse(user=await _serialize_user(doc))
@@ -1802,17 +1945,21 @@ async def listar_profissionais(
     q: Optional[str] = Query(default=None),
     categoria: Optional[str] = Query(default=None),
 ):
-    query: dict = {"role": "profissional"}
-    if q:
-        query["name"] = {"$regex": q, "$options": "i"}
+    # Só quem tem serviço ativo aparece: começa pelos serviços (1 consulta), não por profissional (antes, 1 por pessoa).
+    contagem: dict[str, int] = {}
+    async for s_ in db.servicos.find({"ativo": True}, {"_id": 0, "profissional_id": 1}):
+        contagem[s_["profissional_id"]] = contagem.get(s_["profissional_id"], 0) + 1
+    query: dict = {"role": "profissional", "user_id": {"$in": list(contagem)}}
+    termo = (q or "").strip()[:60]
+    if termo:
+        # O texto digitado é TEXTO: re.escape impede que ".*", "(a+)+" etc. virem um padrão (busca errada ou travada).
+        query["name"] = {"$regex": re.escape(termo), "$options": "i"}
     if categoria and categoria in CATEGORIAS:
         query["categorias"] = categoria
-    users = await db.users.find(query, {"_id": 0}).to_list(200)
+    users = await db.users.find(query, {"_id": 0}).sort("name", 1).to_list(200)
     result = []
     for u in users:
-        count = await db.servicos.count_documents({"profissional_id": u["user_id"], "ativo": True})
-        if count == 0:
-            continue
+        count = contagem.get(u["user_id"], 0)
         result.append(ProfissionalPublic(
             user_id=u["user_id"], name=u["name"], picture=u.get("picture"),
             categorias=u.get("categorias", []), servicos_count=count,
@@ -1830,14 +1977,22 @@ async def detalhe_profissional(user_id: str):
         raise HTTPException(404, "Não encontrado")
     user_id = u["user_id"]
     servicos = await db.servicos.find({"profissional_id": user_id, "ativo": True}, {"_id": 0}).to_list(200)
+    pelo_mp = _recebe_pelo_mp(u)
+    if pelo_mp:
+        # Escolheu o Mercado Pago: só aceita se o servidor ainda tem o Mercado Pago configurado (senão a reserva falharia no fim).
+        aceita = MERCADOPAGO_ATIVO
+    else:
+        aceita = not EXIGIR_RECEBIMENTO_ATIVO or bool(u.get("connect_ready") and u.get("stripe_account_id"))
     return ProfissionalDetail(
         user_id=u["user_id"], name=u["name"], picture=u.get("picture"),
         categorias=u.get("categorias", []),
         timezone=u.get("timezone") or DEFAULT_TIMEZONE,
         servicos=[Servico(**{**s, "criado_em": _aware(s["criado_em"])}) for s in servicos],
-        aceita_agendamentos=(
-            not EXIGIR_RECEBIMENTO_ATIVO or bool(u.get("connect_ready") and u.get("stripe_account_id"))
-        ),
+        aceita_agendamentos=aceita,
+        recebimento="mercadopago" if pelo_mp else "stripe",
+        mp_public_key=u.get("mp_public_key") if pelo_mp else None,
+        pix_disponivel=(pelo_mp and MERCADOPAGO_ATIVO) or (not pelo_mp and PIX_STRIPE_HABILITADO and GATEWAY_KIND == "stripe"),
+        link_agendamento=f"{PUBLIC_WEB_BASE_URL}/p/{await _garantir_slug(u)}" if pelo_mp else None,
     )
 
 
@@ -1884,7 +2039,7 @@ async def slots_disponiveis(user_id: str, servico_id: str = Query(...)):
     svc = await db.servicos.find_one({"servico_id": servico_id, "ativo": True}, {"_id": 0})
     if not svc or svc["profissional_id"] != user_id:
         raise HTTPException(404, "Serviço não encontrado")
-    prof = await db.users.find_one({"user_id": user_id}, {"_id": 0, "timezone": 1})
+    prof = await db.users.find_one({"user_id": user_id}, {"_id": 0, "timezone": 1, "recebimento": 1, "mp_user_id": 1})
     tz = _tz_for(prof)
     weekly = await db.disponibilidade.find({"profissional_id": user_id}, {"_id": 0}).to_list(200)
     if not weekly:
@@ -1893,9 +2048,8 @@ async def slots_disponiveis(user_id: str, servico_id: str = Query(...)):
     busy = await db.agendamentos.find(
         {
             "profissional_id": user_id,
-            "status_agendamento": "agendado",
-            "hold_status": {"$in": ["autorizado", "cancelando", "capturado_total", "capturado_taxa"]},
-            "horario_inicio": {"$gte": _now()},
+            "hold_status": {"$in": STATUS_OCUPAM_HORARIO},
+            "horario_fim": {"$gt": _now()},
         },
         {"_id": 0, "horario_inicio": 1, "horario_fim": 1},
     ).to_list(500)
@@ -1912,7 +2066,7 @@ async def slots_disponiveis(user_id: str, servico_id: str = Query(...)):
     step = duracao
     result: list[SlotDisponivel] = []
     now = _now()
-    janela = montar_janela(weekly, now, tz)
+    janela = montar_janela(weekly, now, tz, _hold_dias(prof))
     # "Hoje" no calendário LOCAL do profissional — um profissional em
     # America/Noronha (UTC-2) e outro em America/Rio_Branco (UTC-5) podem
     # estar em dias de calendário diferentes no mesmo instante UTC.
@@ -2003,7 +2157,10 @@ async def _recebimento_ativo(prof: Optional[dict]) -> bool:
     """O profissional consegue receber (conta conectada liberada)? Usa o cache
     `connect_ready`; se ele diz "não" mas existe conta, confere no Stripe (o
     cache só atualiza quando o profissional abre a tela, e a conta pode ter sido
-    liberada nesse meio-tempo)."""
+    liberada nesse meio-tempo).
+    Mercado Pago: a conta conectada por OAuth já recebe (quem libera é o próprio Mercado Pago)."""
+    if _recebe_pelo_mp(prof):
+        return MERCADOPAGO_ATIVO and bool(prof.get("mp_access_token_cifrado"))
     if not prof or not prof.get("stripe_account_id"):
         return False
     if prof.get("connect_ready"):
@@ -2227,7 +2384,7 @@ async def plano_resumo(authorization: Optional[str] = Header(default=None)):
     valores += [int(i.get("valor_capturado_centavos") or 0) for i in faltas]
 
     comparacao_ok = moeda == "BRL"
-    linhas = calcular_comparacao_planos(valores, plano_atual) if comparacao_ok else []
+    linhas = calcular_comparacao_planos(valores, plano_atual, DESCONTO_MERCADOPAGO_BPS if _recebe_pelo_mp(doc) else 0) if comparacao_ok else []
     melhores = [l for l in linhas if l["disponivel"] and l["economia_vs_atual_centavos"] > 0]
     recomendado = (
         max(melhores, key=lambda l: l["economia_vs_atual_centavos"])["id"] if melhores and valores else None
@@ -2435,9 +2592,25 @@ async def plano_cancelar(authorization: Optional[str] = Header(default=None)):
 # Agendamentos
 # ---------------------------------------------------------------------------
 async def _hydrate(doc: dict) -> Agendamento:
-    prof = await db.users.find_one({"user_id": doc["profissional_id"]}, {"_id": 0, "name": 1})
-    cli = await db.users.find_one({"user_id": doc["cliente_id"]}, {"_id": 0, "name": 1})
-    svc = await db.servicos.find_one({"servico_id": doc["servico_id"]}, {"_id": 0, "nome": 1})
+    return (await _hydrate_varios([doc]))[0]
+
+
+async def _hydrate_varios(docs: list[dict]) -> list[Agendamento]:
+    """Monta a lista com os nomes de profissional, cliente e serviço em DUAS consultas para a lista inteira
+    (antes eram 3 por agendamento: 600 consultas para abrir a tela com 200)."""
+    if not docs:
+        return []
+    ids_users = list({d["profissional_id"] for d in docs} | {d["cliente_id"] for d in docs})
+    ids_svc = list({d["servico_id"] for d in docs})
+    nomes = {u["user_id"]: u.get("name") async for u in db.users.find({"user_id": {"$in": ids_users}}, {"_id": 0, "user_id": 1, "name": 1})}
+    servicos = {x["servico_id"]: x.get("nome") async for x in db.servicos.find({"servico_id": {"$in": ids_svc}}, {"_id": 0, "servico_id": 1, "nome": 1})}
+    return [_montar_agendamento(d, nomes, servicos) for d in docs]
+
+
+def _montar_agendamento(doc: dict, nomes: dict, servicos: dict) -> Agendamento:
+    prof = {"name": nomes[doc["profissional_id"]]} if nomes.get(doc["profissional_id"]) else None
+    cli = {"name": nomes[doc["cliente_id"]]} if nomes.get(doc["cliente_id"]) else None
+    svc = {"nome": servicos[doc["servico_id"]]} if servicos.get(doc["servico_id"]) else None
     # Esses 7 campos são sobrescritos explicitamente abaixo (precisam
     # passar por _aware() antes de virar JSON — ver o comentário logo
     # adiante) — por isso ficam de fora do spread: passar a MESMA chave
@@ -2495,7 +2668,7 @@ async def criar_agendamento(request: Request, background_tasks: BackgroundTasks,
     # duração diferente.
     conflito = await db.agendamentos.find_one({
         "profissional_id": svc["profissional_id"],
-        "hold_status": {"$in": ["autorizado", "cancelando", "capturado_total", "capturado_taxa"]},
+        "hold_status": {"$in": STATUS_OCUPAM_HORARIO},
         "horario_inicio": {"$lt": horario_fim},
         "horario_fim": {"$gt": horario},
     })
@@ -2504,6 +2677,9 @@ async def criar_agendamento(request: Request, background_tasks: BackgroundTasks,
 
     # Optional Connect destination for split.
     prof = await db.users.find_one({"user_id": svc["profissional_id"]}, {"_id": 0})
+    if _recebe_pelo_mp(prof):
+        # O cartão salvo no app é do Stripe e não serve para o Mercado Pago: o app manda o cliente para o link (cartão ou Pix).
+        raise HTTPException(409, "Este profissional recebe pelo Mercado Pago. Agende pelo link de agendamento dele, com cartão ou Pix.")
     await _exigir_recebimento_ativo(prof)
     destination = None
     if prof and prof.get("connect_ready") and prof.get("stripe_account_id"):
@@ -2614,6 +2790,8 @@ async def criar_agendamento_publico_cartao(request: Request, background_tasks: B
     if svc["profissional_id"] != payload.profissional_id:
         raise HTTPException(400, "servico_id não pertence ao profissional_id informado")
     horario = _aware(payload.horario_inicio)
+    if _recebe_pelo_mp(prof):
+        raise HTTPException(409, "Este profissional recebe pelo Mercado Pago. Agende pelo link de agendamento dele, com cartão ou Pix.")
 
     await _exigir_recebimento_ativo(prof)
     destination = None
@@ -2696,14 +2874,21 @@ async def criar_agendamento_publico_pix(request: Request, payload: AgendamentoPu
     TOTAL do serviço de uma vez, sem proteção de no-show. O agendamento
     fica reservado por tempo LIMITADO (PIX_RESERVA_MINUTOS) esperando o
     pagamento confirmar via webhook; se expirar sem pagar, libera o
-    horário sozinho (job _expirar_pix_pendentes)."""
-    if GATEWAY_KIND != "stripe":
+    horário sozinho (job _expirar_pix_pendentes).
+    Quem recebe pelo Mercado Pago gera o Pix lá (sem convite, com a taxa do ShowUp já separada)."""
+    prof_rapido = await db.users.find_one({"user_id": payload.profissional_id}, {"_id": 0, "recebimento": 1, "mp_user_id": 1})
+    pelo_mp = _recebe_pelo_mp(prof_rapido)
+    if not pelo_mp and GATEWAY_KIND != "stripe":
         raise HTTPException(400, "Pix requer gateway Stripe real")
+    if pelo_mp and not payload.email:
+        raise HTTPException(422, "Informe seu e-mail para pagar com Pix.")
     cliente = await _find_or_create_cliente_por_telefone(payload.nome, payload.telefone)
     svc, prof, horario_fim = await _valida_servico_e_conflito(payload.servico_id, payload.horario_inicio, reserva_no_cartao=False)
     if svc["profissional_id"] != payload.profissional_id:
         raise HTTPException(400, "servico_id não pertence ao profissional_id informado")
     horario = _aware(payload.horario_inicio)
+    if pelo_mp:
+        return await _pix_mercadopago(payload, cliente, svc, prof, horario, horario_fim)
 
     await _exigir_recebimento_ativo(prof)
     destination = None
@@ -2780,10 +2965,16 @@ async def status_agendamento_publico(request: Request, agendamento_id: str):
     polling e saber quando o Pix confirmou — o pagamento acontece fora do
     nosso controle (app do banco do cliente), então não temos como saber
     na hora, só via webhook + o cliente checando de volta."""
-    doc = await db.agendamentos.find_one({"agendamento_id": agendamento_id}, {"_id": 0, "hold_status": 1, "status_agendamento": 1})
+    doc = await db.agendamentos.find_one({"agendamento_id": agendamento_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Agendamento não encontrado")
+    if doc.get("gateway") == "mercadopago" and doc.get("hold_status") == "aguardando_pix":
+        # Não depende só do webhook: se ele atrasar (ou falhar), a página do cliente confirma consultando o Mercado Pago.
+        doc = await _sincronizar_pagamento_mp(doc) or doc
     return {"hold_status": doc["hold_status"], "status_agendamento": doc["status_agendamento"]}
+
+
+LIMITE_LISTA_AGENDAMENTOS = 200
 
 
 @api_router.get("/agendamentos", response_model=list[Agendamento])
@@ -2796,8 +2987,10 @@ async def listar_agendamentos(authorization: Optional[str] = Header(default=None
         query = {"profissional_id": doc["user_id"]}
     else:
         raise HTTPException(400, "Papel não definido")
-    items = await db.agendamentos.find(query, {"_id": 0}).sort("horario_inicio", 1).to_list(200)
-    return [await _hydrate(it) for it in items]
+    # Os MAIS RECENTES (antes: os 200 mais antigos, e com o tempo os novos sumiam da tela), devolvidos em ordem de horário.
+    items = await db.agendamentos.find(query, {"_id": 0}).sort("horario_inicio", -1).to_list(LIMITE_LISTA_AGENDAMENTOS)
+    items.reverse()
+    return await _hydrate_varios(items)
 
 
 @api_router.get("/agendamentos/{agendamento_id}", response_model=Agendamento)
@@ -2849,7 +3042,9 @@ async def confirmar(
         raise HTTPException(409, "Confirmação já em processamento por outra requisição")
 
     try:
-        if payload.resultado == "compareceu":
+        if ag.get("gateway") == "mercadopago":
+            cap, update, tipo = await _capturar_mercadopago(ag, payload.resultado)
+        elif payload.resultado == "compareceu":
             cap = await gateway.capture(
                 ag["payment_intent_id"], amount_to_capture=None,
                 idempotency_key=f"capture_{agendamento_id}_total",
@@ -2932,7 +3127,7 @@ async def cancelar(request: Request, agendamento_id: str, authorization: Optiona
         raise HTTPException(409, "Hold já processado ou confirmação em andamento — não é mais possível cancelar")
 
     try:
-        await gateway.void(ag["payment_intent_id"], idempotency_key=f"void_{agendamento_id}")
+        await _desfazer_reserva(ag.get("gateway"), ag["profissional_id"], ag["payment_intent_id"], f"void_{agendamento_id}")
     except PaymentError:
         logging.exception("void falhou p/ %s", agendamento_id)
         # Devolve ao estado anterior para permitir nova tentativa, em vez de
@@ -2970,15 +3165,18 @@ async def reminders_janela(
         "horario_fim": {"$lte": _now()},
         "janela_confirmacao_expira_em": {"$lte": limite},
     }, {"_id": 0}).sort("janela_confirmacao_expira_em", 1).to_list(50)
-    return {"count": len(items), "items": [await _hydrate(it) for it in items]}
+    return {"count": len(items), "items": await _hydrate_varios(items)}
 
 
 async def _expirar_pix_pendentes() -> int:
     """Reservas via Pix (link público) que passaram do prazo sem confirmar
     pagamento — libera o horário pra outro cliente poder agendar. Diferente
     do fluxo de cartão, não precisa desfazer hold nenhum no gateway: Pix
-    nunca trava nada no lado do cliente antes de pagar de verdade."""
+    nunca trava nada no lado do cliente antes de pagar de verdade.
+    Mercado Pago: antes de expirar, pergunta a ele se o Pix foi pago (o aviso de pagamento pode ter atrasado)."""
     now = _now()
+    async for ag in db.agendamentos.find({"hold_status": "aguardando_pix", "gateway": "mercadopago", "hold_expira_em": {"$lt": now}}, {"_id": 0}):
+        await _sincronizar_pagamento_mp(ag)
     result = await db.agendamentos.update_many(
         {"hold_status": "aguardando_pix", "hold_expira_em": {"$lt": now}},
         {"$set": {"hold_status": "expirado", "status_agendamento": "cancelado", "status_confirmacao": "sem_resposta"}},
@@ -3009,7 +3207,10 @@ async def _expirar_janela() -> int:
         if claimed is None:
             continue
         try:
-            await gateway.expire(ag["payment_intent_id"], idempotency_key=f"expire_{ag['agendamento_id']}")
+            if ag.get("gateway") == "mercadopago":
+                await _desfazer_reserva("mercadopago", ag["profissional_id"], ag["payment_intent_id"], f"expire_{ag['agendamento_id']}")
+            else:
+                await gateway.expire(ag["payment_intent_id"], idempotency_key=f"expire_{ag['agendamento_id']}")
         except PaymentError:
             logging.exception("expire falhou p/ %s", ag["payment_intent_id"])
         await db.agendamentos.update_one(
@@ -3028,6 +3229,363 @@ async def job_expirar_janela():
     alcançável sem o token de serviço."""
     n = await _expirar_janela()
     return {"expirados": n}
+
+
+# ---------------------------------------------------------------------------
+# Mercado Pago: conectar a conta, escolher onde receber, cartão, Pix e avisos de pagamento
+# ---------------------------------------------------------------------------
+class RecebimentoRequest(BaseModel):
+    metodo: Literal["stripe", "mercadopago"]
+
+
+async def _servicos_fora_do_real(user_id: str) -> int:
+    return len([s for s in await db.servicos.find({"profissional_id": user_id, "ativo": True}, {"_id": 0, "moeda": 1}).to_list(500)
+                if (s.get("moeda") or DEFAULT_MOEDA).upper() != "BRL"])
+
+
+def _estado_recebimento(doc: dict) -> dict:
+    conectado = bool(doc.get("mp_user_id") and doc.get("mp_access_token_cifrado"))
+    pelo_mp = _recebe_pelo_mp(doc)
+    return {
+        "metodo": "mercadopago" if pelo_mp else "stripe",
+        "mercadopago_disponivel": MERCADOPAGO_ATIVO,
+        "mercadopago_conectado": conectado,
+        "desconto_mercadopago_bps": DESCONTO_MERCADOPAGO_BPS,
+        "reserva_dias": _hold_dias(doc),
+        "reserva_dias_stripe": HOLD_MAX_DIAS,
+        "reserva_dias_mercadopago": HOLD_DIAS_MERCADOPAGO,
+    }
+
+
+@api_router.get("/me/recebimento")
+async def recebimento_status(authorization: Optional[str] = Header(default=None)):
+    doc = await _current_user(authorization)
+    await _require_role(doc, "profissional")
+    return _estado_recebimento(doc)
+
+
+@api_router.put("/me/recebimento")
+async def escolher_recebimento(payload: RecebimentoRequest, authorization: Optional[str] = Header(default=None)):
+    """Troca por onde o profissional recebe. Vale para os agendamentos NOVOS: cada agendamento grava o seu gateway,
+    então reservas já feitas terminam no gateway em que foram feitas."""
+    doc = await _current_user(authorization)
+    await _require_role(doc, "profissional")
+    if payload.metodo == "mercadopago":
+        if not MERCADOPAGO_ATIVO:
+            raise HTTPException(503, "O Mercado Pago ainda não está disponível no ShowUp.")
+        if not (doc.get("mp_user_id") and doc.get("mp_access_token_cifrado")):
+            raise HTTPException(409, "Conecte sua conta do Mercado Pago primeiro.")
+        if (doc.get("moeda") or DEFAULT_MOEDA).upper() != "BRL" or await _servicos_fora_do_real(doc["user_id"]):
+            raise HTTPException(409, "O Mercado Pago só recebe em reais. Mude a moeda e os serviços para real (BRL) antes.")
+    await db.users.update_one({"user_id": doc["user_id"]}, {"$set": {"recebimento": payload.metodo}})
+    doc["recebimento"] = payload.metodo
+    return _estado_recebimento(doc)
+
+
+@api_router.post("/me/mercadopago/conectar", response_model=ConnectLink)
+@limiter.limit("10/minute")
+async def mercadopago_conectar(request: Request, authorization: Optional[str] = Header(default=None)):
+    """Link da tela de autorização do Mercado Pago. O `state` é aleatório, guardado por 15 minutos e usado UMA vez:
+    é ele que diz, no retorno, de qual profissional é a conta (e impede alguém de ligar a conta dele no perfil de outro)."""
+    doc = await _current_user(authorization)
+    await _require_role(doc, "profissional")
+    if not MERCADOPAGO_ATIVO or mp_gateway is None:
+        raise HTTPException(503, "O Mercado Pago ainda não está disponível no ShowUp.")
+    state = secrets.token_urlsafe(32)
+    await db.mp_oauth_states.insert_one({"state": state, "user_id": doc["user_id"], "expira_em": _now() + timedelta(minutes=15)})
+    return ConnectLink(url=mp_gateway.url_autorizacao(state))
+
+
+# Volta para o app depois da autorização (o app revalida o estado quando volta ao primeiro plano).
+_MP_VOLTA_APP = "showup://configuracoes"
+
+
+@api_router.get("/mercadopago/callback")
+async def mercadopago_callback(code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
+    if not MERCADOPAGO_ATIVO or mp_gateway is None:
+        return RedirectResponse(f"{_MP_VOLTA_APP}?mercadopago=indisponivel")
+    guardado = await db.mp_oauth_states.find_one_and_delete({"state": state}) if state else None
+    if not guardado or _aware(guardado["expira_em"]) <= _now():
+        return RedirectResponse(f"{_MP_VOLTA_APP}?mercadopago=expirado")
+    if error or not code:
+        return RedirectResponse(f"{_MP_VOLTA_APP}?mercadopago=cancelado")
+    try:
+        tokens = await mp_gateway.trocar_codigo(code)
+    except PaymentError:
+        logging.exception("Mercado Pago: troca do código falhou")
+        return RedirectResponse(f"{_MP_VOLTA_APP}?mercadopago=erro")
+    if not tokens.get("user_id"):
+        return RedirectResponse(f"{_MP_VOLTA_APP}?mercadopago=erro")
+    # A mesma conta do Mercado Pago não pode receber por dois profissionais diferentes.
+    outro = await db.users.find_one({"mp_user_id": tokens["user_id"], "user_id": {"$ne": guardado["user_id"]}}, {"_id": 0, "user_id": 1})
+    if outro:
+        return RedirectResponse(f"{_MP_VOLTA_APP}?mercadopago=conta_em_uso")
+    await _gravar_tokens_mp(guardado["user_id"], tokens)
+    prof = await db.users.find_one({"user_id": guardado["user_id"]}, {"_id": 0})
+    # Conectou para usar: já passa a receber pelo Mercado Pago se tudo estiver em reais.
+    if prof and (prof.get("moeda") or DEFAULT_MOEDA).upper() == "BRL" and not await _servicos_fora_do_real(prof["user_id"]):
+        await db.users.update_one({"user_id": prof["user_id"]}, {"$set": {"recebimento": "mercadopago"}})
+    return RedirectResponse(f"{_MP_VOLTA_APP}?mercadopago=ok")
+
+
+@api_router.delete("/me/mercadopago")
+async def mercadopago_desconectar(authorization: Optional[str] = Header(default=None)):
+    """Apaga os tokens e volta a receber pelo Stripe. Recusa se ainda há reserva aberta no Mercado Pago (sem o token
+    não daria para cobrar nem soltar a reserva)."""
+    doc = await _current_user(authorization)
+    await _require_role(doc, "profissional")
+    aberta = await db.agendamentos.find_one({
+        "profissional_id": doc["user_id"], "gateway": "mercadopago",
+        "hold_status": {"$in": ["autorizado", "cancelando", "aguardando_pix"]},
+    })
+    if aberta:
+        raise HTTPException(409, "Você ainda tem reservas abertas no Mercado Pago. Confirme ou cancele antes de desconectar.")
+    await db.users.update_one({"user_id": doc["user_id"]}, {
+        "$set": {"recebimento": "stripe"},
+        "$unset": {"mp_access_token_cifrado": "", "mp_refresh_token_cifrado": "", "mp_token_expira_em": "", "mp_public_key": "", "mp_user_id": ""},
+    })
+    return {"ok": True}
+
+
+def _identificacao(payload: AgendamentoPublicoMPCartaoRequest) -> Optional[dict]:
+    numero = "".join(c for c in (payload.identificacao_numero or "") if c.isdigit())
+    return {"type": (payload.identificacao_tipo or "CPF").upper(), "number": numero} if numero else None
+
+
+@api_router.post("/public/agendamentos/mercadopago/cartao", response_model=Agendamento)
+@limiter.limit("10/minute")
+async def criar_agendamento_publico_mp_cartao(request: Request, background_tasks: BackgroundTasks, payload: AgendamentoPublicoMPCartaoRequest):
+    """Reserva no cartão pelo Mercado Pago (link público). Mesmas regras do Stripe — agenda, conflito, prazo de
+    confirmação —, mas a reserva vale 5 dias e só aceita bandeiras em que dá para cobrar só a taxa de falta."""
+    if not MERCADOPAGO_ATIVO or mp_gateway is None:
+        raise HTTPException(503, "O Mercado Pago ainda não está disponível no ShowUp.")
+    if payload.payment_method_id.lower() not in MARCAS_CAPTURA_PARCIAL:
+        # Com Elo, Hipercard etc. o Mercado Pago não deixa cobrar só a taxa de falta: recusa ANTES de travar o limite do cliente.
+        raise HTTPException(422, "Para reservar com cartão use Visa, Mastercard, American Express ou Cabal. Ou pague com Pix.")
+    cliente = await _find_or_create_cliente_por_telefone(payload.nome, payload.telefone)
+    svc, prof, horario_fim = await _valida_servico_e_conflito(payload.servico_id, payload.horario_inicio)
+    if svc["profissional_id"] != payload.profissional_id:
+        raise HTTPException(400, "servico_id não pertence ao profissional_id informado")
+    if not _recebe_pelo_mp(prof):
+        raise HTTPException(409, "Este profissional não recebe pelo Mercado Pago. Recarregue a página e tente de novo.")
+    horario = _aware(payload.horario_inicio)
+    fee_bps = _fee_bps_for(prof, svc["moeda"])
+    agendamento_id = f"agd_{uuid.uuid4().hex[:12]}"
+    try:
+        token = await _mp_access_token(prof)
+        hold = await mp_gateway.reservar_cartao(
+            token, valor_centavos=svc["valor_centavos"], taxa_centavos_=taxa_centavos(svc["valor_centavos"], fee_bps),
+            token_cartao=payload.token, payment_method_id=payload.payment_method_id.lower(), issuer_id=payload.issuer_id,
+            email=payload.email, identificacao=_identificacao(payload), descricao=f"ShowUp: {svc['nome']}",
+            referencia=agendamento_id, idempotency_key=f"hold_{agendamento_id}",
+        )
+    except CardDeclinedError:
+        raise HTTPException(402, "Cartão recusado pela operadora. Tente outro cartão.")
+    except GatewayUnavailableError:
+        raise HTTPException(503, "Gateway de pagamento indisponível no momento. Tente novamente em instantes.")
+    except PaymentError:
+        logging.exception("reserva no Mercado Pago falhou")
+        raise HTTPException(402, "Falha ao autorizar cartão")
+
+    janela_conf = await _janela_de_confirmacao_ou_desfazer(hold, horario_fim, agendamento_id, "mercadopago", prof["user_id"])
+    doc = {
+        "agendamento_id": agendamento_id,
+        "profissional_id": svc["profissional_id"],
+        "cliente_id": cliente["user_id"],
+        "servico_id": svc["servico_id"],
+        "horario_inicio": horario, "horario_fim": horario_fim,
+        "valor_total_centavos": svc["valor_centavos"],
+        "valor_no_show_centavos": svc["taxa_no_show_centavos"],
+        "moeda": svc["moeda"],
+        "status_agendamento": "agendado", "status_confirmacao": "pendente",
+        "payment_intent_id": hold["payment_intent_id"],
+        "hold_status": "autorizado",
+        "hold_expira_em": hold["hold_expira_em"],
+        "janela_confirmacao_expira_em": janela_conf,
+        "valor_capturado_centavos": 0,
+        "gateway": "mercadopago",
+        "fee_bps": fee_bps,
+        "origem": "link_publico",
+        "criado_em": _now(),
+        "push_pergunta_enviada_em": None,
+        "push_urgencia_enviada_em": None,
+    }
+    try:
+        await db.agendamentos.insert_one(dict(doc))
+    except DuplicateKeyError:
+        try:
+            await _desfazer_reserva("mercadopago", prof["user_id"], hold["payment_intent_id"], f"void_race_{agendamento_id}")
+        except PaymentError:
+            logging.exception("Falha ao desfazer reserva órfã de corrida p/ %s", agendamento_id)
+        raise HTTPException(409, "Esse horário acabou de ser reservado por outro cliente. Escolha outro.")
+    await db.transacoes.insert_one({
+        "transacao_id": f"tx_{uuid.uuid4().hex[:12]}",
+        "agendamento_id": agendamento_id, "tipo": "authorization",
+        "valor_centavos": doc["valor_total_centavos"], "moeda": doc["moeda"],
+        "gateway_object_id": doc["payment_intent_id"], "status": "requires_capture", "gateway": "mercadopago",
+        "criado_em": _now(),
+    })
+    background_tasks.add_task(avisar_novo_agendamento, db, agendamento_id)
+    return await _hydrate(doc)
+
+
+async def _pix_mercadopago(payload: AgendamentoPublicoCreate, cliente: dict, svc: dict, prof: dict,
+                           horario: datetime, horario_fim: datetime) -> AgendamentoPublicoPixResponse:
+    if not MERCADOPAGO_ATIVO or mp_gateway is None:
+        raise HTTPException(503, "O Mercado Pago ainda não está disponível no ShowUp.")
+    fee_bps = _fee_bps_for(prof, svc["moeda"])
+    agendamento_id = f"agd_{uuid.uuid4().hex[:12]}"
+    expira_pix = _now() + timedelta(minutes=PIX_MINUTOS_MERCADOPAGO)
+    try:
+        token = await _mp_access_token(prof)
+        pix = await mp_gateway.criar_pix(
+            token, valor_centavos=svc["valor_centavos"], taxa_centavos_=taxa_centavos(svc["valor_centavos"], fee_bps),
+            email=payload.email, descricao=f"ShowUp: {svc['nome']}", expira_em=expira_pix,
+            referencia=agendamento_id, idempotency_key=f"pix_{agendamento_id}",
+        )
+    except PaymentError:
+        logging.exception("Pix no Mercado Pago falhou")
+        raise HTTPException(502, "Falha ao gerar cobrança Pix junto ao gateway")
+    doc = {
+        "agendamento_id": agendamento_id,
+        "profissional_id": svc["profissional_id"],
+        "cliente_id": cliente["user_id"],
+        "servico_id": svc["servico_id"],
+        "horario_inicio": horario, "horario_fim": horario_fim,
+        "valor_total_centavos": svc["valor_centavos"],
+        "valor_no_show_centavos": 0,
+        "moeda": svc["moeda"],
+        "status_agendamento": "agendado", "status_confirmacao": "pendente",
+        "payment_intent_id": pix["payment_intent_id"],
+        "hold_status": "aguardando_pix",
+        # O horário fica preso um pouco além do prazo do Pix: antes de soltar, o job consulta o Mercado Pago.
+        "hold_expira_em": expira_pix + timedelta(minutes=5),
+        "janela_confirmacao_expira_em": horario_fim + timedelta(hours=24),
+        "valor_capturado_centavos": 0,
+        "gateway": "mercadopago",
+        "fee_bps": fee_bps,
+        "metodo_pagamento": "pix",
+        "origem": "link_publico",
+        "criado_em": _now(),
+        "push_pergunta_enviada_em": None,
+        "push_urgencia_enviada_em": None,
+    }
+    try:
+        await db.agendamentos.insert_one(dict(doc))
+    except DuplicateKeyError:
+        try:
+            await _desfazer_reserva("mercadopago", prof["user_id"], pix["payment_intent_id"], f"void_race_{agendamento_id}")
+        except PaymentError:
+            logging.exception("Falha ao cancelar Pix órfão de corrida p/ %s", agendamento_id)
+        raise HTTPException(409, "Esse horário acabou de ser reservado por outro cliente. Escolha outro.")
+    return AgendamentoPublicoPixResponse(
+        agendamento_id=agendamento_id,
+        qr_code_data=pix["qr_code_data"],
+        qr_code_base64=pix.get("qr_code_base64"),
+        hosted_instructions_url=pix.get("hosted_instructions_url"),
+        expira_em=expira_pix,
+    )
+
+
+async def _sincronizar_pagamento_mp(ag: dict) -> Optional[dict]:
+    """Pergunta ao Mercado Pago como está o pagamento do agendamento e aplica no banco. Fonte da verdade é a consulta
+    (com o token do profissional), nunca o corpo do aviso: um aviso forjado não consegue marcar nada como pago."""
+    prof = await db.users.find_one({"user_id": ag["profissional_id"]}, {"_id": 0})
+    if not prof:
+        return None
+    try:
+        token = await _mp_access_token(prof)
+        p = await mp_gateway.consultar(token, ag["payment_intent_id"])
+    except PaymentError:
+        logging.warning("Mercado Pago: não consegui consultar o pagamento %s", ag["payment_intent_id"])
+        return None
+    if p.get("referencia") and p["referencia"] != ag["agendamento_id"]:
+        logging.error("Mercado Pago: pagamento %s é de outro agendamento (%s)", ag["payment_intent_id"], p["referencia"])
+        return None
+    status = p.get("status")
+    filtro = {"agendamento_id": ag["agendamento_id"]}
+    if status == "approved" and ag.get("hold_status") == "aguardando_pix":
+        res = await db.agendamentos.update_one({**filtro, "hold_status": "aguardando_pix"},
+                                               {"$set": {"hold_status": "pago_integral", "valor_capturado_centavos": p["valor_centavos"]}})
+        if res.modified_count:
+            await avisar_novo_agendamento(db, ag["agendamento_id"])
+    elif status == "approved" and ag.get("hold_status") == "expirado" and ag.get("metodo_pagamento") == "pix":
+        # Pago depois de o horário ser solto (aviso muito atrasado): não some com o dinheiro do cliente — marca para revisão.
+        await db.agendamentos.update_one(filtro, {"$set": {"pago_apos_expirar": True}})
+        logging.error("Pix %s pago depois de expirar: devolver ao cliente pelo painel do Mercado Pago", ag["payment_intent_id"])
+    elif status in ("cancelled", "rejected", "expired") and ag.get("hold_status") == "aguardando_pix":
+        await db.agendamentos.update_one({**filtro, "hold_status": "aguardando_pix"},
+                                         {"$set": {"hold_status": "expirado", "status_agendamento": "cancelado", "status_confirmacao": "sem_resposta"}})
+    elif status in ("cancelled", "rejected") and ag.get("hold_status") == "autorizado":
+        await db.agendamentos.update_one({**filtro, "hold_status": "autorizado", "status_confirmacao": "pendente"},
+                                         {"$set": {"hold_status": "expirado", "status_confirmacao": "sem_resposta"}})
+    elif status == "charged_back":
+        await db.agendamentos.update_one(filtro, {"$set": {"em_disputa": True}})
+    return await db.agendamentos.find_one(filtro, {"_id": 0})
+
+
+async def _capturar_mercadopago(ag: dict, resultado: str) -> tuple[dict, dict, str]:
+    prof = await db.users.find_one({"user_id": ag["profissional_id"]}, {"_id": 0})
+    if not prof:
+        raise GatewayUnavailableError("profissional não encontrado")
+    token = await _mp_access_token(prof)
+    aid = ag["agendamento_id"]
+    if resultado == "compareceu":
+        cap = await mp_gateway.capturar(token, ag["payment_intent_id"], None, None, idempotency_key=f"capture_{aid}_total")
+        return cap, {"status_confirmacao": "compareceu", "hold_status": "capturado_total",
+                     "valor_capturado_centavos": cap["amount_received"]}, "capture"
+    falta = ag["valor_no_show_centavos"]
+    taxa = taxa_centavos(falta, ag.get("fee_bps") or _fee_bps_for(prof))
+    cap = await mp_gateway.capturar(token, ag["payment_intent_id"], falta, taxa, idempotency_key=f"capture_{aid}_noshow")
+    update = {"status_confirmacao": "nao_compareceu", "hold_status": "capturado_taxa", "valor_capturado_centavos": cap["amount_received"]}
+    if cap.get("taxa_gravada_centavos") is not None and cap["taxa_gravada_centavos"] > taxa:
+        # O Mercado Pago manteve a taxa do valor total: o profissional ficou com menos do que deveria. Marca para acerto.
+        update["taxa_a_devolver_centavos"] = cap["taxa_gravada_centavos"] - taxa
+        logging.error("Mercado Pago gravou taxa %s em vez de %s no agendamento %s", cap["taxa_gravada_centavos"], taxa, aid)
+    return cap, update, "partial_capture"
+
+
+async def _renovar_tokens_mp() -> int:
+    """Job: renova o token de quem não usa o Mercado Pago há tempo (vale 180 dias) antes de vencer."""
+    if not MERCADOPAGO_ATIVO or mp_gateway is None:
+        return 0
+    limite = _now() + timedelta(days=30)
+    n = 0
+    async for u in db.users.find({"mp_token_expira_em": {"$lt": limite}, "mp_refresh_token_cifrado": {"$nin": [None, ""]}}, {"_id": 0}):
+        try:
+            novo = await mp_gateway.renovar(cofre.decifrar(u["mp_refresh_token_cifrado"]))
+            await _gravar_tokens_mp(u["user_id"], novo)
+            n += 1
+        except Exception:
+            logging.exception("não consegui renovar o token do Mercado Pago de %s", u["user_id"])
+    return n
+
+
+@api_router.post("/webhooks/mercadopago")
+async def webhook_mercadopago(request: Request):
+    """Aviso de pagamento do Mercado Pago. Confere a assinatura (x-signature) e, se bater, CONSULTA o pagamento no
+    Mercado Pago antes de mudar qualquer coisa. Sem a chave secreta configurada, recusa tudo."""
+    if not MERCADOPAGO_WEBHOOK_SECRET:
+        logging.error("MERCADOPAGO_WEBHOOK_SECRET ausente — recusando aviso por segurança")
+        return JSONResponse({"ok": False}, status_code=500)
+    data_id = request.query_params.get("data.id") or request.query_params.get("id")
+    try:
+        corpo = await request.json()
+    except Exception:
+        corpo = {}
+    if not data_id:
+        data_id = str(((corpo or {}).get("data") or {}).get("id") or "")
+    if not assinatura_valida(request.headers.get("x-signature", ""), request.headers.get("x-request-id"), data_id,
+                             MERCADOPAGO_WEBHOOK_SECRET, agora_s=_now().timestamp()):
+        logging.warning("Aviso do Mercado Pago com assinatura inválida — ignorado")
+        return JSONResponse({"ok": False}, status_code=400)
+    tipo = (corpo or {}).get("type") or request.query_params.get("type") or request.query_params.get("topic")
+    if tipo != "payment" or not data_id:
+        return {"ok": True}
+    ag = await db.agendamentos.find_one({"payment_intent_id": str(data_id), "gateway": "mercadopago"}, {"_id": 0})
+    if ag:
+        await _sincronizar_pagamento_mp(ag)
+    return {"ok": True}
 
 
 # Limiar de urgência: quando falta menos que isso para o hold expirar, o
@@ -3155,6 +3713,42 @@ _ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").spl
 
 _scheduler = AsyncIOScheduler(timezone="UTC")
 
+INDICE_VAGA_UNICA = "uniq_vaga_ativa"
+_INDICE_VAGA_ANTIGO = "uniq_slot_ativo"
+
+
+async def _garantir_indice_vaga_unica() -> None:
+    """Índice único parcial: duas reservas ATIVAS nunca no mesmo início de horário do mesmo profissional, nem com
+    pedidos simultâneos. A lista vem de STATUS_OCUPAM_HORARIO. O índice antigo (sem o Pix) tinha outro nome: cria o
+    novo e só então apaga o antigo, então o banco nunca fica sem proteção. Se o Mongo recusar dois índices na mesma
+    chave, apaga o antigo, cria o novo e, se o novo falhar (reservas duplicadas antigas), recria o antigo."""
+    chave = [("profissional_id", 1), ("horario_inicio", 1)]
+
+    def criar(nome, status):
+        return db.agendamentos.create_index(chave, unique=True, name=nome, partialFilterExpression={"hold_status": {"$in": status}})
+
+    async def apagar_antigo():
+        try:
+            await db.agendamentos.drop_index(_INDICE_VAGA_ANTIGO)
+        except OperationFailure:
+            pass        # já não existe
+
+    try:
+        await criar(INDICE_VAGA_UNICA, STATUS_OCUPAM_HORARIO)
+    except DuplicateKeyError:
+        logging.error("índice %s não criado: há reservas ativas duplicadas no mesmo horário. Mantido o antigo; "
+                      "resolva as duplicadas e reinicie.", INDICE_VAGA_UNICA)
+        return
+    except OperationFailure:
+        await apagar_antigo()
+        try:
+            await criar(INDICE_VAGA_UNICA, STATUS_OCUPAM_HORARIO)
+        except (DuplicateKeyError, OperationFailure):
+            logging.exception("índice %s não criado; recriando o antigo", INDICE_VAGA_UNICA)
+            await criar(_INDICE_VAGA_ANTIGO, ["autorizado", "cancelando", "capturado_total", "capturado_taxa"])
+        return
+    await apagar_antigo()
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -3185,18 +3779,15 @@ async def lifespan(_: FastAPI):
     # resultam em dois agendamentos ativos. "Ativo" = hold ainda não
     # cancelado/expirado, por isso o partialFilterExpression: um horário
     # pode ser reocupado depois que o agendamento anterior nele é cancelado.
-    await db.agendamentos.create_index(
-        [("profissional_id", 1), ("horario_inicio", 1)],
-        unique=True,
-        partialFilterExpression={"hold_status": {"$in": ["autorizado", "cancelando", "capturado_total", "capturado_taxa"]}},
-        name="uniq_slot_ativo",
-    )
+    await _garantir_indice_vaga_unica()
     await db.agendamentos.create_index([("cliente_id", 1), ("horario_inicio", 1)])
     await db.customer_cards.create_index("user_id", unique=True)
     await db.disponibilidade.create_index([("profissional_id", 1), ("weekday", 1)])
     await db.webhook_events.create_index("event_id", unique=True)
     await db.device_tokens.create_index("user_id", unique=True)
-    logger.info("Startup complete (gateway=%s)", GATEWAY_KIND)
+    await db.mp_oauth_states.create_index("state", unique=True)
+    await db.mp_oauth_states.create_index("expira_em", expireAfterSeconds=0)
+    logger.info("Startup complete (gateway=%s, mercadopago=%s)", GATEWAY_KIND, MERCADOPAGO_ATIVO)
 
     # Job crítico do produto: sem isso, holds nunca expiram sozinhos e o
     # cliente fica com o limite do cartão travado indefinidamente até o
@@ -3213,6 +3804,8 @@ async def lifespan(_: FastAPI):
     _scheduler.add_job(_enviar_pushes_confirmacao, "interval", minutes=5, id="enviar_pushes", max_instances=1)
     _scheduler.add_job(_atualizar_connect_pendentes, "interval", minutes=10, id="connect_pendentes", max_instances=1)
     _scheduler.add_job(_enviar_lembretes_proximo, "interval", minutes=5, id="lembretes_proximo", max_instances=1)
+    if MERCADOPAGO_ATIVO:
+        _scheduler.add_job(_renovar_tokens_mp, "interval", hours=12, id="renovar_tokens_mp", max_instances=1)
     _scheduler.start()
     logger.info("Scheduler iniciado: expirar-janela e enviar-pushes a cada 5min")
 

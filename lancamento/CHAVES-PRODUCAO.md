@@ -13,6 +13,8 @@ secreta de um modo com a publicável do outro.
 | Segredos dos webhooks | `whsec_...` (teste) | `whsec_...` (produção) | Render: `STRIPE_WEBHOOK_SECRET` (plataforma) e `STRIPE_CONNECT_WEBHOOK_SECRET` (Connect) |
 | Price IDs dos planos | `price_...` (teste) | `price_...` (produção) | Render: `STRIPE_PRICE_ID_PROFISSIONAL` / `_ULTRA` (só se `PLANOS_COMPRA_HABILITADA=1`). O Price precisa ter **exatamente** o valor de `PLANOS` (R$ 29,90 e R$ 69,90, mensal, BRL), senão o servidor recusa assinar |
 | Backend usado pelo app | — | URL pública (https) | EAS: `EXPO_PUBLIC_BACKEND_URL`; `agendar.html`: `BACKEND_URL` |
+| Mercado Pago (opcional) | credenciais de teste + `MERCADOPAGO_SANDBOX=1` | credenciais de produção | Render: `MERCADOPAGO_CLIENT_ID`, `_CLIENT_SECRET`, `_REDIRECT_URI`, `_WEBHOOK_SECRET`, `_TOKEN_KEY`. Passo a passo em `MERCADO-PAGO.md` |
+| Pix pelo Stripe | `PIX_STRIPE_HABILITADO=0` | `1` só depois de o Stripe liberar o Pix | Render (a página lê do servidor; não precisa mais editar `agendar.html`) |
 
 > **Como o backend escolhe o gateway:** `STRIPE_API_KEY` vazia = modo **simulado** (aprova reservas sem cobrar nada — só
 > para desenvolvimento); `sk_test_`/`sk_live_`/`rk_...` válida = Stripe real; preenchida e **inválida** = o servidor se
@@ -27,7 +29,7 @@ secreta de um modo com a publicável do outro.
    - `EXIGIR_RECEBIMENTO_ATIVO=1`
    - `PLANOS_COMPRA_HABILITADA=0` (primeira versão no Google Play — ver `LANCAMENTO.md`, decisão 1)
    - `PUBLIC_WEB_BASE_URL` e `ALLOWED_ORIGINS` com o endereço do site
-4. Edite `agendar.html`: troque `pk_test_...` por `pk_live_...`, rode `python lancamento/preencher-site.py --verificar` e publique (`firebase deploy --only hosting`).
+4. Edite `agendar.html`: troque `pk_test_...` por `pk_live_...`, rode `python lancamento/preencher-site.py --verificar` e publique (`cd firebase-hosting` e `firebase deploy --only hosting`).
 5. No **EAS** (seção 3), troque a chave publicável e gere o build de produção.
 6. Faça uma reserva real de valor baixo (R$ 5) e confira: cobrança, taxa, repasse e webhooks chegando (Dashboard > Developers > Webhooks > ver entregas).
 

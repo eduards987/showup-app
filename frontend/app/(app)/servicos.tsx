@@ -3,10 +3,12 @@
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
-import { ActivityIndicator, FlatList, Pressable, Text, View } from "react-native";
+import { Alert, FlatList, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api } from "@/src/lib/api";
+import { Carregando, ErroAoCarregar } from "@/src/components/estado-consulta";
+import { estadoDaConsulta } from "@/src/lib/estado-consulta";
+import { api, ApiError } from "@/src/lib/api";
 import { formatMoney } from "@/src/lib/format";
 import { Servico } from "@/src/lib/types";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
@@ -83,7 +85,15 @@ export default function Servicos() {
   const delM = useMutation({
     mutationFn: (id: string) => api(`/api/servicos/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["meus-servicos"] }),
+    onError: (err: unknown) =>
+      Alert.alert(t("Não foi possível remover"), err instanceof ApiError ? err.message : t("Sem conexão com o servidor. Confira a internet e tente de novo.")),
   });
+  // Um toque apagava o serviço na hora. Agora pergunta antes.
+  const confirmarRemocao = (servico: Servico) =>
+    Alert.alert(t("Remover {{nome}}?", { nome: servico.nome }), t("Ele deixa de aparecer para os clientes. As reservas já feitas continuam valendo."), [
+      { text: t("Voltar"), style: "cancel" },
+      { text: t("Remover"), style: "destructive", onPress: () => delM.mutate(servico.servico_id) },
+    ]);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -98,8 +108,10 @@ export default function Servicos() {
           <Text style={styles.addText}>{t("Novo")}</Text>
         </Pressable>
       </View>
-      {q.isLoading ? (
-        <ActivityIndicator style={{ marginTop: spacing.xl }} color={colors.brandPrimary} />
+      {estadoDaConsulta(q) === "carregando" ? (
+        <Carregando />
+      ) : estadoDaConsulta(q) === "erro" ? (
+        <ErroAoCarregar onTentar={() => q.refetch()} />
       ) : (q.data?.length ?? 0) === 0 ? (
         <View style={styles.empty}>
           <Ionicons name="briefcase-outline" size={28} color={colors.muted} />
@@ -123,7 +135,7 @@ export default function Servicos() {
               {item.descricao ? <Text style={styles.desc}>{item.descricao}</Text> : null}
               <Pressable
                 testID={`del-${item.servico_id}`}
-                onPress={() => delM.mutate(item.servico_id)}
+                onPress={() => confirmarRemocao(item)}
                 style={styles.del}
               >
                 <Ionicons name="trash-outline" size={14} color={colors.error} />

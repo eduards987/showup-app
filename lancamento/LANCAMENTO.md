@@ -26,7 +26,7 @@
   leve ao advogado as perguntas de `REVISAO-JURIDICA.md` e cumpra a lista da seção 3 de lá (registros de acesso por 6 meses, endereço no site, prazos). Os termos são um rascunho meu, **não aconselhamento jurídico**. Pontos para olhar: reembolso, retenção de valores em contestação, foro e a promessa de atender pedidos de exclusão por e-mail **em até 15 dias** (você precisa conseguir cumprir).
 - [ ] **Login por e-mail e Microsoft** (você, opcional mas recomendado para o lançamento): siga `LOGIN.md`. Só configure
   depois de publicar a Política de Privacidade nova (a antiga dizia que o app não guarda senhas).
-- [ ] **Publicar o site** (você): `python lancamento/preencher-site.py --verificar` e, só se passar, `firebase deploy --only hosting --project showup-509120`. Conferir que `/termos`, `/privacidade` e `/excluir-conta` abrem.
+- [ ] **Publicar o site** (você): `python lancamento/preencher-site.py --verificar` e, só se passar, `cd firebase-hosting` e `firebase deploy --only hosting --project showup-509120`. Conferir que `/termos`, `/privacidade` e `/excluir-conta` abrem.
 - [ ] **Google Cloud Console > Tela de consentimento OAuth**: preencher nome, e-mail de suporte, link da política de privacidade e **publicar o app ("Em produção")**. Em "Teste", só quem está na lista de testadores consegue entrar.
 - [ ] **Webhooks do Stripe** (você) — ver `CHAVES-PRODUCAO.md`, seção 4. Dois endpoints, um deles de Connect, e o evento `customer.subscription.trial_will_end`.
 - [ ] **Pedidos de exclusão por e-mail são manuais**: quem agendou por link e não tem app só consegue pedir por e-mail. Defina como você apaga esses dados (nome e telefone no MongoDB) e em quanto tempo.
@@ -49,6 +49,14 @@ O teste fechado de 14 dias é o que mais atrasa. Antes dele, nada de produção.
 - [ ] Fazer **uma reserva real de valor baixo** (ex.: R$ 5) ponta a ponta antes de divulgar: reservar, confirmar comparecimento, conferir o repasse e a taxa no Dashboard.
 - [ ] Revisar no Stripe as regras de nova tentativa de cobrança (Billing > Revenue recovery), se um dia religar os planos pagos.
 
+## 4b. Mercado Pago (você · ~1 h + testes)
+
+Segunda forma de o profissional receber, com Pix ligado. O código está pronto (30/10/2026); falta configurar e testar: `MERCADO-PAGO.md`.
+
+- [ ] Criar a aplicação no Mercado Pago (marketplace), cadastrar a URL de retorno e o webhook.
+- [ ] Colocar as 5 variáveis `MERCADOPAGO_*` no Render.
+- [ ] Fazer o teste obrigatório no sandbox (reserva sem cobrar, taxa da falta, aviso do Pix) antes de produção.
+
 ## 5. Infraestrutura (você · ~30 min)
 
 - [ ] **Render**: usar um plano pago (o gratuito dorme e a primeira chamada demora ~1 min). O keep-alive do GitHub é um paliativo.
@@ -59,7 +67,7 @@ O teste fechado de 14 dias é o que mais atrasa. Antes dele, nada de produção.
 
 - Decidir os planos pagos no Android (cobrança do Google, venda pelo site ou só taxa) e, no iOS, as regras da Apple.
 - Relatórios de faltas e link personalizado; depois lista de espera, pacotes/recorrência e lembrete ao cliente.
-- Pix, quando o Stripe liberar para a conta (hoje desligado na página pública).
+- Pix pelo Stripe, quando o Stripe liberar para a conta (`PIX_STRIPE_HABILITADO=1`). Pelo Mercado Pago o Pix já funciona.
 - Imagem de fundo da tela inicial vem de uma URL do Unsplash: embutir no app é mais seguro.
 - iOS: precisa de conta Apple Developer (paga) e passar a revisão da Apple.
 

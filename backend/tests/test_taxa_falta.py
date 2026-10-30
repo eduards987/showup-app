@@ -111,7 +111,22 @@ def test_falha_ao_ler_o_payment_intent_nao_captura(monkeypatch):
 
 # ============================================================ rota /confirmar
 def _match(doc, q):
-    return all(doc.get(k) == v for k, v in q.items())
+    return all((doc.get(k) in v["$in"]) if isinstance(v, dict) and "$in" in v else doc.get(k) == v for k, v in q.items())
+
+
+class _Cursor:
+    def __init__(self, docs):
+        self._docs = docs
+
+    def __aiter__(self):
+        self._it = iter(self._docs)
+        return self
+
+    async def __anext__(self):
+        try:
+            return dict(next(self._it))
+        except StopIteration:
+            raise StopAsyncIteration
 
 
 class _Col:
@@ -120,6 +135,9 @@ class _Col:
 
     async def find_one(self, q, proj=None):
         return next((dict(d) for d in self.docs if _match(d, q)), None)
+
+    def find(self, q, proj=None):
+        return _Cursor([d for d in self.docs if _match(d, q)])
 
     async def find_one_and_update(self, q, upd):
         for d in self.docs:

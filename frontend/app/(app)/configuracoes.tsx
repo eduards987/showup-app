@@ -2,7 +2,7 @@
 
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -18,6 +18,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ConnectCard } from "@/src/components/connect-card";
+import { RecebimentoCard } from "@/src/components/recebimento-card";
 import { SeletorMoeda } from "@/src/components/seletor-moeda";
 import { avisoDeConversao } from "@/src/lib/moedas";
 import { resumoJanelaAgenda } from "@/src/lib/agenda-janela";
@@ -28,6 +29,7 @@ import { DropdownGrupos, DropdownMultiGrupos } from "@/src/components/dropdown";
 import { useAuth } from "@/src/lib/auth";
 import type { ConnectStatus } from "@/src/lib/connect-estado";
 import { openExternalCheckout } from "@/src/lib/open-external-checkout";
+import { mensagemDoRetorno, type MetodoRecebimento, type RecebimentoStatus } from "@/src/lib/recebimento";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 import { t } from "@/src/i18n/core";
 import { useIdioma } from "@/src/i18n";
@@ -167,6 +169,17 @@ export default function Configuracoes() {
   const router = useRouter();
   const auth = useAuth();
   const qc = useQueryClient();
+  // Volta da autorização do Mercado Pago: showup://configuracoes?mercadopago=ok (ou o motivo de não ter dado certo).
+  const { mercadopago: retornoMp } = useLocalSearchParams<{ mercadopago?: string }>();
+  useEffect(() => {
+    const msg = mensagemDoRetorno(retornoMp);
+    if (msg) {
+      qc.invalidateQueries({ queryKey: ["recebimento"] });
+      auth.refresh();
+      Alert.alert("Mercado Pago", msg);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [retornoMp]);
 
   // O onboarding do Connect abre no navegador do SISTEMA (fora do app —
   // ver o comentário em openExternalCheckout sobre por quê), então não
@@ -179,6 +192,7 @@ export default function Configuracoes() {
     const sub = AppState.addEventListener("change", (nextState) => {
       if (nextState === "active") {
         qc.invalidateQueries({ queryKey: ["connect-status"] });
+        qc.invalidateQueries({ queryKey: ["recebimento"] });
       }
     });
     return () => sub.remove();
@@ -221,15 +235,70 @@ export default function Configuracoes() {
     },
     enabled: auth.status === "authenticated",
   });
-  useEffect(() => {
-    if (dispQ.data?.slots) setSlots(dispQ.data.slots);
-  }, [dispQ.data]);
+  // Os horários do servidor entram na tela UMA vez. Antes, cada nova busca (ao voltar para a tela, por exemplo)
+  // sobrescrevia o que a pessoa estava editando e ainda não tinha salvo.
+  const [slotsCarregados, setSlotsCarregados] = useState(false);
+  if (!slotsCarregados && dispQ.data?.slots) {
+    setSlotsCarregados(true);
+    setSlots(dispQ.data.slots);
+  }
 
   const connectQ = useQuery({
     queryKey: ["connect-status"],
     queryFn: () => api<ConnectStatus>("/api/me/connect"),
     enabled: auth.status === "authenticated" && auth.user.role === "profissional",
   });
+
+  const recebimentoQ = useQuery({
+    queryKey: ["recebimento"],
+    queryFn: () => api<RecebimentoStatus>("/api/me/recebimento"),
+    enabled: auth.status === "authenticated" && auth.user.role === "profissional",
+  });
+
+  const escolherRecebimentoM = useMutation({
+    mutationFn: (metodo: MetodoRecebimento) =>
+      api<RecebimentoStatus>("/api/me/recebimento", { method: "PUT", body: JSON.stringify({ metodo }) }),
+    onSuccess: (st) => {
+      qc.setQueryData(["recebimento"], st);
+      auth.refresh();
+    },
+    onError: (err: unknown) => {
+      Alert.alert(t("Não foi possível trocar"), err instanceof ApiError ? err.message : t("Tente de novo."));
+    },
+  });
+
+  // A autorização do Mercado Pago abre no navegador do sistema; o retorno cai em showup://configuracoes (ver o useEffect acima).
+  const conectarMpM = useMutation({
+    mutationFn: async () => {
+      const r = await api<{ url: string }>("/api/me/mercadopago/conectar", { method: "POST" });
+      await Linking.openURL(r.url);
+    },
+    onError: (err: unknown) => {
+      Alert.alert(t("Não foi possível conectar"), err instanceof ApiError ? err.message : t("Não foi possível conectar o Mercado Pago. Tente de novo."));
+    },
+  });
+
+  const desconectarMpM = useMutation({
+    mutationFn: () => api("/api/me/mercadopago", { method: "DELETE" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["recebimento"] });
+      auth.refresh();
+    },
+    onError: (err: unknown) => {
+      Alert.alert(t("Não foi possível desconectar"), err instanceof ApiError ? err.message : t("Tente de novo."));
+    },
+  });
+
+  const confirmarDesconexao = () =>
+    Alert.alert(t("Desconectar Mercado Pago?"), t("Os próximos agendamentos voltam a ser recebidos pelo Stripe."), [
+      { text: t("Cancelar"), style: "cancel" },
+      { text: t("Desconectar"), style: "destructive", onPress: () => desconectarMpM.mutate() },
+    ]);
+
+  const recebePeloMp = recebimentoQ.data?.metodo === "mercadopago";
+
+  const avisarErroAoSalvar = (err: unknown) =>
+    Alert.alert(t("Não foi possível salvar"), err instanceof ApiError ? err.message : t("Sem conexão com o servidor. Confira a internet e tente de novo."));
 
   const saveCatsM = useMutation({
     mutationFn: (categorias: string[]) =>
@@ -242,6 +311,7 @@ export default function Configuracoes() {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     },
+    onError: avisarErroAoSalvar,
   });
 
   const saveTzM = useMutation({
@@ -258,6 +328,7 @@ export default function Configuracoes() {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     },
+    onError: avisarErroAoSalvar,
   });
 
   const saveMoedaM = useMutation({
@@ -273,6 +344,7 @@ export default function Configuracoes() {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     },
+    onError: avisarErroAoSalvar,
   });
 
   const saveDispM = useMutation({
@@ -286,6 +358,7 @@ export default function Configuracoes() {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     },
+    onError: avisarErroAoSalvar,
   });
 
   const connectM = useMutation({
@@ -440,7 +513,7 @@ export default function Configuracoes() {
 
         <Text style={styles.sectionTitle}>{t("DISPONIBILIDADE SEMANAL")}</Text>
         <Text testID="resumo-janela-agenda" style={[styles.connectBody, { paddingHorizontal: spacing.xl, marginBottom: spacing.sm }]}>
-          {resumoJanelaAgenda(slots).texto}
+          {resumoJanelaAgenda(slots, recebimentoQ.data?.reserva_dias ?? 7).texto}
         </Text>
         {slots.map((s, i) => (
           <View key={i} style={styles.slotRow}>
@@ -480,9 +553,9 @@ export default function Configuracoes() {
         <View style={{ paddingHorizontal: spacing.xl, marginTop: spacing.md }}>
           <Pressable
             testID="save-disp"
-            disabled={saveDispM.isPending}
+            disabled={saveDispM.isPending || !slotsCarregados}
             onPress={() => saveDispM.mutate(slots)}
-            style={[styles.cta, { height: 44 }]}
+            style={[styles.cta, { height: 44 }, (saveDispM.isPending || !slotsCarregados) && styles.ctaDisabled]}
           >
             {saveDispM.isPending ? (
               <ActivityIndicator color={colors.onBrandPrimary} />
@@ -492,15 +565,32 @@ export default function Configuracoes() {
           </Pressable>
         </View>
 
-        <Text style={styles.sectionTitle}>{t("REPASSE AUTOMÁTICO (STRIPE CONNECT)")}</Text>
-        <ConnectCard
-          status={connectQ.data}
-          ocupado={connectM.isPending || painelM.isPending}
-          recarregando={connectQ.isFetching}
-          onConectar={() => connectM.mutate()}
-          onPainel={() => painelM.mutate()}
-          onRecarregar={() => connectQ.refetch()}
-        />
+        {recebimentoQ.data?.mercadopago_disponivel ? (
+          <>
+            <Text style={styles.sectionTitle}>{t("ONDE VOCÊ RECEBE")}</Text>
+            <RecebimentoCard
+              status={recebimentoQ.data}
+              ocupado={escolherRecebimentoM.isPending || conectarMpM.isPending || desconectarMpM.isPending}
+              onEscolher={(m) => escolherRecebimentoM.mutate(m)}
+              onConectarMercadoPago={() => conectarMpM.mutate()}
+              onDesconectarMercadoPago={confirmarDesconexao}
+            />
+          </>
+        ) : null}
+
+        {!recebePeloMp ? (
+          <>
+            <Text style={styles.sectionTitle}>{t("REPASSE AUTOMÁTICO (STRIPE CONNECT)")}</Text>
+            <ConnectCard
+              status={connectQ.data}
+              ocupado={connectM.isPending || painelM.isPending}
+              recarregando={connectQ.isFetching}
+              onConectar={() => connectM.mutate()}
+              onPainel={() => painelM.mutate()}
+              onRecarregar={() => connectQ.refetch()}
+            />
+          </>
+        ) : null}
       </ScrollView>
     </View>
   );
