@@ -203,3 +203,20 @@ def test_a_versao_da_pagina_continua_verificada_pela_meta_tag_sem_aparecer_na_te
     ub, us = servidores(site={("GET", "/agendar"): (200, AGENDAR_NOVO.replace("v2026.10.15", "v2025.01.01"))})
     assert _rodar(ub, us) == 1
     assert "não aparece na página" in capsys.readouterr().out
+
+
+def test_relatorio_nao_quebra_no_terminal_do_windows():
+    """cp1252 (terminal padrão do Windows) não tem "→": o relatório quebrava no fim, com tudo já verificado."""
+    import os
+    import subprocess
+    import sys
+    codigo = (
+        "import importlib.util, sys\n"
+        f"spec = importlib.util.spec_from_file_location('vp', r'{RAIZ / 'lancamento' / 'verificar-producao.py'}')\n"
+        "vp = importlib.util.module_from_spec(spec); spec.loader.exec_module(vp)\n"
+        "vp._saida_que_nao_quebra()\n"
+        "r = vp.Relatorio(); r.ok('Backend no ar (GET /api/ → ok).'); r.atencao('Exclusão'); r.imprimir()\n"
+    )
+    r = subprocess.run([sys.executable, "-c", codigo], capture_output=True, env={**os.environ, "PYTHONIOENCODING": "cp1252"})
+    assert r.returncode == 0, r.stderr.decode("cp1252", "replace")
+    assert b"[OK] Backend no ar" in r.stdout and b"TUDO CERTO" in r.stdout

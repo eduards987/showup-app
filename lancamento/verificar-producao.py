@@ -214,7 +214,15 @@ def verificar_site(site: str, completo: bool, rel: Relatorio) -> None:
             rel.ok(f"{rotulo} publicado e completo.")
 
 
+def _saida_que_nao_quebra() -> None:
+    """O terminal do Windows (cp1252) não tem "→": sem isto, o relatório inteiro quebrava NO FIM, depois de verificar tudo."""
+    for fluxo in (sys.stdout, sys.stderr):
+        if hasattr(fluxo, "reconfigure"):
+            fluxo.reconfigure(errors="replace")
+
+
 def main(argv=None) -> int:
+    _saida_que_nao_quebra()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--backend", required=True, help="URL do backend (Render)")
     ap.add_argument("--site", required=True, help="URL do site (Firebase)")
