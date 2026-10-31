@@ -13,7 +13,7 @@ spec = importlib.util.spec_from_file_location("verificar_producao", RAIZ / "lanc
 vp = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(vp)
 
-AGENDAR_NOVO = '<meta name="versao-da-pagina" content="v2026.10.15"><select id="selectData"></select><select id="selectHora"></select>'
+AGENDAR_NOVO = '<meta name="versao-da-pagina" content="v2026.10.30"><select id="selectData"></select><select id="selectHora"></select>'
 AGENDAR_ANTIGO = '<div class="slot-grid"></div>'
 
 
@@ -200,7 +200,7 @@ def test_404_padrao_do_firebase_e_robots_ausente_sao_avisos_nao_falhas(servidore
 
 
 def test_a_versao_da_pagina_continua_verificada_pela_meta_tag_sem_aparecer_na_tela(servidores, capsys):
-    ub, us = servidores(site={("GET", "/agendar"): (200, AGENDAR_NOVO.replace("v2026.10.15", "v2025.01.01"))})
+    ub, us = servidores(site={("GET", "/agendar"): (200, AGENDAR_NOVO.replace("v2026.10.30", "v2025.01.01"))})
     assert _rodar(ub, us) == 1
     assert "não aparece na página" in capsys.readouterr().out
 

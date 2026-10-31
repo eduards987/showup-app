@@ -7,7 +7,7 @@
 <meta name="description" content="Escolha o serviço e o horário e reserve com o cartão. O valor fica reservado e só é cobrado depois do atendimento." />
 <meta name="robots" content="noindex, nofollow" />
 <meta name="theme-color" content="#4C97C1" />
-<meta name="versao-da-pagina" content="v2026.10.15" />
+<meta name="versao-da-pagina" content="v2026.10.30" />
 <link rel="icon" href="/favicon.ico" sizes="any" />
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
 <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -251,9 +251,10 @@
         <span>Telefone (com DDD)</span>
         <input type="tel" id="inputTelefone" placeholder="11987654321" inputmode="numeric" />
       </label>
-      <!-- Só para quem recebe pelo Mercado Pago: o comprovante do cartão e do Pix vai para este e-mail. -->
-      <label class="field hidden" id="campoEmail">
-        <span>E-mail (para receber o comprovante)</span>
+      <!-- Para todos: a confirmação e o lembrete do agendamento vão para este e-mail (opcional). No Mercado Pago é
+           obrigatório: o comprovante do cartão e do Pix também vai para ele. -->
+      <label class="field" id="campoEmail">
+        <span>E-mail (para receber a confirmação e o lembrete)</span>
         <input type="email" id="inputEmail" autocomplete="email" inputmode="email" />
       </label>
       <div style="margin-top:16px">
@@ -342,7 +343,9 @@
     en: {
       "Pagamento seguro, processado pelo Stripe.": "Secure payment, processed by Stripe.",
       "Pagamento seguro, processado pelo Mercado Pago.": "Secure payment, processed by Mercado Pago.",
-      "E-mail (para receber o comprovante)": "Email (to receive the receipt)",
+      "E-mail (para receber a confirmação e o lembrete)": "Email (to get the confirmation and the reminder)",
+      "Opcional": "Optional",
+      "Confira o e-mail digitado ou deixe o campo em branco.": "Check the email you typed or leave the field blank.",
       "Digite um e-mail válido para receber o comprovante.": "Enter a valid email to receive the receipt.",
       "Não foi possível carregar o formulário do Mercado Pago. Recarregue a página e tente de novo.": "Couldn't load the Mercado Pago form. Reload the page and try again.",
       "Você tem 30 minutos para pagar este Pix.": "You have 30 minutes to pay this Pix.",
@@ -413,7 +416,9 @@
     es: {
       "Pagamento seguro, processado pelo Stripe.": "Pago seguro, procesado por Stripe.",
       "Pagamento seguro, processado pelo Mercado Pago.": "Pago seguro, procesado por Mercado Pago.",
-      "E-mail (para receber o comprovante)": "Correo (para recibir el comprobante)",
+      "E-mail (para receber a confirmação e o lembrete)": "Correo (para recibir la confirmación y el recordatorio)",
+      "Opcional": "Opcional",
+      "Confira o e-mail digitado ou deixe o campo em branco.": "Revisa el correo que escribiste o deja el campo en blanco.",
       "Digite um e-mail válido para receber o comprovante.": "Ingresa un correo válido para recibir el comprobante.",
       "Não foi possível carregar o formulário do Mercado Pago. Recarregue a página e tente de novo.": "No fue posible cargar el formulario de Mercado Pago. Recarga la página e inténtalo de nuevo.",
       "Você tem 30 minutos para pagar este Pix.": "Tienes 30 minutos para pagar este Pix.",
@@ -605,7 +610,8 @@
       }
       if (pelaMP()) {
         document.getElementById("processadoPor").textContent = T("Pagamento seguro, processado pelo Mercado Pago.");
-        document.getElementById("campoEmail").classList.remove("hidden");
+      } else {
+        document.getElementById("inputEmail").placeholder = T("Opcional");
       }
       if (!data.pix_disponivel) {
         // Só cartão: sem seletor, sem o botão de Pix — o cliente vai direto pro formulário.
@@ -762,7 +768,9 @@
     if (nome.length < 2) { alert(T("Digita seu nome completo.")); return; }
     if (telefone.replace(/\D/g, "").length < 10) { alert(T("Telefone inválido — inclui o DDD.")); return; }
     const email = document.getElementById("inputEmail").value.trim();
-    if (pelaMP() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { alert(T("Digite um e-mail válido para receber o comprovante.")); return; }
+    const emailOk = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
+    if (pelaMP() && !emailOk) { alert(T("Digite um e-mail válido para receber o comprovante.")); return; }
+    if (email && !emailOk) { alert(T("Confira o e-mail digitado ou deixe o campo em branco.")); return; }
     state.nome = nome;
     state.telefone = telefone;
     state.email = email;
@@ -948,6 +956,7 @@
           horario_inicio: state.slotIso,
           nome: state.nome,
           telefone: state.telefone,
+          email: state.email || null,
           payment_method_id: setupIntent.payment_method,
         }),
       });

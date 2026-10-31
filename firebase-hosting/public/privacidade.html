@@ -101,12 +101,15 @@
     <li>Quando o profissional recebe pelo Mercado Pago, pedimos o seu <strong>e-mail</strong>
     (para o comprovante) e o formulário do Mercado Pago pode pedir o seu <strong>CPF</strong>;
     esses dados vão para o Mercado Pago, que processa o pagamento.</li>
+    <li>Quem agenda pelo link pode informar um <strong>e-mail</strong> (opcional; obrigatório
+    no Mercado Pago). Ele é usado só para enviar a confirmação e os lembretes daquele
+    agendamento.</li>
   </ul>
   <p><strong>Durante o uso do app:</strong></p>
   <ul>
     <li>Histórico de agendamentos (horários, serviços, valores).</li>
     <li>Fuso horário e moeda de preferência.</li>
-    <li>Token de notificação push (pra avisar sobre confirmações de agendamento).</li>
+    <li>Token de notificação push (para avisar sobre confirmações e lembretes de agendamento).</li>
     <li>Para profissionais: categorias de serviço, plano de assinatura, e
     dados repassados ao Stripe Connect pra receber pagamentos (conta
     bancária, documentos — geridos inteiramente pelo Stripe, não por
@@ -127,7 +130,9 @@
     <li>Criar e gerenciar sua conta.</li>
     <li>Processar agendamentos e pagamentos (incluindo a pré-autorização
     de cartão que protege o profissional contra no-show).</li>
-    <li>Enviar notificações relacionadas aos seus agendamentos.</li>
+    <li>Enviar notificações relacionadas aos seus agendamentos: a confirmação na hora da
+    reserva e lembretes antes do horário (24 horas e 2 horas antes), pelo celular ou por
+    e-mail.</li>
     <li>Prevenir fraude e uso indevido da plataforma.</li>
     <li>Cumprir obrigações legais e fiscais.</li>
   </ul>
@@ -161,7 +166,8 @@
     <li><strong>Google</strong> e <strong>Microsoft</strong> — autenticação
     (login), quando você escolhe entrar com uma dessas contas.</li>
     <li><strong>Provedor de envio de e-mail</strong> — entrega os códigos de
-    verificação e de recuperação de senha, quando você usa e-mail e senha.</li>
+    verificação e de recuperação de senha, quando você usa e-mail e senha, e a
+    confirmação e os lembretes dos agendamentos.</li>
     <li><strong>Render</strong> — hospedagem do servidor do app.</li>
     <li><strong>Expo</strong> e <strong>Google Firebase</strong> — entrega das
     notificações no seu celular.</li>

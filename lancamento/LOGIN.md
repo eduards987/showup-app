@@ -14,6 +14,10 @@ não configurar nada.
 > (`DEPLOY.md`, passo 4). A política antiga dizia que o ShowUp "nunca armazena senhas", e isso deixa de ser verdade
 > assim que o cadastro por e-mail estiver ligado. Só depois configure as variáveis abaixo no Render.
 
+> **O mesmo SMTP leva os avisos ao cliente (30/10/2026):** confirmação do agendamento e lembretes 24 h e 2 h antes,
+> para quem agendou pelo link e informou o e-mail (ou quem usa o app sem notificações ligadas). Sem SMTP, só vai o
+> push para quem tem o app.
+
 ## A. Cadastro por e-mail e senha
 
 **Como funciona para o usuário:** toca em "Continuar com e-mail" → "Criar conta" (nome, e-mail, senha) → recebe um

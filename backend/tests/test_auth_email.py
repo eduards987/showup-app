@@ -52,6 +52,13 @@ class Col:
         if upsert:
             self.docs.append(dict(doc))
 
+    async def update_many(self, q, upd):
+        for d in self.docs:
+            if _casa(d, q):
+                d.update(upd.get("$set", {}))
+                for k in upd.get("$unset", {}):
+                    d.pop(k, None)
+
     async def update_one(self, q, upd):
         for d in self.docs:
             if _casa(d, q):

@@ -40,6 +40,8 @@ O `README.md` descreve o projeto. Este arquivo tem o que **não pode ser quebrad
 - **Páginas do site** têm campos `{{...}}`; o `firebase deploy` é travado se sobrar algum ou se houver texto de exemplo (`seu@email.com`...). Preencha com `py lancamento\preencher-site.py`, nunca à mão, e **não commite as páginas preenchidas** (o repositório guarda os `{{...}}`).
 - **`agendar.html`:** tudo que vem do servidor entra no HTML só por `esc()` (o nome do serviço é escrito pelo profissional). O teste recusa `${...}` sem `esc()` ou `T("fixo")`.
 - **Horário ocupado:** uma lista só, `STATUS_OCUPAM_HORARIO` (servidor), para horários livres, conflito (app e link) e o índice `uniq_vaga_ativa`. Estado novo de reserva que ocupa horário entra NELA.
+- **Cancelamento:** o cliente só cancela ANTES do horário (o servidor recusa depois; senão quem falta escapa da taxa de falta). O profissional pode depois.
+- **Avisos ao cliente** (`avisos_cliente.py`): confirmação + lembretes 24 h e 2 h, push ou e-mail, uma vez cada. Nunca e-mail para `@showup.cliente`/`@showup.excluido`.
 - **Telas do app:** sem dados e com erro mostra `ErroAoCarregar` (nunca "vazio" nem `return null`); ação que cobra, cancela ou apaga pede confirmação e tem `onError`.
 - **Promessas dos textos legais** (prazos, registros de acesso por 6 meses, arrependimento, aviso de 30 dias) estão em `lancamento/REVISAO-JURIDICA.md`. Mudou uma regra (cancelamento, taxa de falta, plano)? Confira se os Termos ainda dizem a verdade.
 

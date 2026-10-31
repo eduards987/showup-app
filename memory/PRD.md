@@ -2896,3 +2896,19 @@ node `i18n_app.test.mjs` (`estado-consulta.ts`). Cada proteção foi sabotada e 
   falhou. Reserva: horário pego por outro (409) recarrega a lista. Escolha do papel: erro aparece e o tutorial sempre abre.
 - Lint do app zerado (`npx expo lint`). Pendente, não é falha: lembrete para o CLIENTE (push/e-mail).
 
+## Avisos ao cliente: confirmação e lembretes (30/10/2026)
+- `backend/avisos_cliente.py`: confirmação quando a reserva vale (cartão reservado ou Pix pago) e lembretes
+  `LEMBRETE_CLIENTE_HORAS` antes (padrão 24 e 2; job `_enviar_lembretes_cliente`, 5 min). Uma vez cada (campos
+  `aviso_cliente_confirmado_em`, `aviso_cliente_{h}h_em`, reivindicados de forma atômica). Da menor antecedência para a
+  maior, marcando as maiores: servidor fora do ar não manda dois. Reserva feita depois do momento do lembrete não o recebe.
+- Canal: push (pt) se o cliente tem o app com notificação; senão e-mail (SMTP) para `email_cliente` (informado no link,
+  vale mais) ou o da conta; nunca para os sintéticos `@showup.cliente`/`@showup.excluido`. E-mail no `idioma` da reserva
+  (Accept-Language da página/app: pt, en, es). Valor em centavos inteiros (`formatar_valor`), hora no fuso do profissional.
+- Disparo: `_avisar_reserva_confirmada` (profissional + cliente) nas reservas por cartão, no Pix do Mercado Pago e no
+  webhook do Pix do Stripe. App: o cliente também registra o aparelho (`use-push-registration.ts`).
+- Página do link: campo de e-mail para todos (opcional; obrigatório no Mercado Pago), enviado nas 3 reservas. Versão v2026.10.30.
+- **Brecha fechada:** o cliente cancelava DEPOIS do horário (faltava e cancelava antes do profissional confirmar; a taxa
+  de falta sumia). Agora `/cancelar` recusa (409) o cliente depois do início; o app esconde o botão. O profissional pode.
+- Exclusão de conta apaga `email_cliente` das reservas. Privacidade atualizada; pergunta 13 em REVISAO-JURIDICA.md.
+- Testes: `test_avisos_cliente.py` (35), `test_app_telas.py`, `test_site_publicacao.py`. 22 sabotagens, todas pegas.
+

@@ -23,12 +23,12 @@ export function usePushRegistration() {
   const router = useRouter();
   const registeredForUserId = useRef<string | null>(null);
 
-  // 1. Registration — only for profissionais (only role the backend pushes
-  // to today) and only once per user_id per app session.
+  // 1. Registro do aparelho: profissional (novo agendamento, próximo atendimento) e cliente (confirmação e lembrete
+  // do agendamento). Uma vez por conta, por sessão do app.
   const userId = auth.status === "authenticated" ? auth.user.user_id : null;
   const role = auth.status === "authenticated" ? auth.user.role : null;
   useEffect(() => {
-    if (!userId || role !== "profissional") return;
+    if (!userId || (role !== "profissional" && role !== "cliente")) return;
     if (registeredForUserId.current === userId) return;
 
     registeredForUserId.current = userId;

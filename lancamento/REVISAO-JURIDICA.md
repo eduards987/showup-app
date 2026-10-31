@@ -43,6 +43,10 @@ Os campos `{{...}}` voltaram, e agora o `preencher-site.py` e a trava do `fireba
 12. **Mercado Pago (30/10/2026).** O profissional que conecta o Mercado Pago autoriza o ShowUp a cobrar, capturar e cancelar em nome dele, e a
     tarifa do Mercado Pago sai do valor do profissional (a taxa do ShowUp é 3 pontos menor). Confirme se a cláusula 4 dos Termos basta como
     autorização e se o Mercado Pago entra como operador na Política de Privacidade (ele recebe e-mail e CPF do cliente).
+13. **Avisos ao cliente e cancelamento (30/10/2026).** O cliente recebe confirmação e lembretes (24 h e 2 h antes) por push
+    ou e-mail; o e-mail do link é opcional e só serve para isso (Privacidade atualizada). O servidor agora RECUSA o
+    cancelamento pelo cliente depois que o horário começou (a cláusula dos Termos já dizia "antes do atendimento").
+    Quem agendou pelo link não cancela sozinho: o aviso diz para falar com o profissional. Confirme se isso basta.
 
 ## 3. O que você precisa fazer para as promessas dos textos serem verdade
 

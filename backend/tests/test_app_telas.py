@@ -91,3 +91,15 @@ def test_escolher_o_papel_mostra_o_erro_e_sempre_chega_ao_inicio_com_o_tutorial(
     assert 'if (auth.user.role && !saving) return <Redirect href="/(app)/home" />;' in s
     envio = s.split("const handleContinue = async () => {", 1)[1].split("\n  };", 1)[0]
     assert "catch (err)" in envio and "Alert.alert(" in envio.split("catch (err)", 1)[1]
+
+
+def test_cliente_nao_ve_cancelar_depois_que_o_horario_comecou():
+    s = tela("(app)/agendamento/[id].tsx")
+    regra = s.split("const canCancel =", 1)[1].split(";", 1)[0]
+    assert "(isProf || new Date(a.horario_inicio).getTime() > agora)" in regra
+    assert "useAgora(" in s
+
+
+def test_cliente_tambem_registra_o_aparelho_para_receber_avisos():
+    s = (APP.parent / "src" / "lib" / "use-push-registration.ts").read_text(encoding="utf-8")
+    assert 'role !== "profissional" && role !== "cliente"' in s

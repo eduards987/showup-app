@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Carregando, ErroAoCarregar } from "@/src/components/estado-consulta";
 import { api, ApiError } from "@/src/lib/api";
+import { useAgora } from "@/src/lib/use-agora";
 import { useAuth } from "@/src/lib/auth";
 import {
   infoHold,
@@ -139,6 +140,7 @@ export default function AgendamentoDetalhe() {
   const auth = useAuth();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [confirmNoShow, setConfirmNoShow] = useState(false);
+  const agora = useAgora(30_000);
 
   const q = useQuery({
     queryKey: ["agendamento", id],
@@ -208,8 +210,10 @@ export default function AgendamentoDetalhe() {
   const holdColor = KIND_COLORS[holdMeta.kind];
   const canConfirm =
     isProf && a.status_confirmacao === "pendente" && a.hold_status === "autorizado";
+  // O cliente só cancela ANTES do horário (Termos; o servidor também recusa). Depois, quem decide é o profissional.
   const canCancel =
-    a.hold_status === "autorizado" && a.status_confirmacao === "pendente";
+    a.hold_status === "autorizado" && a.status_confirmacao === "pendente" &&
+    (isProf || new Date(a.horario_inicio).getTime() > agora);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>

@@ -27,6 +27,7 @@ TRADUCOES: dict[str, tuple[str, str]] = {
     "Código inválido ou expirado.": ("Invalid or expired code.", "Código inválido o vencido."),
     "E-mail do Google não verificado": ("Google email not verified", "Correo de Google no verificado"),
     "E-mail ou senha incorretos.": ("Incorrect email or password.", "Correo o contraseña incorrectos."),
+    "O horário já começou: não dá mais para cancelar. Fale com o profissional.": ("The appointment has already started, so it can no longer be canceled. Please talk to the professional.", "El horario ya comenzó: ya no se puede cancelar. Habla con el profesional."),
     "Esse horário acabou de ser reservado por outro cliente. Escolha outro.": ("That time was just booked by another client. Pick another.", "Ese horario acaba de ser reservado por otro cliente. Elige otro."),
     "Este profissional ainda não habilitou os recebimentos pelo ShowUp. Tente de novo mais tarde.": ("This professional hasn't enabled payouts on ShowUp yet. Please try again later.", "Este profesional aún no habilitó los cobros en ShowUp. Inténtalo de nuevo más tarde."),
     "Falha ao autorizar cartão": ("Failed to authorize the card", "Error al autorizar la tarjeta"),

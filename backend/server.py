@@ -66,6 +66,7 @@ from expo_push import buscar_recibo, is_device_not_registered, push_para_usuario
 from i18n_servidor import idioma_da_requisicao, traduzir
 from agenda import HOLD_DIAS_MERCADOPAGO, HOLD_MAX_DIAS, MENSAGENS as MENSAGENS_AGENDA, inicios_possiveis, janela_de_confirmacao, montar_janela
 from notificacoes import avisar_novo_agendamento, avisar_proximo_atendimento, dados_do_agendamento, explicar_erro_push
+from avisos_cliente import avisar_cliente_confirmado, enviar_lembretes as enviar_lembretes_cliente
 from emailer import email_configurado, enviar_email
 from senhas import hash_falso, hash_senha, validar_senha, verificar_senha
 import cofre
@@ -954,6 +955,19 @@ async def _require_role(doc: dict, role: Role):
         raise HTTPException(403, f"Requires role={role}")
 
 
+async def _avisar_reserva_confirmada(db_, agendamento_id: str) -> None:
+    """Reserva valendo (cartão reservado ou Pix pago): avisa o profissional e o cliente. Cada um sai uma vez só e
+    nenhum dos dois levanta exceção (aviso nunca derruba uma reserva paga)."""
+    await avisar_novo_agendamento(db_, agendamento_id)
+    await avisar_cliente_confirmado(db_, agendamento_id)
+
+
+def _contato_do_aviso(request: Request, email: Optional[str] = None) -> dict:
+    """O que a reserva guarda para avisar o cliente: o e-mail que ele informou (link) e o idioma da página/app."""
+    return {"email_cliente": (str(email).strip().lower() if email else None),
+            "idioma": idioma_da_requisicao(request.headers.get("accept-language"))}
+
+
 async def _find_or_create_cliente_por_telefone(nome: str, telefone: str) -> dict:
     """Cliente vindo do link público (WhatsApp), sem sessão/conta prévia no
     app. Usamos o telefone como identidade — se ele já agendou antes por
@@ -1659,6 +1673,7 @@ async def excluir_conta(request: Request, authorization: Optional[str] = Header(
     # aparelho continuaria recebendo avisos de uma conta excluída) e o cartão salvo.
     await db.device_tokens.delete_many({"user_id": user_id})
     await db.customer_cards.delete_many({"user_id": user_id})
+    await db.agendamentos.update_many({"cliente_id": user_id}, {"$unset": {"email_cliente": ""}})
     await db.email_codes.delete_many({"email": doc["email"]})
     await db.login_attempts.delete_many({"email": doc["email"]})
     # No Stripe, apaga os Customers (melhor esforço — não trava a exclusão). Os
@@ -2731,6 +2746,7 @@ async def criar_agendamento(request: Request, background_tasks: BackgroundTasks,
         # captura da falta usa este valor — mudar de plano depois não altera
         # reservas já feitas.
         "fee_bps": _fee_bps_for(prof, svc["moeda"]),
+        "idioma": idioma_da_requisicao(request.headers.get("accept-language")),
         "criado_em": _now(),
         "push_pergunta_enviada_em": None,
         "push_urgencia_enviada_em": None,
@@ -2756,7 +2772,7 @@ async def criar_agendamento(request: Request, background_tasks: BackgroundTasks,
         "criado_em": _now(),
     })
     # Depois da resposta (não atrasa a reserva): o profissional recebe "Novo agendamento".
-    background_tasks.add_task(avisar_novo_agendamento, db, agendamento_id)
+    background_tasks.add_task(_avisar_reserva_confirmada, db, agendamento_id)
     return await _hydrate(doc)
 
 
@@ -2782,6 +2798,7 @@ async def cartao_setup_intent_publico(request: Request, payload: CartaoSetupPubl
 @api_router.post("/public/agendamentos/cartao", response_model=Agendamento)
 @limiter.limit("10/minute")
 async def criar_agendamento_publico_cartao(request: Request, background_tasks: BackgroundTasks, payload: AgendamentoPublicoCartaoRequest):
+    contato = _contato_do_aviso(request, payload.email)
     """Mesmo fluxo de hold do endpoint autenticado, mas pro cliente que vem
     do link do WhatsApp (sem conta/sessão no app) — o cartão foi coletado
     na página web via Stripe.js Elements, não no Payment Sheet nativo."""
@@ -2844,6 +2861,7 @@ async def criar_agendamento_publico_cartao(request: Request, background_tasks: B
         # reservas já feitas.
         "fee_bps": _fee_bps_for(prof, svc["moeda"]),
         "origem": "link_publico",
+        **contato,
         "criado_em": _now(),
         "push_pergunta_enviada_em": None,
         "push_urgencia_enviada_em": None,
@@ -2863,13 +2881,14 @@ async def criar_agendamento_publico_cartao(request: Request, background_tasks: B
         "gateway_object_id": doc["payment_intent_id"], "status": "requires_capture",
         "criado_em": _now(),
     })
-    background_tasks.add_task(avisar_novo_agendamento, db, agendamento_id)
+    background_tasks.add_task(_avisar_reserva_confirmada, db, agendamento_id)
     return await _hydrate(doc)
 
 
 @api_router.post("/public/agendamentos/pix", response_model=AgendamentoPublicoPixResponse)
 @limiter.limit("10/minute")
 async def criar_agendamento_publico_pix(request: Request, payload: AgendamentoPublicoCreate):
+    contato = _contato_do_aviso(request, payload.email)
     """Pix não suporta hold (ver create_pix_payment_intent) — cobra o valor
     TOTAL do serviço de uma vez, sem proteção de no-show. O agendamento
     fica reservado por tempo LIMITADO (PIX_RESERVA_MINUTOS) esperando o
@@ -2888,7 +2907,7 @@ async def criar_agendamento_publico_pix(request: Request, payload: AgendamentoPu
         raise HTTPException(400, "servico_id não pertence ao profissional_id informado")
     horario = _aware(payload.horario_inicio)
     if pelo_mp:
-        return await _pix_mercadopago(payload, cliente, svc, prof, horario, horario_fim)
+        return await _pix_mercadopago(payload, cliente, svc, prof, horario, horario_fim, contato)
 
     await _exigir_recebimento_ativo(prof)
     destination = None
@@ -2941,6 +2960,7 @@ async def criar_agendamento_publico_pix(request: Request, payload: AgendamentoPu
         "fee_bps": _fee_bps_for(prof, svc["moeda"]),
         "metodo_pagamento": "pix",
         "origem": "link_publico",
+        **contato,
         "criado_em": _now(),
         "push_pergunta_enviada_em": None,
         "push_urgencia_enviada_em": None,
@@ -3111,6 +3131,10 @@ async def cancelar(request: Request, agendamento_id: str, authorization: Optiona
         raise HTTPException(404, "Não encontrado")
     if doc["user_id"] not in (ag["cliente_id"], ag["profissional_id"]):
         raise HTTPException(403, "Acesso negado")
+    # Termos: o cliente cancela ANTES do atendimento. Depois do início, só o profissional decide (compareceu, falta
+    # ou cancelar). Sem isto, quem faltava cancelava depois e o profissional perdia a taxa de falta.
+    if doc["user_id"] == ag["cliente_id"] and doc["user_id"] != ag["profissional_id"] and _aware(ag["horario_inicio"]) <= _now():
+        raise HTTPException(409, "O horário já começou: não dá mais para cancelar. Fale com o profissional.")
 
     # --- Guarda atômica contra corrida com /confirmar e o job de expiração ---
     # Sem isso, um cancelamento do cliente podia entrar exatamente entre o
@@ -3355,6 +3379,7 @@ def _identificacao(payload: AgendamentoPublicoMPCartaoRequest) -> Optional[dict]
 @api_router.post("/public/agendamentos/mercadopago/cartao", response_model=Agendamento)
 @limiter.limit("10/minute")
 async def criar_agendamento_publico_mp_cartao(request: Request, background_tasks: BackgroundTasks, payload: AgendamentoPublicoMPCartaoRequest):
+    contato = _contato_do_aviso(request, payload.email)
     """Reserva no cartão pelo Mercado Pago (link público). Mesmas regras do Stripe — agenda, conflito, prazo de
     confirmação —, mas a reserva vale 5 dias e só aceita bandeiras em que dá para cobrar só a taxa de falta."""
     if not MERCADOPAGO_ATIVO or mp_gateway is None:
@@ -3406,6 +3431,7 @@ async def criar_agendamento_publico_mp_cartao(request: Request, background_tasks
         "gateway": "mercadopago",
         "fee_bps": fee_bps,
         "origem": "link_publico",
+        **contato,
         "criado_em": _now(),
         "push_pergunta_enviada_em": None,
         "push_urgencia_enviada_em": None,
@@ -3425,12 +3451,12 @@ async def criar_agendamento_publico_mp_cartao(request: Request, background_tasks
         "gateway_object_id": doc["payment_intent_id"], "status": "requires_capture", "gateway": "mercadopago",
         "criado_em": _now(),
     })
-    background_tasks.add_task(avisar_novo_agendamento, db, agendamento_id)
+    background_tasks.add_task(_avisar_reserva_confirmada, db, agendamento_id)
     return await _hydrate(doc)
 
 
 async def _pix_mercadopago(payload: AgendamentoPublicoCreate, cliente: dict, svc: dict, prof: dict,
-                           horario: datetime, horario_fim: datetime) -> AgendamentoPublicoPixResponse:
+                           horario: datetime, horario_fim: datetime, contato: dict) -> AgendamentoPublicoPixResponse:
     if not MERCADOPAGO_ATIVO or mp_gateway is None:
         raise HTTPException(503, "O Mercado Pago ainda não está disponível no ShowUp.")
     fee_bps = _fee_bps_for(prof, svc["moeda"])
@@ -3466,6 +3492,7 @@ async def _pix_mercadopago(payload: AgendamentoPublicoCreate, cliente: dict, svc
         "fee_bps": fee_bps,
         "metodo_pagamento": "pix",
         "origem": "link_publico",
+        **contato,
         "criado_em": _now(),
         "push_pergunta_enviada_em": None,
         "push_urgencia_enviada_em": None,
@@ -3508,7 +3535,7 @@ async def _sincronizar_pagamento_mp(ag: dict) -> Optional[dict]:
         res = await db.agendamentos.update_one({**filtro, "hold_status": "aguardando_pix"},
                                                {"$set": {"hold_status": "pago_integral", "valor_capturado_centavos": p["valor_centavos"]}})
         if res.modified_count:
-            await avisar_novo_agendamento(db, ag["agendamento_id"])
+            await _avisar_reserva_confirmada(db, ag["agendamento_id"])
     elif status == "approved" and ag.get("hold_status") == "expirado" and ag.get("metodo_pagamento") == "pix":
         # Pago depois de o horário ser solto (aviso muito atrasado): não some com o dinheiro do cliente — marca para revisão.
         await db.agendamentos.update_one(filtro, {"$set": {"pago_apos_expirar": True}})
@@ -3659,6 +3686,11 @@ async def _enviar_pushes_confirmacao() -> dict:
     return {"pergunta": enviados_pergunta, "urgencia": enviados_urgencia}
 
 
+async def _enviar_lembretes_cliente() -> dict:
+    """Lembretes ao CLIENTE (24 h e 2 h antes, LEMBRETE_CLIENTE_HORAS): push no app ou e-mail. Ver avisos_cliente.py."""
+    return await enviar_lembretes_cliente(db, _now())
+
+
 async def _enviar_lembretes_proximo() -> dict:
     """Avisa o profissional que o PRÓXIMO atendimento está chegando (LEMBRETE_PROFISSIONAL_MIN antes).
 
@@ -3804,6 +3836,7 @@ async def lifespan(_: FastAPI):
     _scheduler.add_job(_enviar_pushes_confirmacao, "interval", minutes=5, id="enviar_pushes", max_instances=1)
     _scheduler.add_job(_atualizar_connect_pendentes, "interval", minutes=10, id="connect_pendentes", max_instances=1)
     _scheduler.add_job(_enviar_lembretes_proximo, "interval", minutes=5, id="lembretes_proximo", max_instances=1)
+    _scheduler.add_job(_enviar_lembretes_cliente, "interval", minutes=5, id="lembretes_cliente", max_instances=1)
     if MERCADOPAGO_ATIVO:
         _scheduler.add_job(_renovar_tokens_mp, "interval", hours=12, id="renovar_tokens_mp", max_instances=1)
     _scheduler.start()

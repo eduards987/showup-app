@@ -82,6 +82,11 @@ class _Col:
                 self._aplicar(d, upd)
                 return
 
+    async def update_many(self, q, upd):
+        for d in self.docs:
+            if _match(d, q):
+                self._aplicar(d, upd)
+
     async def find_one_and_update(self, q, upd):
         for d in self.docs:
             if _match(d, q):

@@ -39,6 +39,7 @@ O app novo precisa do backend novo; por isso o backend vai antes.
    | `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `MICROSOFT_OAUTH_REDIRECT_URI` (novas) | vazias (sem o botão Microsoft) | ver `LOGIN.md`, seção B |
    | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` (novas) | vazias (sem cadastro por e-mail) | ver `LOGIN.md`, seção A — **só depois** de publicar a Política de Privacidade nova |
    | `PROXIES_NA_FRENTE` (nova, 30/10/2026) | não crie (vale `1`) | `1`; veja o aviso abaixo |
+   | `LEMBRETE_CLIENTE_HORAS` (nova, 30/10/2026) | não crie (vale `24,2`) | horas antes do atendimento em que o cliente é lembrado; `0` desliga |
 
 3. Espere o painel mostrar **Live**. Se o deploy falhar, abra os **Logs**: uma `STRIPE_API_KEY` preenchida e inválida
    derruba a subida de propósito (e o Render **mantém a versão anterior no ar**).

@@ -35,6 +35,7 @@ jobs:
           tests/test_mercadopago.py
           tests/test_brechas.py
           tests/test_app_telas.py
+          tests/test_avisos_cliente.py
           tests/test_plano_gateway.py
           tests/test_taxa_falta.py
           tests/test_lancamento.py

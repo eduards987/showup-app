@@ -20,6 +20,7 @@ from fastapi import APIRouter, Request, Response
 
 from expo_push import push_para_usuario
 from notificacoes import avisar_novo_agendamento
+from avisos_cliente import avisar_cliente_confirmado
 
 log = logging.getLogger("webhooks")
 router = APIRouter(prefix="/api/webhooks")
@@ -173,6 +174,7 @@ async def _handle_pix_succeeded(db, payment_intent: dict) -> None:
         ag = await db.agendamentos.find_one({"payment_intent_id": pi_id}, {"_id": 0, "agendamento_id": 1})
         if ag:
             await avisar_novo_agendamento(db, ag["agendamento_id"])
+            await avisar_cliente_confirmado(db, ag["agendamento_id"])     # e o cliente recebe a confirmação
 
 
 

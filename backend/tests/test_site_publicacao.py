@@ -193,8 +193,8 @@ def test_pre_visualizacao_do_link_no_whatsapp_em_todas_as_paginas_publicas():
 def test_pagina_de_agendamento_nao_e_indexada_e_nao_mostra_a_versao_ao_cliente():
     html = _ler("agendar.html")
     assert 'name="robots" content="noindex, nofollow"' in html
-    assert 'name="versao-da-pagina" content="v2026.10.15"' in html                                         # o verificador continua achando
-    assert 'id="versaoPagina"' not in html and ">v2026.10.15<" not in html                                  # mas o cliente não vê
+    assert 'name="versao-da-pagina" content="v2026.10.30"' in html                                         # o verificador continua achando
+    assert 'id="versaoPagina"' not in html and ">v2026.10.30<" not in html                                  # mas o cliente não vê
 
 
 def test_pagina_de_agendamento_le_o_endereco_legivel_e_o_link_antigo():
@@ -481,3 +481,12 @@ def test_so_existe_um_site_para_publicar():
     assert not (RAIZ / "public").exists()
     cfg = (RAIZ / "firebase-hosting" / "firebase.json").read_text(encoding="utf-8")
     assert "verificar-antes-de-publicar.js" in cfg
+
+
+def test_agendar_pede_email_a_todos_e_manda_nas_tres_reservas():
+    """O e-mail (opcional; obrigatório no Mercado Pago) leva a confirmação e o lembrete ao cliente do link."""
+    html = AGENDAR.read_text(encoding="utf-8")
+    assert '<label class="field" id="campoEmail">' in html                       # visível para todos, não só no Mercado Pago
+    assert html.count("email: state.email || null,") == 2                         # cartão (Stripe) e Pix
+    assert "payer: { email: state.email }" in html or "email: payer.email || state.email" in html   # Mercado Pago
+    assert 'if (email && !emailOk)' in html

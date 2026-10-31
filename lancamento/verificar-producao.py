@@ -18,7 +18,7 @@ import sys
 import urllib.error
 import urllib.request
 
-VERSAO_PAGINA = "v2026.10.15"
+VERSAO_PAGINA = "v2026.10.30"
 EMAIL_ANTIGO = "privacidade@showup.app"
 
 

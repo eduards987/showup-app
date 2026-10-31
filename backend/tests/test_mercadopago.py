@@ -531,7 +531,7 @@ def test_se_o_mercado_pago_manter_a_taxa_cheia_o_agendamento_fica_marcado_para_a
 
 
 def test_cancelar_e_expirar_soltam_a_reserva_no_mercado_pago_e_nao_no_stripe(loja):
-    _agendamento_mp(loja)
+    _agendamento_mp(loja, horario_inicio=loc(22, 10), horario_fim=loc(22, 11))   # o cliente cancela ANTES do horário
     r = loja["c"].post("/api/agendamentos/agd_mp/cancelar")
     assert r.status_code == 200, r.text
     assert loja["mp"].chamadas == [("cancelar", "APP_USR-token-do-prof", "mp_1", "void_agd_mp")]
